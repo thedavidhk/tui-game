@@ -1,0 +1,78 @@
+use serde::{Deserialize, Serialize};
+
+use crate::entity::EntityArena;
+use crate::game::{GameModeStack, NarrativeState};
+use crate::world::MapGrid;
+
+pub const SAVE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorldSnapshot {
+    pub map: MapGrid,
+    pub entities: EntityArena,
+    pub narrative: NarrativeState,
+    pub rng_seed: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SaveGameV1 {
+    pub schema_version: u32,
+    pub build: Option<String>,
+    pub world: WorldSnapshot,
+    pub modes: GameModeStack,
+}
+
+impl SaveGameV1 {
+    pub fn new(world: WorldSnapshot, modes: GameModeStack) -> Self {
+        Self {
+            schema_version: SAVE_SCHEMA_VERSION,
+            build: option_env!("CARGO_PKG_VERSION").map(|s| s.to_string()),
+            world,
+            modes,
+        }
+    }
+}
+
+pub fn save_to_ron(s: &SaveGameV1) -> Result<String, ron::Error> {
+    ron::ser::to_string_pretty(s, ron::ser::PrettyConfig::new())
+}
+
+pub fn save_from_ron(s: &str) -> Result<SaveGameV1, ron::de::SpannedError> {
+    ron::from_str(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::GameMode;
+    use crate::world::TileTable;
+
+    #[test]
+    fn round_trip_save() {
+        let map = MapGrid::filled(3, 3, 0, TileTable::default_pack());
+        let mut ents = EntityArena::new();
+        let p = ents.spawn(
+            crate::entity::GridPos { x: 1, y: 1 },
+            '@',
+            "Hero".into(),
+            false,
+            None,
+        );
+        ents.set_player(p);
+        let world = WorldSnapshot {
+            map,
+            entities: ents,
+            narrative: NarrativeState::default(),
+            rng_seed: 42,
+        };
+        let modes = GameModeStack {
+            stack: vec![GameMode::Exploration],
+        };
+        let sg = SaveGameV1::new(world.clone(), modes.clone());
+        let ron = save_to_ron(&sg).unwrap();
+        let back: SaveGameV1 = save_from_ron(&ron).unwrap();
+        assert_eq!(back.schema_version, SAVE_SCHEMA_VERSION);
+        assert_eq!(back.world, world);
+        assert_eq!(back.modes, modes);
+    }
+}

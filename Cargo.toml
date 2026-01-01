@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/tui_game_core", "crates/tui_game", "crates/tui_level_editor"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
