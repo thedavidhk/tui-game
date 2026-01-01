@@ -12,4 +12,5 @@ pub mod save;
 pub mod ui;
 pub mod world;
 
+pub use content::EntityBlueprint;
 pub use game::Game;

@@ -1,6 +1,7 @@
 use crate::rect::Rect;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -10,6 +11,12 @@ pub struct Color {
 impl Color {
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
+    }
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Self::rgb(200, 200, 200)
     }
 }
 

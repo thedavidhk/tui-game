@@ -18,7 +18,7 @@ cargo run -p tui_game
 # Run the game with a level file produced by the editor
 cargo run -p tui_game -- path/to/level.ron
 
-# Run the level editor (default writes `demo_level.ron` in the current directory)
+# Run the level editor (optional initial path; use F2 in-app to change save path)
 cargo run -p tui_level_editor
 cargo run -p tui_level_editor -- my_level.ron
 ```
@@ -53,11 +53,11 @@ Tests are **headless** (no TTY required): FoW, RON round-trips for `LevelFile` a
 - **`game.rs`** — `Game`, mode stack (`MainMenu`, `Exploration`, `Dialogue`, `Combat`), composition into the buffer
 - **`input.rs`** — `InputEvent` / `InputBatch` (normalized; binaries map crossterm events here)
 - **`rect.rs`** — cell-space rectangles and hit testing
-- **`ui/`** — panels, log, menu, dialogue (write only into a `FrameBuffer`; no crossterm)
+- **`ui/`** — panels, log, menu, dialogue, text fields, color presets (write only into a `FrameBuffer`; no crossterm)
 - **`combat.rs`** — turn-order stub (move / pass / flee)
 - **`save.rs`** — `SaveGameV1`, `WorldSnapshot`, schema version
 - **`level.rs`** — `LevelFile`, `EntitySpawn`, RON (de)serialization
-- **`content.rs`** — demo `ContentPack`, static `DialogueTree`, `validate()`
+- **`content.rs`** — demo `ContentPack`, static `DialogueTree`, `EntityBlueprint` registry, `validate()` / `validate_level()`
 
 ## Game controls (reference)
 
@@ -72,19 +72,29 @@ These are implemented in **`Game`** (`game.rs`); the binary forwards keyboard an
 ## Level editor controls
 
 - **WASD** or arrows: move cursor
-- **0** / **1**: select tile id (floor / wall in the default pack)
+- **`[`** / **`]`** or **`k`** / **`j`**: cycle brush — **terrain** in paint mode, **entity blueprint** in spawn mode (sidebar lists names, ids, solid/open, and glyph colors)
 - **Space**: paint tile (paint mode) or add a spawn (spawn mode)
 - **m**: toggle paint vs place spawns
-- **Ctrl+S**: save to the file path (default `demo_level.ron`)
+- **F2**: save as — type a path (`.ron` is added if you omit an extension), **Enter** to write and close
+- **F3**: edit the level’s display name (`LevelFile.name`)
+- **F4**: resize map (width/height, **Tab** between fields, **Enter** to apply; valid range 3–256)
+- **F5**: define a new terrain — name, single glyph, **solid** (blocks movement and line-of-sight), and a **preset RGB** swatch (stored as truecolor `fg` on `TileDef`)
+- **Ctrl+S**: save to the current file path
 - **Ctrl+Q**: quit
 
-Spawns use `kind` (e.g. `"guide"` for the demo NPC dialogue hook). Extend spawn kinds when you add content.
+Spawns store `kind` matching an **`EntityBlueprint`** in `ContentPack` (see `content.rs` / `DEMO_ENTITY_BLUEPRINTS`). Add blueprints in Rust, then pick them in the editor; **`Ctrl+S`** refuses to save if the level references unknown tile ids or unknown spawn kinds.
+
+### Terrain color: ANSI vs RGB
+
+The game and editor already target **24-bit truecolor** (`38;2` / `48;2` in `render/ansi.rs`). Tile appearance uses **`TileDef.fg` as RGB** in the level file. The editor’s F5 picker is a fixed **preset palette** for convenience; there is no separate “ANSI color id” in the format. If you need arbitrary colors later, extend the editor with explicit R/G/B fields or a hex field while keeping the on-disk representation as three `u8`s.
 
 ## Design notes for contributors
 
+**Principles, linting, interface style, and compatibility expectations** (including guidance for AI agents) live in **`docs/DESIGN.md`**. Read that file before substantial changes.
+
 1. **Core vs binaries** — Keep terminal setup, event polling, and `stdout` writes in **`tui_game`** / **`tui_level_editor`**. Add gameplay and rendering *data* in **`tui_game_core`**.
 2. **Rendering** — Prefer updating the `FrameBuffer` then **delta-encoding** against the previous committed frame; force a full redraw on resize or when wiring a “full redraw” flag.
-3. **Saves** — Bump **`SAVE_SCHEMA_VERSION`** / **`schema_version`** in save and level formats when you make breaking changes; add migration logic when you need it.
+3. **Saves** — Bump **`SAVE_SCHEMA_VERSION`** / **`schema_version`** when serialized shapes change. Migration logic is optional until the project needs to preserve real user data (see **`docs/DESIGN.md`**).
 4. **Content** — Dialogue trees are static Rust data (`ContentPack::demo()`); they are intentionally **not** serde-friendly as `&'static` graphs. Persist quest/world state via **`SaveGameV1`**, not by serializing the whole content pack.
 5. **Dependencies** — Prefer small, well-scoped crates (e.g. `serde` + `ron`, `unicode-width`). Avoid pulling in a full TUI framework so the main loop and layout stay explicit.
 

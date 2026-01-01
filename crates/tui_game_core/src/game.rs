@@ -17,6 +17,18 @@ use crate::world::{compute_visible, merge_explored, MapGrid, TileTable};
 
 const FOW_RADIUS: i32 = 8;
 
+fn explored_muted_fg(base: Color) -> Color {
+    const M: u32 = 38;
+    const T0: u32 = 90;
+    const T1: u32 = 85;
+    const T2: u32 = 100;
+    Color::rgb(
+        (((base.r as u32) * M + T0 * (100 - M)) / 100).min(255) as u8,
+        (((base.g as u32) * M + T1 * (100 - M)) / 100).min(255) as u8,
+        (((base.b as u32) * M + T2 * (100 - M)) / 100).min(255) as u8,
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameMode {
     MainMenu { selected: usize },
@@ -147,15 +159,17 @@ impl Game {
     ) -> Result<Self, String> {
         let content = ContentPack::demo();
         content.validate().map_err(|e| e.to_string())?;
+        content
+            .validate_level(level)
+            .map_err(|e| e.to_string())?;
         let map = level.to_map()?;
         let n = (map.width as usize) * (map.height as usize);
         let mut entities = EntityArena::new();
         for s in &level.spawns {
-            let npc = if s.kind == "guide" {
-                Some("guide".into())
-            } else {
-                None
-            };
+            let npc = content
+                .blueprint(s.kind.as_str())
+                .and_then(|b| b.dialogue_id)
+                .map(std::string::ToString::to_string);
             entities.spawn(
                 GridPos { x: s.x, y: s.y },
                 s.glyph,
@@ -789,11 +803,12 @@ impl Game {
                 if seen {
                     let g = def.map(|d| d.glyph).unwrap_or('?');
                     cell.ch = g;
+                    let base_fg = def.map(|d| d.fg).unwrap_or(Color::rgb(220, 220, 200));
                     if vis {
-                        cell.fg = Color::rgb(220, 220, 200);
+                        cell.fg = base_fg;
                         cell.bg = Color::rgb(20, 18, 28);
                     } else {
-                        cell.fg = Color::rgb(90, 85, 100);
+                        cell.fg = explored_muted_fg(base_fg);
                         cell.bg = Color::rgb(12, 12, 18);
                     }
                 } else {
