@@ -57,7 +57,8 @@ Tests are **headless** (no TTY required): FoW, RON round-trips for `LevelFile` a
 - **`combat.rs`** — turn-order stub (move / pass / flee)
 - **`save.rs`** — `SaveGameV1`, `WorldSnapshot`, schema version
 - **`level.rs`** — `LevelFile`, `EntitySpawn`, RON (de)serialization
-- **`content.rs`** — demo `ContentPack`, static `DialogueTree`, `EntityBlueprint` registry, `validate()` / `validate_level()`
+- **`content.rs`** — `ContentPack`, dialogue/blueprint types, `validate()` / `validate_level()` (no game-specific tables)
+- **`game_content.rs`** — this game’s static dialogues, entity blueprints, and `game_content::content_pack()` (used by the game and level editor)
 
 ## Game controls (reference)
 
@@ -82,7 +83,7 @@ These are implemented in **`Game`** (`game.rs`); the binary forwards keyboard an
 - **Ctrl+S**: save to the current file path
 - **Ctrl+Q**: quit
 
-Spawns store `kind` matching an **`EntityBlueprint`** in `ContentPack` (see `content.rs` / `DEMO_ENTITY_BLUEPRINTS`). Add blueprints in Rust, then pick them in the editor; **`Ctrl+S`** refuses to save if the level references unknown tile ids or unknown spawn kinds.
+Spawns store `kind` matching an **`EntityBlueprint`** from **`game_content`** (see `game_content.rs`). Add blueprints there, then pick them in the editor; **`Ctrl+S`** refuses to save if the level references unknown tile ids or unknown spawn kinds.
 
 ### Terrain color: ANSI vs RGB
 
@@ -95,7 +96,7 @@ The game and editor already target **24-bit truecolor** (`38;2` / `48;2` in `ren
 1. **Core vs binaries** — Keep terminal setup, event polling, and `stdout` writes in **`tui_game`** / **`tui_level_editor`**. Add gameplay and rendering *data* in **`tui_game_core`**.
 2. **Rendering** — Prefer updating the `FrameBuffer` then **delta-encoding** against the previous committed frame; force a full redraw on resize or when wiring a “full redraw” flag.
 3. **Saves** — Bump **`SAVE_SCHEMA_VERSION`** / **`schema_version`** when serialized shapes change. Migration logic is optional until the project needs to preserve real user data (see **`docs/DESIGN.md`**).
-4. **Content** — Dialogue trees are static Rust data (`ContentPack::demo()`); they are intentionally **not** serde-friendly as `&'static` graphs. Persist quest/world state via **`SaveGameV1`**, not by serializing the whole content pack.
+4. **Content** — Dialogue trees and blueprints live in **`game_content.rs`** as `&'static` data; the **`content`** module holds shared types and validation. Persist quest/world state via **`SaveGameV1`**, not by serializing the whole content pack.
 5. **Dependencies** — Prefer small, well-scoped crates (e.g. `serde` + `ron`, `unicode-width`). Avoid pulling in a full TUI framework so the main loop and layout stay explicit.
 
 ## License

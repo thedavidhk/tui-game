@@ -4,6 +4,7 @@ pub mod combat;
 pub mod content;
 pub mod entity;
 pub mod game;
+pub mod game_content;
 pub mod input;
 pub mod level;
 pub mod rect;

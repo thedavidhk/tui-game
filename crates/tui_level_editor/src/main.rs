@@ -14,6 +14,7 @@ use crossterm::{
     QueueableCommand,
 };
 use tui_game_core::content::ContentPack;
+use tui_game_core::game_content;
 use tui_game_core::EntityBlueprint;
 use tui_game_core::input::{InputBatch, InputEvent, Key, KeyChord};
 use tui_game_core::level::{level_from_ron, level_to_ron, EntitySpawn, LevelFile};
@@ -112,7 +113,7 @@ impl Editor {
                 format!("New level ({} missing)", path.display()),
             )
         };
-        let content = ContentPack::demo();
+        let content = game_content::content_pack();
         let _ = content.validate();
         let mut status = status;
         if let Err(e) = content.validate_level(&level) {

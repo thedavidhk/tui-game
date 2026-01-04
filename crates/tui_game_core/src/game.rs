@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::combat::CombatState;
 use crate::content::{ContentPack, DemoQuestPhase};
+use crate::game_content;
 use crate::entity::{EntityArena, EntityId, GridPos};
 use crate::input::{
     hit_rect_index, InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseEventKind,
@@ -94,7 +95,7 @@ pub struct Game {
 
 impl Game {
     pub fn new_bootstrapped(viewport_w: u16, viewport_h: u16) -> Self {
-        let content = ContentPack::demo();
+        let content = game_content::content_pack();
         let _ = content.validate();
 
         let table = TileTable::default_pack();
@@ -157,7 +158,7 @@ impl Game {
         viewport_w: u16,
         viewport_h: u16,
     ) -> Result<Self, String> {
-        let content = ContentPack::demo();
+        let content = game_content::content_pack();
         content.validate().map_err(|e| e.to_string())?;
         content
             .validate_level(level)
