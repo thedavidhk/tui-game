@@ -6,7 +6,9 @@ pub mod entity;
 pub mod game;
 pub mod game_content;
 pub mod input;
+pub mod item;
 pub mod level;
+pub mod narrative;
 pub mod rect;
 pub mod render;
 pub mod save;
@@ -14,4 +16,6 @@ pub mod ui;
 pub mod world;
 
 pub use content::EntityBlueprint;
+pub use item::{EquipSlot, Inventory, ItemCatalog, ItemCategory, ItemDef, ItemStack};
+pub use narrative::NarrativeState;
 pub use game::Game;

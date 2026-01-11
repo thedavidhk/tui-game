@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::item::ItemStack;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EntityId(pub u32);
 
@@ -20,6 +22,10 @@ pub struct EntityArena {
     pub name: Vec<String>,
     /// If `Some`, entity is interactable as NPC with this content id string.
     pub npc_kind: Vec<Option<String>>,
+    /// Ground pickup when `npc_kind` is `None` (world item entity).
+    pub item: Vec<Option<ItemStack>>,
+    /// Opens `ItemTransfer` when adjacent interact in exploration.
+    pub is_container: Vec<bool>,
     /// Player entity always id 0 after bootstrap if used.
     pub player: Option<EntityId>,
 }
@@ -36,6 +42,8 @@ impl EntityArena {
         name: String,
         blocks_movement: bool,
         npc_kind: Option<String>,
+        item: Option<ItemStack>,
+        is_container: bool,
     ) -> EntityId {
         let id = EntityId(self.next_id);
         self.next_id = self.next_id.saturating_add(1);
@@ -47,6 +55,8 @@ impl EntityArena {
         self.glyph[i] = glyph;
         self.name[i] = name;
         self.npc_kind[i] = npc_kind;
+        self.item[i] = item;
+        self.is_container[i] = is_container;
         id
     }
 
@@ -58,7 +68,40 @@ impl EntityArena {
             self.glyph.push('?');
             self.name.push(String::new());
             self.npc_kind.push(None);
+            self.item.push(None);
+            self.is_container.push(false);
         }
+    }
+
+    /// All live entities at `(x, y)` in arbitrary order.
+    pub fn occupants_at(&self, x: i32, y: i32) -> Vec<EntityId> {
+        let mut out = Vec::new();
+        for (i, alive) in self.alive.iter().enumerate() {
+            if !alive {
+                continue;
+            }
+            if let Some(p) = self.position[i] {
+                if p.x == x && p.y == y {
+                    out.push(EntityId(i as u32));
+                }
+            }
+        }
+        out
+    }
+
+    pub fn despawn(&mut self, id: EntityId) {
+        let i = id.0 as usize;
+        if i >= self.alive.len() {
+            return;
+        }
+        self.alive[i] = false;
+        self.position[i] = None;
+        self.blocks_movement[i] = false;
+        self.npc_kind[i] = None;
+        self.item[i] = None;
+        self.is_container[i] = false;
+        self.glyph[i] = '?';
+        self.name[i].clear();
     }
 
     pub fn set_player(&mut self, id: EntityId) {
@@ -80,26 +123,28 @@ impl EntityArena {
     }
 
     pub fn occupant_at(&self, x: i32, y: i32) -> Option<EntityId> {
-        for (i, alive) in self.alive.iter().enumerate() {
-            if !alive {
-                continue;
-            }
-            if let Some(p) = self.position[i] {
-                if p.x == x && p.y == y {
-                    return Some(EntityId(i as u32));
-                }
-            }
-        }
-        None
+        self.occupants_at(x, y).into_iter().next()
+    }
+
+    pub fn first_npc_at(&self, x: i32, y: i32) -> Option<EntityId> {
+        self.occupants_at(x, y)
+            .into_iter()
+            .find(|&e| self.npc_kind[e.0 as usize].is_some())
+    }
+
+    pub fn first_container_at(&self, x: i32, y: i32) -> Option<EntityId> {
+        self.occupants_at(x, y)
+            .into_iter()
+            .find(|&e| self.is_container[e.0 as usize])
     }
 
     pub fn can_move_to(&self, map_blocked: bool, dest: GridPos, ignore: Option<EntityId>) -> bool {
         if map_blocked {
             return false;
         }
-        if let Some(oid) = self.occupant_at(dest.x, dest.y) {
+        for oid in self.occupants_at(dest.x, dest.y) {
             if Some(oid) == ignore {
-                return true;
+                continue;
             }
             if self.blocks_movement[oid.0 as usize] {
                 return false;

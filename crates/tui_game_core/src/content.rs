@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::item::{ItemCatalog, ItemDef};
 use crate::level::LevelFile;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -12,10 +13,52 @@ pub struct NpcId(pub &'static str);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct QuestId(pub &'static str);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DemoQuestPhase {
+    #[default]
+    NotStarted,
+    TalkedToGuide,
+    /// Player received the cellar key (inventory or dialogue `give_item`).
+    HasCellarKey,
+    /// Turned in key to the guide (fetch demo).
+    ReturnedKey,
+    Done,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestProgress {
+    pub demo: DemoQuestPhase,
+}
+
+/// Gating for a [`DialogueChoice`]; all must hold before effects run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Condition {
+    HasItem(&'static str),
+}
+
+/// Narrative / inventory mutations applied after [`Condition`] checks pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Effect {
+    GiveItem(&'static str),
+    TakeItem(&'static str),
+    SetDemoQuest(DemoQuestPhase),
+    SetQuestStage {
+        quest: &'static str,
+        stage: u32,
+    },
+    AddQuestStage {
+        quest: &'static str,
+        delta: u32,
+    },
+    Log(&'static str),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DialogueChoice {
     pub label: &'static str,
     pub next: usize,
+    pub requires: &'static [Condition],
+    pub effects: &'static [Effect],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,19 +71,6 @@ pub struct DialogueNode {
 pub struct DialogueTree {
     pub id: &'static str,
     pub nodes: &'static [DialogueNode],
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DemoQuestPhase {
-    #[default]
-    NotStarted,
-    TalkedToGuide,
-    Done,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuestProgress {
-    pub demo: DemoQuestPhase,
 }
 
 /// Static definition for an entity type that may appear in [`LevelFile`](crate::level::LevelFile)
@@ -58,6 +88,10 @@ pub struct EntityBlueprint {
     pub default_label: &'static str,
     /// When set, must exist in `ContentPack::dialogues` and is used as `npc_kind` for talk hooks.
     pub dialogue_id: Option<&'static str>,
+    /// When set, spawn carries this world pickup (`ItemDef.id`).
+    pub world_item: Option<&'static str>,
+    /// Entity opens `ItemTransfer` when interacted adjacent.
+    pub is_container: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +99,7 @@ pub struct ContentPack {
     pub dialogues: HashMap<&'static str, &'static DialogueTree>,
     pub guide_dialogue: &'static DialogueTree,
     pub entity_blueprints: &'static [EntityBlueprint],
+    pub item_defs: &'static [ItemDef],
 }
 
 impl ContentPack {
@@ -73,6 +108,20 @@ impl ContentPack {
         self.entity_blueprints
             .iter()
             .find(|b| b.kind == kind)
+    }
+
+    #[must_use]
+    pub fn item_catalog(&self) -> ItemCatalog {
+        ItemCatalog::new(self.item_defs)
+    }
+
+    #[must_use]
+    pub fn item_def(&self, id: &str) -> Option<&'static ItemDef> {
+        self.item_catalog().get(id)
+    }
+
+    fn item_id_known(&self, id: &str) -> bool {
+        self.item_catalog().get(id).is_some()
     }
 
     /// Check that a level only references known tiles and entity [`EntityBlueprint::kind`] values.
@@ -130,7 +179,122 @@ impl ContentPack {
                     ));
                 }
             }
+            if let Some(wi) = b.world_item {
+                if !self.item_id_known(wi) {
+                    return Err(format!(
+                        "entity blueprint {:?} world_item {:?} missing from item_defs",
+                        b.kind, wi
+                    ));
+                }
+            }
+        }
+        let mut item_ids = HashSet::new();
+        for d in self.item_defs {
+            if !item_ids.insert(d.id) {
+                return Err(format!("duplicate item_def id {}", d.id));
+            }
+        }
+        for (k, tree) in &self.dialogues {
+            for (ni, node) in tree.nodes.iter().enumerate() {
+                for (ci, c) in node.choices.iter().enumerate() {
+                    for cond in c.requires {
+                        match *cond {
+                            Condition::HasItem(id) => {
+                                if !self.item_id_known(id) {
+                                    return Err(format!(
+                                        "dialogue {k} node {ni} choice {ci} HasItem unknown {id:?}"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    for eff in c.effects {
+                        match *eff {
+                            Effect::GiveItem(id) | Effect::TakeItem(id) => {
+                                if !self.item_id_known(id) {
+                                    return Err(format!(
+                                        "dialogue {k} node {ni} choice {ci} effect item unknown {id:?}"
+                                    ));
+                                }
+                            }
+                            Effect::SetDemoQuest(_)
+                            | Effect::SetQuestStage { .. }
+                            | Effect::AddQuestStage { .. }
+                            | Effect::Log(_) => {}
+                        }
+                    }
+                }
+            }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod validate_tests {
+    use std::collections::HashMap;
+
+    use super::{ContentPack, DialogueChoice, DialogueNode, DialogueTree, Effect, EntityBlueprint};
+    use crate::item::{ItemCategory, ItemDef};
+
+    static BAD_GIVE_EFF: &[Effect] = &[Effect::GiveItem("not_an_item")];
+    static BAD_GIVE: [DialogueChoice; 1] = [DialogueChoice {
+        label: "x",
+        next: 0,
+        requires: &[],
+        effects: BAD_GIVE_EFF,
+    }];
+    static BAD_NODE: [DialogueNode; 1] = [DialogueNode {
+        text: "t",
+        choices: &BAD_GIVE,
+    }];
+    static BAD_TREE: DialogueTree = DialogueTree {
+        id: "bad",
+        nodes: &BAD_NODE,
+    };
+
+    #[test]
+    fn validate_rejects_unknown_give_item() {
+        let mut dialogues = HashMap::new();
+        dialogues.insert("bad", &BAD_TREE);
+        let pack = ContentPack {
+            dialogues,
+            guide_dialogue: &BAD_TREE,
+            entity_blueprints: &[],
+            item_defs: &[],
+        };
+        let err = pack.validate().unwrap_err();
+        assert!(err.contains("effect item"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_blueprint_world_item_unknown() {
+        let mut dialogues = HashMap::new();
+        dialogues.insert("bad", &BAD_TREE);
+        static BP: [EntityBlueprint; 1] = [EntityBlueprint {
+            kind: "x",
+            display_name: "X",
+            description: "x",
+            default_glyph: 'x',
+            default_label: "X",
+            dialogue_id: None,
+            world_item: Some("nope"),
+            is_container: false,
+        }];
+        static IDS: [ItemDef; 1] = [ItemDef {
+            id: "a",
+            name: "A",
+            description: "d",
+            glyph: 'a',
+            category: ItemCategory::Mundane,
+        }];
+        let pack = ContentPack {
+            dialogues,
+            guide_dialogue: &BAD_TREE,
+            entity_blueprints: &BP,
+            item_defs: &IDS,
+        };
+        let err = pack.validate().unwrap_err();
+        assert!(err.contains("world_item"), "{err}");
     }
 }

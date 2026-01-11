@@ -1,13 +1,15 @@
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, Style};
 
+use super::hit::{UiHitState, UiHitTarget};
+
 pub fn draw_menu(
     fb: &mut FrameBuffer,
     r: Rect,
     title: &str,
     items: &[&str],
     selected: usize,
-    mouse_regions: &mut Vec<Rect>,
+    hits: &mut UiHitState,
 ) {
     super::draw_bordered_panel(fb, r, title);
     let inner = Rect::new(r.x + 1, r.y + 1, r.w.saturating_sub(2), r.h.saturating_sub(2));
@@ -49,6 +51,9 @@ pub fn draw_menu(
             );
             x = x.saturating_add(1);
         }
-        mouse_regions.push(Rect::new(inner.x, y, inner.w, 1));
+        hits.push(
+            UiHitTarget::MainMenuItem(i),
+            Rect::new(inner.x, y, inner.w, 1),
+        );
     }
 }

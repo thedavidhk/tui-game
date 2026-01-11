@@ -1,19 +1,22 @@
 //! Top-level game state, mode stack, and stepping.
 
+mod modes;
+
 use std::fs;
 
 use serde::{Deserialize, Serialize};
 
 use crate::combat::CombatState;
 use crate::content::{ContentPack, DemoQuestPhase};
-use crate::game_content;
 use crate::entity::{EntityArena, EntityId, GridPos};
-use crate::input::{
-    hit_rect_index, InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseEventKind,
-};
+use crate::game_content;
+use crate::input::{InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseEventKind};
+use crate::item::{Inventory, ItemCategory, ItemStack};
 use crate::level::LevelFile;
-use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
+use crate::narrative::NarrativeState;
 use crate::rect::Rect;
+use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
+use crate::ui::hit::{UiHitState, UiHitTarget};
 use crate::world::{compute_visible, merge_explored, MapGrid, TileTable};
 
 const FOW_RADIUS: i32 = 8;
@@ -30,6 +33,12 @@ fn explored_muted_fg(base: Color) -> Color {
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransferFocus {
+    Player,
+    Container,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameMode {
     MainMenu { selected: usize },
@@ -39,6 +48,15 @@ pub enum GameMode {
         dialogue_id: String,
         node_index: usize,
         choice_cursor: usize,
+    },
+    Inventory {
+        cursor: usize,
+    },
+    ItemTransfer {
+        container: EntityId,
+        focus: TransferFocus,
+        cursor_player: usize,
+        cursor_container: usize,
     },
     Combat(CombatState),
 }
@@ -66,11 +84,6 @@ impl GameModeStack {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NarrativeState {
-    pub quests: DemoQuestPhase,
-}
-
 #[derive(Clone, Debug)]
 pub struct Game {
     pub modes: GameModeStack,
@@ -87,9 +100,8 @@ pub struct Game {
     pub log: Vec<String>,
     pub menu_items: Vec<&'static str>,
     pub quit_requested: bool,
-    /// Last-frame hit targets for main menu rows (keyboard fallback always works).
-    pub menu_mouse: Vec<Rect>,
-    pub dialogue_mouse: Vec<Rect>,
+    /// Last-frame mouse hit targets (menu rows, dialogue choices, …).
+    pub ui_hits: UiHitState,
     pub last_perf: Option<FrameSample>,
 }
 
@@ -117,6 +129,8 @@ impl Game {
             "You".into(),
             false,
             None,
+            None,
+            false,
         );
         entities.set_player(player);
         entities.spawn(
@@ -125,6 +139,26 @@ impl Game {
             "Guide".into(),
             true,
             Some("guide".into()),
+            None,
+            false,
+        );
+        entities.spawn(
+            GridPos { x: 6, y: 5 },
+            ',',
+            "Key".into(),
+            false,
+            None,
+            Some(ItemStack::new("cellar_key", 1)),
+            false,
+        );
+        entities.spawn(
+            GridPos { x: 8, y: 5 },
+            '□',
+            "Chest".into(),
+            true,
+            None,
+            None,
+            true,
         );
 
         let n = (map.width as usize) * (map.height as usize);
@@ -142,11 +176,10 @@ impl Game {
             debug_overlay: false,
             viewport_w,
             viewport_h,
-            log: vec!["Welcome. Arrows/WASD move, E interact, F1 debug, Q quit menu.".into()],
+            log: vec!["Welcome. WASD move, E interact, I inventory, F1 debug.".into()],
             menu_items: vec!["Start game", "Quit"],
             quit_requested: false,
-            menu_mouse: Vec::new(),
-            dialogue_mouse: Vec::new(),
+            ui_hits: UiHitState::default(),
             last_perf: None,
         };
         game.refresh_fow();
@@ -167,16 +200,31 @@ impl Game {
         let n = (map.width as usize) * (map.height as usize);
         let mut entities = EntityArena::new();
         for s in &level.spawns {
-            let npc = content
-                .blueprint(s.kind.as_str())
-                .and_then(|b| b.dialogue_id)
+            let bp = content.blueprint(s.kind.as_str()).ok_or_else(|| {
+                format!(
+                    "internal error: missing blueprint for spawn kind {:?}",
+                    s.kind
+                )
+            })?;
+            let npc = bp
+                .dialogue_id
                 .map(std::string::ToString::to_string);
+            let item = bp.world_item.map(|id| ItemStack::new(id, 1));
+            let blocks_movement = if item.is_some() {
+                false
+            } else if bp.is_container {
+                true
+            } else {
+                npc.is_some()
+            };
             entities.spawn(
                 GridPos { x: s.x, y: s.y },
                 s.glyph,
                 s.name.clone(),
-                true,
+                blocks_movement,
                 npc,
+                item,
+                bp.is_container,
             );
         }
         let player = entities.spawn(
@@ -188,6 +236,8 @@ impl Game {
             "You".into(),
             false,
             None,
+            None,
+            false,
         );
         entities.set_player(player);
 
@@ -208,8 +258,7 @@ impl Game {
             log: vec![format!("Loaded level: {}", level.name)],
             menu_items: vec!["Start game", "Quit"],
             quit_requested: false,
-            menu_mouse: Vec::new(),
-            dialogue_mouse: Vec::new(),
+            ui_hits: UiHitState::default(),
             last_perf: None,
         };
         game.refresh_fow();
@@ -255,18 +304,55 @@ impl Game {
         if self.map.blocks_movement(nx, ny) {
             return;
         }
-        if let Some(occ) = self.entities.occupant_at(nx, ny) {
-            if self.entities.npc_kind[occ.0 as usize].is_some() {
+        if let Some(occ) = self.entities.first_npc_at(nx, ny) {
+            if occ != pid {
                 self.start_dialogue(occ);
                 return;
             }
-            if self.entities.blocks_movement[occ.0 as usize] {
+        }
+        for oid in self.entities.occupants_at(nx, ny) {
+            if oid == pid {
+                continue;
+            }
+            if self.entities.blocks_movement[oid.0 as usize] {
                 return;
             }
         }
         self.entities.set_pos(pid, GridPos { x: nx, y: ny });
         self.log.push(format!("Move to ({}, {}).", nx, ny));
+        self.try_pickup_ground_items(pid);
         self.refresh_fow();
+    }
+
+    fn try_pickup_ground_items(&mut self, player: EntityId) {
+        let Some(p) = self.entities.pos(player) else {
+            return;
+        };
+        let occupants = self.entities.occupants_at(p.x, p.y);
+        for eid in occupants {
+            if eid == player {
+                continue;
+            }
+            if self.entities.npc_kind[eid.0 as usize].is_some() {
+                continue;
+            }
+            if self.entities.is_container[eid.0 as usize] {
+                continue;
+            }
+            let Some(stack) = self.entities.item[eid.0 as usize].clone() else {
+                continue;
+            };
+            self.narrative.inventory.add(stack.id.clone(), stack.count);
+            if stack.id == "cellar_key" {
+                match self.narrative.quests {
+                    DemoQuestPhase::ReturnedKey | DemoQuestPhase::Done => {}
+                    _ => self.narrative.quests = DemoQuestPhase::HasCellarKey,
+                }
+            }
+            self.log
+                .push(format!("Picked up {} x{}.", stack.id, stack.count));
+            self.entities.despawn(eid);
+        }
     }
 
     fn start_dialogue(&mut self, npc: EntityId) {
@@ -282,6 +368,22 @@ impl Game {
         self.log.push(format!("Talking ({}).", kind));
     }
 
+    fn start_item_transfer(&mut self, container: EntityId) {
+        self.narrative
+            .container_inventories
+            .entry(container.0)
+            .or_default();
+        self.modes.push(GameMode::ItemTransfer {
+            container,
+            focus: TransferFocus::Player,
+            cursor_player: 0,
+            cursor_container: 0,
+        });
+        self
+            .log
+            .push("Transfer: Tab/hl side, jk rows, Enter move stack, Esc close.".into());
+    }
+
     pub fn step(&mut self, input: &InputBatch) {
         for ev in &input.events {
             self.handle_event(ev.clone());
@@ -289,23 +391,17 @@ impl Game {
     }
 
     fn handle_event(&mut self, ev: InputEvent) {
-        match self.modes.current().cloned() {
-            None => {}
-            Some(GameMode::MainMenu { selected }) => self.handle_menu(ev, selected),
-            Some(GameMode::Exploration) => self.handle_explore(ev),
-            Some(GameMode::Dialogue { .. }) => self.handle_dialogue(ev),
-            Some(GameMode::Combat(ref c)) => self.handle_combat(ev, c.clone()),
-        }
+        modes::route(self, ev);
     }
 
-    fn handle_menu(&mut self, ev: InputEvent, selected: usize) {
+    pub(crate) fn handle_menu(&mut self, ev: InputEvent, selected: usize) {
         match ev {
             InputEvent::Mouse {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 cell,
                 ..
             } => {
-                if let Some(i) = hit_rect_index(cell, &self.menu_mouse) {
+                if let Some(UiHitTarget::MainMenuItem(i)) = self.ui_hits.pick(cell) {
                     if i < self.menu_items.len() {
                         if let Some(GameMode::MainMenu { selected: s }) = self.modes.current_mut() {
                             *s = i;
@@ -348,7 +444,7 @@ impl Game {
         }
     }
 
-    fn handle_explore(&mut self, ev: InputEvent) {
+    pub(crate) fn handle_explore(&mut self, ev: InputEvent) {
         match ev {
             InputEvent::Key(KeyChord { key: Key::F(1), .. }) => {
                 self.debug_overlay = !self.debug_overlay;
@@ -364,6 +460,11 @@ impl Game {
                     Ok(()) => {}
                     Err(e) => self.log.push(format!("Load failed: {e}")),
                 }
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Char('i'), ..
+            }) => {
+                self.modes.push(GameMode::Inventory { cursor: 0 });
             }
             InputEvent::Key(KeyChord {
                 key: Key::Char('e'), ..
@@ -407,7 +508,7 @@ impl Game {
         }
     }
 
-    fn try_interact(&mut self) {
+    pub(crate) fn try_interact(&mut self) {
         let Some(pid) = self.player_id() else {
             return;
         };
@@ -421,18 +522,20 @@ impl Game {
                 }
                 let nx = p.x + dx;
                 let ny = p.y + dy;
-                if let Some(occ) = self.entities.occupant_at(nx, ny) {
-                    if self.entities.npc_kind[occ.0 as usize].is_some() {
-                        self.start_dialogue(occ);
-                        return;
-                    }
+                if let Some(occ) = self.entities.first_npc_at(nx, ny) {
+                    self.start_dialogue(occ);
+                    return;
+                }
+                if let Some(chest) = self.entities.first_container_at(nx, ny) {
+                    self.start_item_transfer(chest);
+                    return;
                 }
             }
         }
-        self.log.push("No one to talk to nearby.".into());
+        self.log.push("Nothing to interact with nearby.".into());
     }
 
-    fn try_start_combat(&mut self) {
+    pub(crate) fn try_start_combat(&mut self) {
         let Some(pid) = self.player_id() else {
             return;
         };
@@ -459,7 +562,7 @@ impl Game {
         self.log.push("Combat started (stub). Tab: end turn, f: flee.".into());
     }
 
-    fn handle_dialogue(&mut self, ev: InputEvent) {
+    pub(crate) fn handle_dialogue(&mut self, ev: InputEvent) {
         let (dialogue_id, node_index) = match self.modes.current() {
             Some(GameMode::Dialogue {
                 dialogue_id,
@@ -486,7 +589,7 @@ impl Game {
                 cell,
                 ..
             } => {
-                if let Some(i) = hit_rect_index(cell, &self.dialogue_mouse) {
+                if let Some(UiHitTarget::DialogueChoice(i)) = self.ui_hits.pick(cell) {
                     if let Some(GameMode::Dialogue { choice_cursor: c, .. }) =
                         self.modes.current_mut()
                     {
@@ -543,7 +646,7 @@ impl Game {
         }
     }
 
-    fn apply_dialogue_choice(
+    pub(crate) fn apply_dialogue_choice(
         &mut self,
         tree: &'static crate::content::DialogueTree,
         exit_sentinel: usize,
@@ -563,6 +666,18 @@ impl Game {
         let Some(choice) = node.choices.get(choice_cursor) else {
             return;
         };
+        if let Err(msg) = self.narrative.check_requires(choice.requires) {
+            self.log.push(msg);
+            return;
+        }
+        if let Err(e) = self
+            .narrative
+            .apply_effects(&mut self.log, choice.effects)
+        {
+            self.log
+                .push(format!("Dialogue effect failed: {e:?}"));
+            return;
+        }
         let next = choice.next;
         if next == exit_sentinel {
             let _ = self.modes.pop();
@@ -577,13 +692,252 @@ impl Game {
             *ni = next;
             *cc = 0;
         }
-        if next == 1 {
-            self.narrative.quests = DemoQuestPhase::TalkedToGuide;
-            self.log.push("You listened.".into());
+    }
+
+    pub(crate) fn handle_inventory(&mut self, ev: InputEvent) {
+        let n = self.narrative.inventory.stacks.len();
+        match ev {
+            InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
+                let _ = self.modes.pop();
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Up | Key::Char('k'),
+                ..
+            }) => {
+                if let Some(GameMode::Inventory { cursor }) = self.modes.current_mut() {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Down | Key::Char('j'),
+                ..
+            }) => {
+                if let Some(GameMode::Inventory { cursor }) = self.modes.current_mut() {
+                    let max = n.saturating_sub(1);
+                    *cursor = (*cursor + 1).min(max);
+                }
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Char('u'),
+                ..
+            }) => {
+                let Some(GameMode::Inventory { cursor }) = self.modes.current().cloned() else {
+                    return;
+                };
+                if n == 0 {
+                    return;
+                }
+                let idx = cursor.min(n.saturating_sub(1));
+                let Some(stack) = self.narrative.inventory.stacks.get(idx) else {
+                    return;
+                };
+                let id_owned = stack.id.clone();
+                let catlog = self.content.item_catalog();
+                let Some(def) = catlog.get(id_owned.as_str()) else {
+                    self.log.push(format!(
+                        "{}: unknown item.",
+                        catlog.display_name(id_owned.as_str())
+                    ));
+                    return;
+                };
+                match def.category {
+                    ItemCategory::Consumable => {
+                        let name = def.name;
+                        if self.narrative.inventory.try_remove(&id_owned, 1).is_ok() {
+                            self.log
+                                .push(format!("Used {name} (no effect yet)."));
+                        }
+                    }
+                    _ => self.log.push("That item is not consumable (u).".into()),
+                }
+                if let Some(GameMode::Inventory { cursor }) = self.modes.current_mut() {
+                    *cursor = (*cursor).min(self.narrative.inventory.stacks.len().saturating_sub(1));
+                }
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Char('e'),
+                ..
+            }) => {
+                let Some(GameMode::Inventory { cursor }) = self.modes.current().cloned() else {
+                    return;
+                };
+                if n == 0 {
+                    return;
+                }
+                let idx = cursor.min(n.saturating_sub(1));
+                let Some(stack) = self.narrative.inventory.stacks.get(idx) else {
+                    return;
+                };
+                let id_owned = stack.id.clone();
+                let catlog = self.content.item_catalog();
+                let Some(def) = catlog.get(id_owned.as_str()) else {
+                    self.log.push(format!(
+                        "{}: unknown item.",
+                        catlog.display_name(id_owned.as_str())
+                    ));
+                    return;
+                };
+                match def.category {
+                    ItemCategory::Equippable(slot) => {
+                        if self.narrative.inventory.try_remove(&id_owned, 1).is_err() {
+                            self.log.push("Could not equip.".into());
+                            return;
+                        }
+                        if let Some(prev) = self
+                            .narrative
+                            .equipment
+                            .insert(slot, id_owned.clone())
+                        {
+                            self.narrative.inventory.add(prev, 1);
+                        }
+                        self.log.push(format!("Equipped {} (stub).", def.name));
+                    }
+                    _ => self.log.push("That item is not equippable (e).".into()),
+                }
+                if let Some(GameMode::Inventory { cursor }) = self.modes.current_mut() {
+                    *cursor = (*cursor).min(self.narrative.inventory.stacks.len().saturating_sub(1));
+                }
+            }
+            _ => {}
         }
     }
 
-    fn handle_combat(&mut self, ev: InputEvent, state: CombatState) {
+    pub(crate) fn handle_item_transfer(&mut self, ev: InputEvent) {
+        match ev {
+            InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
+                let _ = self.modes.pop();
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Tab | Key::Char('h') | Key::Char('l'),
+                ..
+            }) => {
+                if let Some(GameMode::ItemTransfer { focus, .. }) = self.modes.current_mut() {
+                    *focus = match *focus {
+                        TransferFocus::Player => TransferFocus::Container,
+                        TransferFocus::Container => TransferFocus::Player,
+                    };
+                }
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Up | Key::Char('k'),
+                ..
+            }) => {
+                if let Some(GameMode::ItemTransfer {
+                    focus,
+                    cursor_player,
+                    cursor_container,
+                    container,
+                }) = self.modes.current_mut()
+                {
+                    let pn = self.narrative.inventory.stacks.len();
+                    let cn = self
+                        .narrative
+                        .container_inventories
+                        .entry(container.0)
+                        .or_default()
+                        .stacks
+                        .len();
+                    match focus {
+                        TransferFocus::Player => {
+                            *cursor_player = cursor_player
+                                .saturating_sub(1)
+                                .min(pn.saturating_sub(1));
+                        }
+                        TransferFocus::Container => {
+                            *cursor_container = cursor_container
+                                .saturating_sub(1)
+                                .min(cn.saturating_sub(1));
+                        }
+                    }
+                }
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Down | Key::Char('j'),
+                ..
+            }) => {
+                if let Some(GameMode::ItemTransfer {
+                    focus,
+                    cursor_player,
+                    cursor_container,
+                    container,
+                }) = self.modes.current_mut()
+                {
+                    let pn = self.narrative.inventory.stacks.len();
+                    let cn = self
+                        .narrative
+                        .container_inventories
+                        .entry(container.0)
+                        .or_default()
+                        .stacks
+                        .len();
+                    match focus {
+                        TransferFocus::Player => {
+                            let max = pn.saturating_sub(1);
+                            *cursor_player = (*cursor_player + 1).min(max);
+                        }
+                        TransferFocus::Container => {
+                            let max = cn.saturating_sub(1);
+                            *cursor_container = (*cursor_container + 1).min(max);
+                        }
+                    }
+                }
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Enter,
+                ..
+            }) => {
+                let Some(GameMode::ItemTransfer {
+                    container,
+                    focus,
+                    cursor_player,
+                    cursor_container,
+                }) = self.modes.current().cloned()
+                else {
+                    return;
+                };
+                {
+                    let inv = &mut self.narrative.inventory;
+                    let ce = self
+                        .narrative
+                        .container_inventories
+                        .entry(container.0)
+                        .or_default();
+                    match focus {
+                        TransferFocus::Player => {
+                            if cursor_player < inv.stacks.len() {
+                                let _ = Inventory::try_move_stack_index(inv, ce, cursor_player);
+                            }
+                        }
+                        TransferFocus::Container => {
+                            if cursor_container < ce.stacks.len() {
+                                let _ = Inventory::try_move_stack_index(ce, inv, cursor_container);
+                            }
+                        }
+                    }
+                }
+                if let Some(GameMode::ItemTransfer {
+                    cursor_player: cp,
+                    cursor_container: cc,
+                    container: cid,
+                    ..
+                }) = self.modes.current_mut()
+                {
+                    let pn = self.narrative.inventory.stacks.len();
+                    let cn = self
+                        .narrative
+                        .container_inventories
+                        .get(&cid.0)
+                        .map(|c| c.stacks.len())
+                        .unwrap_or(0);
+                    *cp = (*cp).min(pn.saturating_sub(1));
+                    *cc = (*cc).min(cn.saturating_sub(1));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn handle_combat(&mut self, ev: InputEvent, state: CombatState) {
         let mut end = false;
         let mut next = state.clone();
         match ev {
@@ -650,7 +1004,7 @@ impl Game {
         }
     }
 
-    fn combat_try_move(&mut self, state: &mut CombatState, dx: i32, dy: i32) {
+    pub(crate) fn combat_try_move(&mut self, state: &mut CombatState, dx: i32, dy: i32) {
         let Some(actor) = state.current_actor() else {
             return;
         };
@@ -680,15 +1034,14 @@ impl Game {
         hud_rect: Rect,
         log_rect: Rect,
     ) {
-        self.menu_mouse.clear();
-        self.dialogue_mouse.clear();
+        self.ui_hits.clear();
         self.compose_world(fb, world_rect);
         crate::ui::draw_bordered_panel(fb, hud_rect, "Status");
         let inner = Rect::new(hud_rect.x + 1, hud_rect.y + 1, hud_rect.w.saturating_sub(2), hud_rect.h.saturating_sub(2));
         let lines = vec![
             format!("Mode: {}", self.mode_label()),
             format!("Quest: {:?}", self.narrative.quests),
-            "E: talk  C: combat".into(),
+            "I: inventory  E: talk/chest  C: combat".into(),
             "F1: debug  F5/F9: save/load".into(),
         ];
         crate::ui::draw_text_block(fb, inner, &lines);
@@ -707,7 +1060,7 @@ impl Game {
                 "Main menu",
                 &self.menu_items,
                 selected,
-                &mut self.menu_mouse,
+                &mut self.ui_hits,
             );
         }
 
@@ -726,7 +1079,7 @@ impl Game {
                 .unwrap_or(self.content.guide_dialogue);
             if let Some(node) = tree.nodes.get(node_index) {
                 let dr = Rect::new(2, fb.height.saturating_sub(12), fb.width.saturating_sub(4), 10);
-                crate::ui::draw_dialogue(fb, dr, node, choice_cursor, &mut self.dialogue_mouse);
+                crate::ui::draw_dialogue(fb, dr, node, choice_cursor, &mut self.ui_hits);
             }
         }
 
@@ -744,6 +1097,25 @@ impl Game {
             crate::ui::draw_bordered_panel(fb, cr, "Combat");
             let inner = Rect::new(cr.x + 1, cr.y + 1, cr.w.saturating_sub(2), cr.h.saturating_sub(2));
             crate::ui::draw_text_block(fb, inner, &lines);
+        }
+
+        if let Some(GameMode::Inventory { cursor }) = self.modes.current() {
+            self.compose_inventory_overlay(fb, *cursor);
+        }
+        if let Some(GameMode::ItemTransfer {
+            container,
+            focus,
+            cursor_player,
+            cursor_container,
+        }) = self.modes.current()
+        {
+            self.compose_item_transfer_overlay(
+                fb,
+                *container,
+                *focus,
+                *cursor_player,
+                *cursor_container,
+            );
         }
 
         if self.debug_overlay {
@@ -769,9 +1141,156 @@ impl Game {
             Some(GameMode::MainMenu { .. }) => "menu",
             Some(GameMode::Exploration) => "explore",
             Some(GameMode::Dialogue { .. }) => "dialogue",
+            Some(GameMode::Inventory { .. }) => "inventory",
+            Some(GameMode::ItemTransfer { .. }) => "transfer",
             Some(GameMode::Combat(_)) => "combat",
             None => "none",
         }
+    }
+
+    fn compose_inventory_overlay(&self, fb: &mut FrameBuffer, cursor: usize) {
+        let (left, right) = crate::ui::layout::split_horizontal_outer(
+            fb.width,
+            fb.height,
+            2,
+            3,
+            3,
+            2,
+            18,
+        );
+        crate::ui::draw_bordered_panel(fb, left, "Inventory");
+        let cat = self.content.item_catalog();
+        let stacks = &self.narrative.inventory.stacks;
+        let n = stacks.len();
+        let mut rows: Vec<String> = Vec::new();
+        for (i, s) in stacks.iter().enumerate() {
+            let mark = if n > 0 && i == cursor.min(n.saturating_sub(1)) {
+                "> "
+            } else {
+                "  "
+            };
+            let label = cat.display_name(s.id.as_str());
+            rows.push(format!("{}{} x{}", mark, label, s.count));
+        }
+        if rows.is_empty() {
+            rows.push("(empty)".into());
+        }
+        rows.push("---".into());
+        rows.push("u use  e equip  Esc close".into());
+        let inner = crate::ui::layout::panel_inner(left);
+        crate::ui::draw_text_block(fb, inner, &rows);
+
+        crate::ui::draw_bordered_panel(fb, right, "Detail");
+        let line_w = right.w.saturating_sub(2) as usize;
+        let mut detail: Vec<String> = Vec::new();
+        if let Some(s) = stacks.get(cursor.min(n.saturating_sub(1))) {
+            if let Some(def) = cat.get(s.id.as_str()) {
+                detail.push(def.name.to_string());
+                detail.push(cat.category_line(s.id.as_str()));
+                detail.push(String::new());
+                detail.extend(crate::ui::wrap::wrap_words(
+                    def.description,
+                    line_w.max(12),
+                ));
+            } else {
+                detail.push(s.id.clone());
+            }
+        } else {
+            detail.push("(no stacks)".into());
+        }
+        let r_inner = crate::ui::layout::panel_inner(right);
+        crate::ui::draw_text_block(fb, r_inner, &detail);
+    }
+
+    fn compose_item_transfer_overlay(
+        &self,
+        fb: &mut FrameBuffer,
+        container: EntityId,
+        focus: TransferFocus,
+        cursor_player: usize,
+        cursor_container: usize,
+    ) {
+        let (left, right) = crate::ui::layout::split_horizontal_outer(
+            fb.width,
+            fb.height,
+            2,
+            2,
+            3,
+            2,
+            18,
+        );
+        let cat = self.content.item_catalog();
+        let cname = self
+            .entities
+            .name
+            .get(container.0 as usize)
+            .cloned()
+            .unwrap_or_else(|| "Chest".into());
+        let left_title = match focus {
+            TransferFocus::Player => "You (*)",
+            TransferFocus::Container => "You",
+        };
+        let right_title = match focus {
+            TransferFocus::Container => format!("{cname} (*)"),
+            TransferFocus::Player => cname,
+        };
+        crate::ui::draw_bordered_panel(fb, left, left_title);
+        crate::ui::draw_bordered_panel(fb, right, right_title.as_str());
+
+        let pn = self.narrative.inventory.stacks.len();
+        let cont_stacks = self
+            .narrative
+            .container_inventories
+            .get(&container.0)
+            .map(|v| v.stacks.as_slice())
+            .unwrap_or(&[]);
+        let cn = cont_stacks.len();
+
+        let mut pr: Vec<String> = Vec::new();
+        for (i, s) in self.narrative.inventory.stacks.iter().enumerate() {
+            let sel = if pn == 0 {
+                0
+            } else {
+                cursor_player.min(pn.saturating_sub(1))
+            };
+            let mark = if matches!(focus, TransferFocus::Player) && i == sel {
+                "> "
+            } else {
+                "  "
+            };
+            let label = cat.display_name(s.id.as_str());
+            pr.push(format!("{}{} x{}", mark, label, s.count));
+        }
+        if pr.is_empty() {
+            pr.push("(empty)".into());
+        }
+        let mut cr: Vec<String> = Vec::new();
+        for (i, s) in cont_stacks.iter().enumerate() {
+            let sel = if cn == 0 {
+                0
+            } else {
+                cursor_container.min(cn.saturating_sub(1))
+            };
+            let mark = if matches!(focus, TransferFocus::Container) && i == sel {
+                "> "
+            } else {
+                "  "
+            };
+            let label = cat.display_name(s.id.as_str());
+            cr.push(format!("{}{} x{}", mark, label, s.count));
+        }
+        if cr.is_empty() {
+            cr.push("(empty)".into());
+        }
+        pr.push("---".into());
+        pr.push("Tab/hl: side  Enter: move".into());
+        cr.push("---".into());
+        cr.push("Tab/hl: side  Enter: move".into());
+
+        let li = crate::ui::layout::panel_inner(left);
+        let ri = crate::ui::layout::panel_inner(right);
+        crate::ui::draw_text_block(fb, li, &pr);
+        crate::ui::draw_text_block(fb, ri, &cr);
     }
 
     fn compose_world(&self, fb: &mut FrameBuffer, area: Rect) {

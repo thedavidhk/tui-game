@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entity::EntityArena;
-use crate::game::{GameModeStack, NarrativeState};
+use crate::game::GameModeStack;
+use crate::narrative::NarrativeState;
 use crate::world::MapGrid;
 
-pub const SAVE_SCHEMA_VERSION: u32 = 1;
+pub const SAVE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct WorldSnapshot {
@@ -44,7 +45,9 @@ pub fn save_from_ron(s: &str) -> Result<SaveGameV1, ron::de::SpannedError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entity::EntityId;
     use crate::game::GameMode;
+    use crate::item::{EquipSlot, Inventory};
     use crate::world::TileTable;
 
     #[test]
@@ -57,6 +60,8 @@ mod tests {
             "Hero".into(),
             false,
             None,
+            None,
+            false,
         );
         ents.set_player(p);
         let world = WorldSnapshot {
@@ -72,6 +77,54 @@ mod tests {
         let ron = save_to_ron(&sg).unwrap();
         let back: SaveGameV1 = save_from_ron(&ron).unwrap();
         assert_eq!(back.schema_version, SAVE_SCHEMA_VERSION);
+        assert_eq!(back.world, world);
+        assert_eq!(back.modes, modes);
+    }
+
+    #[test]
+    fn round_trip_save_with_inventory_and_containers() {
+        let map = MapGrid::filled(3, 3, 0, TileTable::default_pack());
+        let mut ents = EntityArena::new();
+        let p = ents.spawn(
+            crate::entity::GridPos { x: 1, y: 1 },
+            '@',
+            "Hero".into(),
+            false,
+            None,
+            None,
+            false,
+        );
+        ents.set_player(p);
+        let mut narrative = NarrativeState::default();
+        narrative.inventory.add("cellar_key", 1);
+        narrative
+            .container_inventories
+            .insert(7, {
+                let mut c = Inventory::default();
+                c.add("health_tonic", 2);
+                c
+            });
+        narrative
+            .equipment
+            .insert(EquipSlot::Ring, "brass_ring".into());
+        narrative.quest_stages.insert("side_quest".into(), 2);
+        let world = WorldSnapshot {
+            map,
+            entities: ents,
+            narrative,
+            rng_seed: 3,
+        };
+        let modes = GameModeStack {
+            stack: vec![GameMode::ItemTransfer {
+                container: EntityId(7),
+                focus: crate::game::TransferFocus::Player,
+                cursor_player: 0,
+                cursor_container: 0,
+            }],
+        };
+        let sg = SaveGameV1::new(world.clone(), modes.clone());
+        let ron = save_to_ron(&sg).unwrap();
+        let back: SaveGameV1 = save_from_ron(&ron).unwrap();
         assert_eq!(back.world, world);
         assert_eq!(back.modes, modes);
     }

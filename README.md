@@ -35,7 +35,7 @@ cargo test --workspace
 cargo test -p tui_game_core
 ```
 
-Tests are **headless** (no TTY required): FoW, RON round-trips for `LevelFile` and `SaveGameV1`, and content pack validation.
+Tests are **headless** (no TTY required): FoW, RON round-trips for `LevelFile` and `SaveGameV1`, content pack validation (including item ids on dialogue and blueprints), and inventory helpers.
 
 ## Workspace layout
 
@@ -49,8 +49,10 @@ Tests are **headless** (no TTY required): FoW, RON round-trips for `LevelFile` a
 
 - **`render/`** — `FrameBuffer`, cells (glyph + truecolor + style), delta/full ANSI output, frame timing samples
 - **`world/`** — `MapGrid`, `TileDef` / `TileId`, field-of-view (`compute_visible`, explored mask)
-- **`entity.rs`** — `EntityId`, `EntityArena` (SoA-style stores; not a full ECS framework)
-- **`game.rs`** — `Game`, mode stack (`MainMenu`, `Exploration`, `Dialogue`, `Combat`), composition into the buffer
+- **`entity.rs`** — `EntityId`, `EntityArena` (SoA-style stores; not a full ECS framework), optional ground `item` stacks and `is_container`
+- **`item.rs`** — `ItemDef`, `ItemCategory`, `ItemCatalog`, `Inventory`, equipment slot stub
+- **`game/`** — `Game`, mode stack, `modes` dispatch, composition into the buffer
+- **`narrative.rs`** — `NarrativeState`, dialogue `Condition` / `Effect` application, `quest_stages`
 - **`input.rs`** — `InputEvent` / `InputBatch` (normalized; binaries map crossterm events here)
 - **`rect.rs`** — cell-space rectangles and hit testing
 - **`ui/`** — panels, log, menu, dialogue, text fields, color presets (write only into a `FrameBuffer`; no crossterm)
@@ -62,11 +64,13 @@ Tests are **headless** (no TTY required): FoW, RON round-trips for `LevelFile` a
 
 ## Game controls (reference)
 
-These are implemented in **`Game`** (`game.rs`); the binary forwards keyboard and mouse into `InputBatch`.
+These are implemented in **`Game`** (`game/mod.rs`); the binary forwards keyboard and mouse into `InputBatch`.
 
 - **Main menu**: arrow keys or `j` / `k`, **Enter** to choose; **mouse** click on a row (hit rects from last frame)
-- **Exploration**: **WASD** or arrows to move; **E** or **Enter** to try to talk to an adjacent NPC; **C** to try combat stub (stand **south** of an entity); **F1** debug overlay; **F5** / **F9** save / load `save.ron`
-- **Dialogue**: **j** / **k** or arrows for choices, **Enter** / **Space** to confirm, **1–9** to jump to a choice, **Esc** to close; **mouse** click on a choice row where supported
+- **Exploration**: **WASD** or arrows to move; **E** or **Enter** to talk to an adjacent **NPC** or open **transfer** next to a **container** (chest); **I** opens **player inventory** (list + detail; **u** consume stub, **e** equip stub, **Esc** close); **C** combat stub (stand **south** of an entity); **F1** debug; **F5** / **F9** save / load `save.ron`
+- **Player inventory** (pushed over exploration): **j** / **k** or arrows move selection; **u** use consumable (logs “no effect yet”); **e** equip ring-class items into a persisted slot (previous ring returns to inventory); **Esc** closes
+- **Item transfer** (player ↔ adjacent container): **Tab** or **h** / **l** switch side; **j** / **k** move row on focused side; **Enter** moves the **entire** focused stack to the other side; **Esc** closes
+- **Dialogue**: **j** / **k** or arrows for choices, **Enter** / **Space** to confirm, **1–9** to jump to a choice, **Esc** to close; **mouse** click on a choice row where supported. Choices may **require** an item (blocked with a log line if missing), **give** / **take** inventory, and set **quest phase** from static data (`game_content.rs`)
 - **Combat (stub)**: **WASD** / arrows to move current actor, **Tab** or **Space** to end turn, **F** to flee, **Esc** to exit
 - **Quit from binary**: **Ctrl+Q** (handled in `tui_game`); from menu choose **Quit**
 
@@ -83,7 +87,9 @@ These are implemented in **`Game`** (`game.rs`); the binary forwards keyboard an
 - **Ctrl+S**: save to the current file path
 - **Ctrl+Q**: quit
 
-Spawns store `kind` matching an **`EntityBlueprint`** from **`game_content`** (see `game_content.rs`). Add blueprints there, then pick them in the editor; **`Ctrl+S`** refuses to save if the level references unknown tile ids or unknown spawn kinds.
+Spawns store `kind` matching an **`EntityBlueprint`** from **`game_content`** (see `game_content.rs`). Add blueprints there, then pick them in the editor; **`Ctrl+S`** refuses to save if the level references unknown tile ids or unknown spawn kinds. Blueprint fields include optional **`world_item`** (spawns a pickable ground entity for that `ItemDef.id`) and **`is_container`** (adjacent **E** opens transfer instead of dialogue). Demo `demo_level.ron` includes a guide, a floor **key** pickup, and a **chest**.
+
+Longer-term **quest / inventory / UI** refactors (phased roadmap, acceptance criteria, and completion log) live in **[`docs/REFACTOR_QUEST_INVENTORY_UI.md`](docs/REFACTOR_QUEST_INVENTORY_UI.md)**.
 
 ### Terrain color: ANSI vs RGB
 
@@ -95,7 +101,7 @@ The game and editor already target **24-bit truecolor** (`38;2` / `48;2` in `ren
 
 1. **Core vs binaries** — Keep terminal setup, event polling, and `stdout` writes in **`tui_game`** / **`tui_level_editor`**. Add gameplay and rendering *data* in **`tui_game_core`**.
 2. **Rendering** — Prefer updating the `FrameBuffer` then **delta-encoding** against the previous committed frame; force a full redraw on resize or when wiring a “full redraw” flag.
-3. **Saves** — Bump **`SAVE_SCHEMA_VERSION`** / **`schema_version`** when serialized shapes change. Migration logic is optional until the project needs to preserve real user data (see **`docs/DESIGN.md`**).
+3. **Saves** — Bump **`SAVE_SCHEMA_VERSION`** / **`schema_version`** when serialized shapes change (v2: inventory + containers + equipment + entity item columns; v3: `quest_stages` on narrative). Migration logic is optional until the project needs to preserve real user data (see **`docs/DESIGN.md`**).
 4. **Content** — Dialogue trees and blueprints live in **`game_content.rs`** as `&'static` data; the **`content`** module holds shared types and validation. Persist quest/world state via **`SaveGameV1`**, not by serializing the whole content pack.
 5. **Dependencies** — Prefer small, well-scoped crates (e.g. `serde` + `ron`, `unicode-width`). Avoid pulling in a full TUI framework so the main loop and layout stay explicit.
 

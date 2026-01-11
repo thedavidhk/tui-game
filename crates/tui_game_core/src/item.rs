@@ -1,0 +1,210 @@
+//! Item definitions, stacks, and player-style inventories.
+
+use serde::{Deserialize, Serialize};
+
+/// Stub equipment slot for UI and persistence; gameplay hooks later.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EquipSlot {
+    Ring,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ItemCategory {
+    Mundane,
+    Consumable,
+    Equippable(EquipSlot),
+}
+
+/// Read-only view of static item definitions for UI and validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ItemCatalog {
+    defs: &'static [ItemDef],
+}
+
+impl ItemCatalog {
+    #[must_use]
+    pub const fn new(defs: &'static [ItemDef]) -> Self {
+        Self { defs }
+    }
+
+    #[must_use]
+    pub fn get(&self, id: &str) -> Option<&'static ItemDef> {
+        self.defs.iter().find(|d| d.id == id)
+    }
+
+    /// Display name from defs, or the raw `id` if unknown.
+    #[must_use]
+    pub fn display_name<'a>(&self, id: &'a str) -> &'a str {
+        self.get(id).map(|d| d.name).unwrap_or(id)
+    }
+
+    /// Short line for detail panes (category / slot hint).
+    #[must_use]
+    pub fn category_line(&self, id: &str) -> String {
+        let Some(d) = self.get(id) else {
+            return "Unknown item".into();
+        };
+        match d.category {
+            ItemCategory::Mundane => "Mundane".into(),
+            ItemCategory::Consumable => "Consumable".into(),
+            ItemCategory::Equippable(slot) => {
+                format!("Equippable ({slot:?})")
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ItemDef {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub glyph: char,
+    pub category: ItemCategory,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemStack {
+    pub id: String,
+    pub count: u32,
+}
+
+impl ItemStack {
+    pub fn new(id: impl Into<String>, count: u32) -> Self {
+        Self {
+            id: id.into(),
+            count: count.max(1),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Inventory {
+    /// Ordered stacks (merge same id on add).
+    pub stacks: Vec<ItemStack>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InventoryError {
+    NotEnough,
+    UnknownItem,
+}
+
+impl Inventory {
+    pub fn count_of(&self, id: &str) -> u32 {
+        self.stacks
+            .iter()
+            .filter(|s| s.id == id)
+            .map(|s| s.count)
+            .sum()
+    }
+
+    pub fn has(&self, id: &str, n: u32) -> bool {
+        self.count_of(id) >= n
+    }
+
+    pub fn add(&mut self, id: impl Into<String>, n: u32) {
+        if n == 0 {
+            return;
+        }
+        let id = id.into();
+        if let Some(s) = self.stacks.iter_mut().find(|s| s.id == id) {
+            s.count = s.count.saturating_add(n);
+            return;
+        }
+        self.stacks.push(ItemStack { id, count: n });
+    }
+
+    pub fn try_remove(&mut self, id: &str, n: u32) -> Result<(), InventoryError> {
+        if n == 0 {
+            return Ok(());
+        }
+        let mut rem = n;
+        let mut i = 0;
+        while i < self.stacks.len() {
+            if self.stacks[i].id != id {
+                i += 1;
+                continue;
+            }
+            let c = self.stacks[i].count;
+            if c < rem {
+                return Err(InventoryError::NotEnough);
+            }
+            let left = c - rem;
+            if left == 0 {
+                self.stacks.remove(i);
+            } else {
+                self.stacks[i].count = left;
+            }
+            rem = 0;
+            break;
+        }
+        if rem > 0 {
+            return Err(InventoryError::NotEnough);
+        }
+        Ok(())
+    }
+
+    /// Move up to `n` items from `other` into `self`.
+    pub fn transfer_from(&mut self, other: &mut Inventory, id: &str, n: u32) -> Result<(), InventoryError> {
+        other.try_remove(id, n)?;
+        self.add(id.to_string(), n);
+        Ok(())
+    }
+
+    /// Move the entire stack at `idx` from `from` into `to`.
+    pub fn try_move_stack_index(
+        from: &mut Inventory,
+        to: &mut Inventory,
+        idx: usize,
+    ) -> Result<(), InventoryError> {
+        let (id, n) = from
+            .stacks
+            .get(idx)
+            .map(|s| (s.id.clone(), s.count))
+            .ok_or(InventoryError::UnknownItem)?;
+        from.try_remove(&id, n)?;
+        to.add(id, n);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Inventory, InventoryError, ItemCatalog, ItemCategory, ItemDef};
+
+    #[test]
+    fn item_catalog_display_name_falls_back_to_id() {
+        static DEFS: &[ItemDef] = &[ItemDef {
+            id: "a",
+            name: "Apple",
+            description: "d",
+            glyph: 'a',
+            category: ItemCategory::Mundane,
+        }];
+        let c = ItemCatalog::new(DEFS);
+        assert_eq!(c.display_name("a"), "Apple");
+        assert_eq!(c.display_name("missing"), "missing");
+    }
+
+    #[test]
+    fn try_remove_not_enough() {
+        let mut inv = Inventory::default();
+        inv.add("a", 1);
+        assert_eq!(inv.try_remove("a", 2), Err(InventoryError::NotEnough));
+    }
+
+    #[test]
+    fn try_move_stack_index_round_trip() {
+        let mut a = Inventory::default();
+        let mut b = Inventory::default();
+        a.add("k", 3);
+        a.add("x", 1);
+        Inventory::try_move_stack_index(&mut a, &mut b, 0).unwrap();
+        assert_eq!(a.count_of("k"), 0);
+        assert_eq!(b.count_of("k"), 3);
+        assert_eq!(a.count_of("x"), 1);
+        Inventory::try_move_stack_index(&mut b, &mut a, 0).unwrap();
+        assert_eq!(a.count_of("k"), 3);
+    }
+}

@@ -2,12 +2,14 @@ use crate::content::DialogueNode;
 use crate::rect::Rect;
 use crate::render::FrameBuffer;
 
+use super::hit::{UiHitState, UiHitTarget};
+
 pub fn draw_dialogue(
     fb: &mut FrameBuffer,
     r: Rect,
     node: &DialogueNode,
     choice_cursor: usize,
-    mouse_regions: &mut Vec<Rect>,
+    hits: &mut UiHitState,
 ) {
     super::draw_bordered_panel(fb, r, "Dialogue");
     let inner = Rect::new(r.x + 1, r.y + 1, r.w.saturating_sub(2), r.h.saturating_sub(2));
@@ -22,6 +24,9 @@ pub fn draw_dialogue(
     let choice_y0 = inner.y + 3;
     for i in 0..node.choices.len() {
         let y = choice_y0 + i as u16;
-        mouse_regions.push(Rect::new(inner.x, y, inner.w, 1));
+        hits.push(
+            UiHitTarget::DialogueChoice(i),
+            Rect::new(inner.x, y, inner.w, 1),
+        );
     }
 }
