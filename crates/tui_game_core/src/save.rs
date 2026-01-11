@@ -97,13 +97,11 @@ mod tests {
         ents.set_player(p);
         let mut narrative = NarrativeState::default();
         narrative.inventory.add("cellar_key", 1);
-        narrative
-            .container_inventories
-            .insert(7, {
-                let mut c = Inventory::default();
-                c.add("health_tonic", 2);
-                c
-            });
+        narrative.container_inventories.insert(7, {
+            let mut c = Inventory::default();
+            c.add("health_tonic", 2);
+            c
+        });
         narrative
             .equipment
             .insert(EquipSlot::Ring, "brass_ring".into());

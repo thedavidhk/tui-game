@@ -61,7 +61,10 @@ pub enum InputEvent {
         /// Raw column if needed for wide-char alignment (optional).
         column: u16,
     },
-    Resize { width: u16, height: u16 },
+    Resize {
+        width: u16,
+        height: u16,
+    },
 }
 
 /// Batched input for one simulation step.
@@ -82,7 +85,5 @@ impl InputBatch {
 
 /// Hit-test: returns index of the first rect containing `cell`, or None.
 pub fn hit_rect_index(cell: MouseCell, rects: &[Rect]) -> Option<usize> {
-    rects
-        .iter()
-        .position(|r| r.contains(cell.x, cell.y))
+    rects.iter().position(|r| r.contains(cell.x, cell.y))
 }

@@ -10,21 +10,26 @@ use crossterm::{
     cursor::{Hide, Show},
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
     QueueableCommand,
 };
 use tui_game_core::content::ContentPack;
 use tui_game_core::game_content;
-use tui_game_core::EntityBlueprint;
 use tui_game_core::input::{InputBatch, InputEvent, Key, KeyChord};
 use tui_game_core::level::{level_from_ron, level_to_ron, EntitySpawn, LevelFile};
 use tui_game_core::rect::Rect;
-use tui_game_core::render::{encode_frame_delta, encode_frame_full, Cell, Color, FrameBuffer, Style};
+use tui_game_core::render::{
+    encode_frame_delta, encode_frame_full, Cell, Color, FrameBuffer, Style,
+};
 use tui_game_core::ui::{
-    draw_bordered_panel, draw_text_block, draw_text_field, centered_rect, TextField, TextFieldOutput, TextFilter,
-    PRESET_COLORS,
+    centered_rect, draw_bordered_panel, draw_text_block, draw_text_field, TextField,
+    TextFieldOutput, TextFilter, PRESET_COLORS,
 };
 use tui_game_core::world::{TileDef, TileId, TileTable};
+use tui_game_core::EntityBlueprint;
 
 struct Editor {
     path: PathBuf,
@@ -103,7 +108,10 @@ impl Editor {
             match fs::read_to_string(path) {
                 Ok(s) => match level_from_ron(&s) {
                     Ok(l) => (l, format!("Loaded {}", path.display())),
-                    Err(e) => (Self::default_level(), format!("Parse error: {e}; new level")),
+                    Err(e) => (
+                        Self::default_level(),
+                        format!("Parse error: {e}; new level"),
+                    ),
                 },
                 Err(e) => (Self::default_level(), format!("Read error: {e}; new level")),
             }
@@ -175,9 +183,7 @@ impl Editor {
     }
 
     fn current_spawn_blueprint(&self) -> Option<&'static EntityBlueprint> {
-        self.content
-            .entity_blueprints
-            .get(self.spawn_blueprint_idx)
+        self.content.entity_blueprints.get(self.spawn_blueprint_idx)
     }
 
     fn resize_level(&mut self, nw: u16, nh: u16) {
@@ -197,12 +203,9 @@ impl Editor {
         self.level.width = nw;
         self.level.height = nh;
         self.level.tiles = new_tiles;
-        self.level.spawns.retain(|s| {
-            s.x >= 0
-                && s.y >= 0
-                && (s.x as u16) < nw
-                && (s.y as u16) < nh
-        });
+        self.level
+            .spawns
+            .retain(|s| s.x >= 0 && s.y >= 0 && (s.x as u16) < nw && (s.y as u16) < nh);
         self.cursor_x = self.cursor_x.clamp(0, nw as i32 - 1);
         self.cursor_y = self.cursor_y.clamp(0, nh as i32 - 1);
     }
@@ -278,7 +281,9 @@ impl Editor {
                         self.status = "Filename cannot be empty.".into();
                     } else {
                         let mut p = PathBuf::from(s);
-                        if p.extension().is_none() || p.extension() == Some(std::ffi::OsStr::new("")) {
+                        if p.extension().is_none()
+                            || p.extension() == Some(std::ffi::OsStr::new(""))
+                        {
                             p.set_extension("ron");
                         }
                         self.path = p;
@@ -369,16 +374,14 @@ impl Editor {
                         TextFieldOutput::Tab => *focus = (*focus + 1) % 4,
                         TextFieldOutput::Edited => {}
                     },
-                    2 => {
-                        match chord.key {
-                            Key::Char(' ') if !chord.ctrl => {
-                                *solid = !*solid;
-                            }
-                            Key::Esc => self.dialog = None,
-                            Key::Tab if !chord.ctrl => *focus = (*focus + 1) % 4,
-                            _ => {}
+                    2 => match chord.key {
+                        Key::Char(' ') if !chord.ctrl => {
+                            *solid = !*solid;
                         }
-                    }
+                        Key::Esc => self.dialog = None,
+                        Key::Tab if !chord.ctrl => *focus = (*focus + 1) % 4,
+                        _ => {}
+                    },
                     3 => match chord.key {
                         Key::Left if !chord.ctrl => {
                             *color_idx = color_idx.saturating_sub(1);
@@ -426,7 +429,8 @@ impl Editor {
                 ..
             } => {
                 if self.mode == Mode::PaintTiles {
-                    let i = self.cursor_y as usize * self.level.width as usize + self.cursor_x as usize;
+                    let i =
+                        self.cursor_y as usize * self.level.width as usize + self.cursor_x as usize;
                     if i < self.level.tiles.len() {
                         self.level.tiles[i] = self.current_tile;
                     }
@@ -452,22 +456,18 @@ impl Editor {
                 key: Key::Char('[') | Key::Char('k'),
                 ctrl: false,
                 ..
-            } => {
-                match self.mode {
-                    Mode::PaintTiles => self.cycle_tile_palette(-1),
-                    Mode::PlaceSpawns => self.cycle_spawn_blueprint(-1),
-                }
-            }
+            } => match self.mode {
+                Mode::PaintTiles => self.cycle_tile_palette(-1),
+                Mode::PlaceSpawns => self.cycle_spawn_blueprint(-1),
+            },
             KeyChord {
                 key: Key::Char(']') | Key::Char('j'),
                 ctrl: false,
                 ..
-            } => {
-                match self.mode {
-                    Mode::PaintTiles => self.cycle_tile_palette(1),
-                    Mode::PlaceSpawns => self.cycle_spawn_blueprint(1),
-                }
-            }
+            } => match self.mode {
+                Mode::PaintTiles => self.cycle_tile_palette(1),
+                Mode::PlaceSpawns => self.cycle_spawn_blueprint(1),
+            },
             KeyChord {
                 key: Key::F(2),
                 ctrl: false,
@@ -637,7 +637,12 @@ impl Editor {
             &mut y,
             &row(&format!("File: {}", self.path.display())),
         );
-        Self::sidebar_plain(fb, inner, &mut y, &row(&format!("Level: {}", self.level.name)));
+        Self::sidebar_plain(
+            fb,
+            inner,
+            &mut y,
+            &row(&format!("Level: {}", self.level.name)),
+        );
         Self::sidebar_plain(fb, inner, &mut y, "");
         Self::sidebar_plain(fb, inner, &mut y, "WASD move  [/]jk brush  m mode");
         Self::sidebar_plain(fb, inner, &mut y, "Space paint/spawn  F2-F5  C-S save");
@@ -826,19 +831,37 @@ impl Editor {
                 let r = centered_rect(fb, 64, 7);
                 draw_bordered_panel(fb, r, " Save as ");
                 let iy = r.y + 2;
-                draw_text_field(fb, r.x + 2, iy, r.w.saturating_sub(6), "Path: ", field, true);
+                draw_text_field(
+                    fb,
+                    r.x + 2,
+                    iy,
+                    r.w.saturating_sub(6),
+                    "Path: ",
+                    field,
+                    true,
+                );
                 let hint = Rect::new(r.x + 2, iy + 2, r.w.saturating_sub(4), 2);
                 draw_text_block(
                     fb,
                     hint,
-                    &[String::from("Enter: save & close   Esc: cancel   (.ron added if no extension)")],
+                    &[String::from(
+                        "Enter: save & close   Esc: cancel   (.ron added if no extension)",
+                    )],
                 );
             }
             Dialog::LevelTitle { field } => {
                 let r = centered_rect(fb, 56, 7);
                 draw_bordered_panel(fb, r, " Level title ");
                 let iy = r.y + 2;
-                draw_text_field(fb, r.x + 2, iy, r.w.saturating_sub(6), "Name: ", field, true);
+                draw_text_field(
+                    fb,
+                    r.x + 2,
+                    iy,
+                    r.w.saturating_sub(6),
+                    "Name: ",
+                    field,
+                    true,
+                );
                 let hint = Rect::new(r.x + 2, iy + 2, r.w.saturating_sub(4), 1);
                 draw_text_block(fb, hint, &[String::from("Enter: apply   Esc: cancel")]);
             }
@@ -846,24 +869,8 @@ impl Editor {
                 let r = centered_rect(fb, 44, 10);
                 draw_bordered_panel(fb, r, " Map size ");
                 let iy = r.y + 2;
-                draw_text_field(
-                    fb,
-                    r.x + 2,
-                    iy,
-                    8,
-                    "W: ",
-                    w,
-                    *focus == 0,
-                );
-                draw_text_field(
-                    fb,
-                    r.x + 2,
-                    iy + 1,
-                    8,
-                    "H: ",
-                    h,
-                    *focus == 1,
-                );
+                draw_text_field(fb, r.x + 2, iy, 8, "W: ", w, *focus == 0);
+                draw_text_field(fb, r.x + 2, iy + 1, 8, "H: ", h, *focus == 1);
                 let hint = Rect::new(r.x + 2, iy + 3, r.w.saturating_sub(4), 3);
                 draw_text_block(
                     fb,

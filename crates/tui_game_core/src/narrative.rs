@@ -4,8 +4,26 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::content::{Condition, DemoQuestPhase, Effect};
+use crate::content::{
+    Condition, DemoQuestPhase, Effect, QuestJournalStatus, TriggerEvent, TriggerRule,
+};
 use crate::item::{EquipSlot, Inventory, InventoryError};
+
+/// One timestamped line under a quest in the journal (ordering uses `seq`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JournalEntry {
+    pub text: String,
+    pub seq: u32,
+}
+
+/// Journal row for a single quest id (`guide_fetch`, …).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JournalQuestRecord {
+    pub id: String,
+    pub title: String,
+    pub status: QuestJournalStatus,
+    pub entries: Vec<JournalEntry>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NarrativeState {
@@ -14,6 +32,15 @@ pub struct NarrativeState {
     /// Arbitrary per-quest numeric counters (e.g. second quest lines later).
     #[serde(default)]
     pub quest_stages: HashMap<String, u32>,
+    /// Monotonic counter for journal entry ordering (not wall-clock time).
+    #[serde(default)]
+    pub journal_next_seq: u32,
+    /// Quest journal: one record per quest id, in discovery order.
+    #[serde(default)]
+    pub quest_journal: Vec<JournalQuestRecord>,
+    /// Trigger ids already fired for `once` rules.
+    #[serde(default)]
+    pub fired_triggers: std::collections::HashSet<String>,
     pub inventory: Inventory,
     pub container_inventories: HashMap<u32, Inventory>,
     pub equipment: HashMap<EquipSlot, String>,
@@ -24,6 +51,9 @@ impl Default for NarrativeState {
         Self {
             quests: DemoQuestPhase::default(),
             quest_stages: HashMap::new(),
+            journal_next_seq: 0,
+            quest_journal: Vec::new(),
+            fired_triggers: std::collections::HashSet::new(),
             inventory: Inventory::default(),
             container_inventories: HashMap::new(),
             equipment: HashMap::new(),
@@ -38,6 +68,99 @@ pub enum NarrativeApplyError {
 }
 
 impl NarrativeState {
+    #[must_use]
+    pub fn quest_status(&self, quest_id: &str) -> Option<QuestJournalStatus> {
+        self.quest_journal
+            .iter()
+            .find(|q| q.id == quest_id)
+            .map(|q| q.status)
+    }
+
+    #[must_use]
+    pub fn quest_status_is(&self, quest_id: &str, status: QuestJournalStatus) -> bool {
+        self.quest_status(quest_id) == Some(status)
+    }
+
+    #[must_use]
+    pub fn quest_is_in_progress(&self, quest_id: &str) -> bool {
+        self.quest_status_is(quest_id, QuestJournalStatus::InProgress)
+    }
+
+    #[must_use]
+    pub fn quest_is_completed(&self, quest_id: &str) -> bool {
+        self.quest_status_is(quest_id, QuestJournalStatus::Completed)
+    }
+
+    #[must_use]
+    pub fn quest_is_failed(&self, quest_id: &str) -> bool {
+        self.quest_status_is(quest_id, QuestJournalStatus::Failed)
+    }
+
+    /// Append a journal line for `quest_id`, creating the quest row if needed.
+    pub fn journal_append(&mut self, quest_id: &str, title_if_new: Option<&str>, text: &str) {
+        let seq = self.journal_next_seq;
+        self.journal_next_seq = self.journal_next_seq.saturating_add(1);
+        if let Some(q) = self.quest_journal.iter_mut().find(|q| q.id == quest_id) {
+            q.entries.push(JournalEntry {
+                text: text.to_string(),
+                seq,
+            });
+            return;
+        }
+        self.quest_journal.push(JournalQuestRecord {
+            id: quest_id.to_string(),
+            title: title_if_new.unwrap_or(quest_id).to_string(),
+            status: QuestJournalStatus::InProgress,
+            entries: vec![JournalEntry {
+                text: text.to_string(),
+                seq,
+            }],
+        });
+    }
+
+    pub fn journal_set_status(&mut self, quest_id: &str, status: QuestJournalStatus) {
+        if let Some(q) = self.quest_journal.iter_mut().find(|q| q.id == quest_id) {
+            q.status = status;
+            return;
+        }
+        self.quest_journal.push(JournalQuestRecord {
+            id: quest_id.to_string(),
+            title: quest_id.to_string(),
+            status,
+            entries: Vec::new(),
+        });
+    }
+
+    #[must_use]
+    pub fn requires_met(&self, requires: &[Condition]) -> bool {
+        for c in requires {
+            match *c {
+                Condition::HasItem(id) => {
+                    if !self.inventory.has(id, 1) {
+                        return false;
+                    }
+                }
+                Condition::ItemCountAtLeast { id, count } => {
+                    if !self.inventory.has(id, count) {
+                        return false;
+                    }
+                }
+                Condition::QuestStageAtLeast { quest, min } => {
+                    let cur = self.quest_stages.get(quest).copied().unwrap_or(0);
+                    if cur < min {
+                        return false;
+                    }
+                }
+                Condition::QuestStatusIs { quest, status } => {
+                    if self.quest_status(quest) != Some(status) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
     /// Returns a user-facing log line if any condition fails.
     pub fn check_requires(&self, requires: &[Condition]) -> Result<(), String> {
         for c in requires {
@@ -47,6 +170,46 @@ impl NarrativeState {
                         return Err(format!("You need \"{id}\" for that choice."));
                     }
                 }
+                Condition::ItemCountAtLeast { id, count } => {
+                    if !self.inventory.has(id, count) {
+                        return Err(format!("You need {count}x \"{id}\" for that choice."));
+                    }
+                }
+                Condition::QuestStageAtLeast { quest, min } => {
+                    let cur = self.quest_stages.get(quest).copied().unwrap_or(0);
+                    if cur < min {
+                        return Err(format!("Quest \"{quest}\" needs stage >= {min}."));
+                    }
+                }
+                Condition::QuestStatusIs { quest, status } => {
+                    if self.quest_status(quest) != Some(status) {
+                        return Err(format!("Quest \"{quest}\" status requirement is not met."));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn apply_trigger(
+        &mut self,
+        log: &mut Vec<String>,
+        rules: &[TriggerRule],
+        ev: TriggerEvent<'_>,
+    ) -> Result<(), NarrativeApplyError> {
+        for rule in rules {
+            if !rule.when.matches(ev) {
+                continue;
+            }
+            if rule.once && self.fired_triggers.contains(rule.id) {
+                continue;
+            }
+            if !self.requires_met(rule.requires) {
+                continue;
+            }
+            self.apply_effects(log, rule.effects)?;
+            if rule.once {
+                self.fired_triggers.insert(rule.id.to_string());
             }
         }
         Ok(())
@@ -84,6 +247,16 @@ impl NarrativeState {
                 Effect::Log(msg) => {
                     log.push(msg.to_string());
                 }
+                Effect::JournalAppend {
+                    quest,
+                    title_if_new,
+                    text,
+                } => {
+                    self.journal_append(quest, title_if_new, text);
+                }
+                Effect::JournalSetStatus { quest, status } => {
+                    self.journal_set_status(quest, status);
+                }
             }
         }
         Ok(())
@@ -92,7 +265,9 @@ impl NarrativeState {
 
 #[cfg(test)]
 mod tests {
-    use crate::content::{DemoQuestPhase, Effect};
+    use crate::content::{
+        DemoQuestPhase, Effect, QuestJournalStatus, TriggerEvent, TriggerKind, TriggerRule,
+    };
 
     use super::NarrativeState;
 
@@ -100,8 +275,86 @@ mod tests {
     fn apply_set_demo_quest() {
         let mut n = NarrativeState::default();
         let mut log = Vec::new();
-        n.apply_effects(&mut log, &[Effect::SetDemoQuest(DemoQuestPhase::HasCellarKey)])
-            .unwrap();
+        n.apply_effects(
+            &mut log,
+            &[Effect::SetDemoQuest(DemoQuestPhase::HasCellarKey)],
+        )
+        .unwrap();
         assert_eq!(n.quests, DemoQuestPhase::HasCellarKey);
+    }
+
+    #[test]
+    fn journal_append_and_status_via_effects() {
+        let mut n = NarrativeState::default();
+        let mut log = Vec::new();
+        n.apply_effects(
+            &mut log,
+            &[
+                Effect::JournalAppend {
+                    quest: "q1",
+                    title_if_new: Some("Quest One"),
+                    text: "Started.",
+                },
+                Effect::JournalSetStatus {
+                    quest: "q1",
+                    status: QuestJournalStatus::Completed,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(n.quest_journal.len(), 1);
+        let q = &n.quest_journal[0];
+        assert_eq!(q.title, "Quest One");
+        assert_eq!(q.status, QuestJournalStatus::Completed);
+        assert_eq!(q.entries.len(), 1);
+        assert_eq!(q.entries[0].text, "Started.");
+    }
+
+    #[test]
+    fn once_trigger_runs_once() {
+        static RULES: &[TriggerRule] = &[TriggerRule {
+            id: "r1",
+            when: TriggerKind::InventoryCheck {
+                item_id: "cellar_key",
+                min_count: 1,
+            },
+            requires: &[],
+            effects: &[Effect::AddQuestStage {
+                quest: "guide_fetch",
+                delta: 1,
+            }],
+            once: true,
+        }];
+        let mut n = NarrativeState::default();
+        n.inventory.add("cellar_key", 1);
+        let mut log = Vec::new();
+        let ev = TriggerEvent::InventoryCheck {
+            item_id: "cellar_key",
+            min_count: 1,
+        };
+        n.apply_trigger(&mut log, RULES, ev).unwrap();
+        n.apply_trigger(&mut log, RULES, ev).unwrap();
+        assert_eq!(n.quest_stages.get("guide_fetch").copied(), Some(1));
+    }
+
+    #[test]
+    fn quest_status_transitions_failed_then_completed() {
+        let mut n = NarrativeState::default();
+        let mut log = Vec::new();
+        n.apply_effects(
+            &mut log,
+            &[
+                Effect::JournalSetStatus {
+                    quest: "q2",
+                    status: QuestJournalStatus::Failed,
+                },
+                Effect::JournalSetStatus {
+                    quest: "q2",
+                    status: QuestJournalStatus::Completed,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(n.quest_status("q2"), Some(QuestJournalStatus::Completed));
     }
 }

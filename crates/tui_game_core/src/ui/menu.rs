@@ -12,7 +12,12 @@ pub fn draw_menu(
     hits: &mut UiHitState,
 ) {
     super::draw_bordered_panel(fb, r, title);
-    let inner = Rect::new(r.x + 1, r.y + 1, r.w.saturating_sub(2), r.h.saturating_sub(2));
+    let inner = Rect::new(
+        r.x + 1,
+        r.y + 1,
+        r.w.saturating_sub(2),
+        r.h.saturating_sub(2),
+    );
     for (i, item) in items.iter().enumerate() {
         let y = inner.y + 1 + i as u16;
         if y >= inner.bottom() {

@@ -7,7 +7,7 @@ use std::fs;
 use serde::{Deserialize, Serialize};
 
 use crate::combat::CombatState;
-use crate::content::{ContentPack, DemoQuestPhase};
+use crate::content::{ContentPack, DemoQuestPhase, QuestJournalStatus, TriggerEvent};
 use crate::entity::{EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseEventKind};
@@ -51,6 +51,9 @@ pub enum GameMode {
     },
     Inventory {
         cursor: usize,
+    },
+    Journal {
+        quest_cursor: usize,
     },
     ItemTransfer {
         container: EntityId,
@@ -106,6 +109,51 @@ pub struct Game {
 }
 
 impl Game {
+    fn apply_trigger_event(&mut self, ev: TriggerEvent<'_>) {
+        if let Err(e) = self
+            .narrative
+            .apply_trigger(&mut self.log, self.content.trigger_rules, ev)
+        {
+            self.log.push(format!("Trigger apply failed: {e:?}"));
+        }
+    }
+
+    fn run_inventory_triggers_for(&mut self, item_id: &str) {
+        let n = self.narrative.inventory.count_of(item_id);
+        self.apply_trigger_event(TriggerEvent::InventoryCheck {
+            item_id,
+            min_count: n,
+        });
+    }
+
+    fn run_all_inventory_triggers(&mut self) {
+        let ids: Vec<String> = self
+            .narrative
+            .inventory
+            .stacks
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
+        for id in ids {
+            self.run_inventory_triggers_for(id.as_str());
+        }
+    }
+
+    fn maybe_region_id_for_pos(&self, x: i32, y: i32) -> Option<&'static str> {
+        if x >= 18 && y <= 6 {
+            return Some("tavern_approach");
+        }
+        None
+    }
+
+    fn dialogue_visible_choice_indices(&self, node: &crate::content::DialogueNode) -> Vec<usize> {
+        node.choices
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| self.narrative.requires_met(c.requires).then_some(i))
+            .collect()
+    }
+
     pub fn new_bootstrapped(viewport_w: u16, viewport_h: u16) -> Self {
         let content = game_content::content_pack();
         let _ = content.validate();
@@ -134,7 +182,16 @@ impl Game {
         );
         entities.set_player(player);
         entities.spawn(
-            GridPos { x: 10, y: 8 },
+            GridPos { x: 8, y: 10 },
+            'm',
+            "Merchant".into(),
+            true,
+            Some("merchant".into()),
+            None,
+            false,
+        );
+        entities.spawn(
+            GridPos { x: 10, y: 10 },
             'g',
             "Guide".into(),
             true,
@@ -143,22 +200,49 @@ impl Game {
             false,
         );
         entities.spawn(
-            GridPos { x: 6, y: 5 },
-            ',',
-            "Key".into(),
-            false,
+            GridPos { x: 14, y: 10 },
+            'h',
+            "Healer".into(),
+            true,
+            Some("healer".into()),
             None,
-            Some(ItemStack::new("cellar_key", 1)),
             false,
         );
         entities.spawn(
-            GridPos { x: 8, y: 5 },
+            GridPos { x: 18, y: 10 },
+            's',
+            "Scholar".into(),
+            true,
+            Some("scholar".into()),
+            None,
+            false,
+        );
+        entities.spawn(
+            GridPos { x: 10, y: 7 },
             '□',
             "Chest".into(),
             true,
             None,
             None,
             true,
+        );
+        entities.spawn(
+            GridPos { x: 13, y: 7 },
+            '!',
+            "Tonic".into(),
+            false,
+            None,
+            Some(ItemStack::new("health_tonic", 1)),
+            false,
+        );
+        entities.spawn(
+            GridPos { x: 16, y: 7 },
+            '=',
+            "Ring".into(),
+            false,
+            None,
+            Some(ItemStack::new("brass_ring", 1)),
+            false,
         );
 
         let n = (map.width as usize) * (map.height as usize);
@@ -176,7 +260,7 @@ impl Game {
             debug_overlay: false,
             viewport_w,
             viewport_h,
-            log: vec!["Welcome. WASD move, E interact, I inventory, F1 debug.".into()],
+            log: vec!["Welcome. WASD move, E interact, I inventory, J journal, F1 debug.".into()],
             menu_items: vec!["Start game", "Quit"],
             quit_requested: false,
             ui_hits: UiHitState::default(),
@@ -321,6 +405,9 @@ impl Game {
         self.entities.set_pos(pid, GridPos { x: nx, y: ny });
         self.log.push(format!("Move to ({}, {}).", nx, ny));
         self.try_pickup_ground_items(pid);
+        if let Some(region_id) = self.maybe_region_id_for_pos(nx, ny) {
+            self.apply_trigger_event(TriggerEvent::RegionEnter { region_id });
+        }
         self.refresh_fow();
     }
 
@@ -349,6 +436,7 @@ impl Game {
                     _ => self.narrative.quests = DemoQuestPhase::HasCellarKey,
                 }
             }
+            self.run_inventory_triggers_for(stack.id.as_str());
             self.log
                 .push(format!("Picked up {} x{}.", stack.id, stack.count));
             self.entities.despawn(eid);
@@ -359,10 +447,15 @@ impl Game {
         let kind = self.entities.npc_kind[npc.0 as usize]
             .clone()
             .unwrap_or_default();
+        let start_node = if kind == "guide" && self.narrative.quests != DemoQuestPhase::NotStarted {
+            1
+        } else {
+            0
+        };
         self.modes.push(GameMode::Dialogue {
             npc_entity: npc,
             dialogue_id: kind.clone(),
-            node_index: 0,
+            node_index: start_node,
             choice_cursor: 0,
         });
         self.log.push(format!("Talking ({}).", kind));
@@ -465,6 +558,11 @@ impl Game {
                 key: Key::Char('i'), ..
             }) => {
                 self.modes.push(GameMode::Inventory { cursor: 0 });
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Char('j'), ..
+            }) => {
+                self.modes.push(GameMode::Journal { quest_cursor: 0 });
             }
             InputEvent::Key(KeyChord {
                 key: Key::Char('e'), ..
@@ -581,6 +679,12 @@ impl Game {
             let _ = self.modes.pop();
             return;
         };
+        let visible = self.dialogue_visible_choice_indices(node);
+        if visible.is_empty() {
+            let _ = self.modes.pop();
+            self.log.push("No available dialogue choices.".into());
+            return;
+        }
         let exit_sentinel = tree.nodes.len();
 
         match ev {
@@ -593,7 +697,7 @@ impl Game {
                     if let Some(GameMode::Dialogue { choice_cursor: c, .. }) =
                         self.modes.current_mut()
                     {
-                        let max = node.choices.len().saturating_sub(1);
+                        let max = visible.len().saturating_sub(1);
                         *c = i.min(max);
                     }
                     self.apply_dialogue_choice(tree, exit_sentinel);
@@ -619,7 +723,7 @@ impl Game {
                 if let Some(GameMode::Dialogue { choice_cursor: c, .. }) =
                     self.modes.current_mut()
                 {
-                    let max = node.choices.len().saturating_sub(1);
+                    let max = visible.len().saturating_sub(1);
                     *c = (*c + 1).min(max);
                 }
             }
@@ -633,7 +737,7 @@ impl Game {
                 key: Key::Char(c), ..
             }) if c.is_ascii_digit() => {
                 let d = (c as u8).saturating_sub(b'1') as usize;
-                if d < node.choices.len() {
+                if d < visible.len() {
                     if let Some(GameMode::Dialogue { choice_cursor: c, .. }) =
                         self.modes.current_mut()
                     {
@@ -663,13 +767,13 @@ impl Game {
             let _ = self.modes.pop();
             return;
         };
-        let Some(choice) = node.choices.get(choice_cursor) else {
+        let visible = self.dialogue_visible_choice_indices(node);
+        let Some(raw_idx) = visible.get(choice_cursor).copied() else {
             return;
         };
-        if let Err(msg) = self.narrative.check_requires(choice.requires) {
-            self.log.push(msg);
+        let Some(choice) = node.choices.get(raw_idx) else {
             return;
-        }
+        };
         if let Err(e) = self
             .narrative
             .apply_effects(&mut self.log, choice.effects)
@@ -678,6 +782,12 @@ impl Game {
                 .push(format!("Dialogue effect failed: {e:?}"));
             return;
         }
+        self.run_all_inventory_triggers();
+        self.apply_trigger_event(TriggerEvent::DialogueChoice {
+            dialogue_id: tree.id,
+            node_index,
+            choice_label: choice.label,
+        });
         let next = choice.next;
         if next == exit_sentinel {
             let _ = self.modes.pop();
@@ -691,6 +801,33 @@ impl Game {
         {
             *ni = next;
             *cc = 0;
+        }
+    }
+
+    pub(crate) fn handle_journal(&mut self, ev: InputEvent) {
+        let n = self.narrative.quest_journal.len();
+        match ev {
+            InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
+                let _ = self.modes.pop();
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Up | Key::Char('k'),
+                ..
+            }) => {
+                if let Some(GameMode::Journal { quest_cursor }) = self.modes.current_mut() {
+                    *quest_cursor = quest_cursor.saturating_sub(1);
+                }
+            }
+            InputEvent::Key(KeyChord {
+                key: Key::Down | Key::Char('j'),
+                ..
+            }) => {
+                if let Some(GameMode::Journal { quest_cursor }) = self.modes.current_mut() {
+                    let max = n.saturating_sub(1);
+                    *quest_cursor = (*quest_cursor + 1).min(max);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1027,6 +1164,39 @@ impl Game {
         }
     }
 
+    fn quest_status_lines(narrative: &NarrativeState) -> Vec<String> {
+        fn qstage(map: &std::collections::HashMap<String, u32>, key: &str) -> u32 {
+            *map.get(key).unwrap_or(&0)
+        }
+        let gf = qstage(&narrative.quest_stages, "guide_fetch");
+        let guide = match gf {
+            0 => "Guide fetch: —",
+            1 => "Guide fetch: listened",
+            2 => "Guide fetch: hold key",
+            3 => "Guide fetch: returned ✓",
+            _ => "Guide fetch: ?",
+        };
+        let hd = qstage(&narrative.quest_stages, "healer_delivery");
+        let healer = match hd {
+            0 => "Healer tonic: —",
+            1 => "Healer tonic: pledged",
+            n if n >= 2 => "Healer tonic: delivered ✓",
+            _ => "Healer tonic: ?",
+        };
+        let sr = qstage(&narrative.quest_stages, "scholar_ring");
+        let scholar = match sr {
+            0 => "Scholar ring: —",
+            1 => "Scholar ring: clue heard",
+            n if n >= 3 => "Scholar ring: donated ✓",
+            _ => "Scholar ring: ?",
+        };
+        vec![
+            guide.into(),
+            healer.into(),
+            scholar.into(),
+        ]
+    }
+
     pub fn compose(
         &mut self,
         fb: &mut FrameBuffer,
@@ -1038,12 +1208,11 @@ impl Game {
         self.compose_world(fb, world_rect);
         crate::ui::draw_bordered_panel(fb, hud_rect, "Status");
         let inner = Rect::new(hud_rect.x + 1, hud_rect.y + 1, hud_rect.w.saturating_sub(2), hud_rect.h.saturating_sub(2));
-        let lines = vec![
-            format!("Mode: {}", self.mode_label()),
-            format!("Quest: {:?}", self.narrative.quests),
-            "I: inventory  E: talk/chest  C: combat".into(),
-            "F1: debug  F5/F9: save/load".into(),
-        ];
+        let mut lines = vec![format!("Mode: {}", self.mode_label())];
+        lines.extend(Self::quest_status_lines(&self.narrative));
+        lines.push(format!("Demo quest line: {:?}", self.narrative.quests));
+        lines.push("I: inventory  J: journal  E: talk/chest  C: combat".into());
+        lines.push("F1: debug  F5/F9: save/load".into());
         crate::ui::draw_text_block(fb, inner, &lines);
 
         crate::ui::draw_bordered_panel(fb, log_rect, "Log");
@@ -1068,6 +1237,7 @@ impl Game {
             ref dialogue_id,
             node_index,
             choice_cursor,
+            npc_entity,
             ..
         }) = self.modes.current().cloned()
         {
@@ -1078,8 +1248,25 @@ impl Game {
                 .copied()
                 .unwrap_or(self.content.guide_dialogue);
             if let Some(node) = tree.nodes.get(node_index) {
+                let visible = self.dialogue_visible_choice_indices(node);
+                let visible_labels: Vec<&'static str> =
+                    visible.iter().map(|i| node.choices[*i].label).collect();
+                let node_text = game_content::resolve_dialogue_text(node, &self.narrative);
+                let speaker_name = self
+                    .entities
+                    .name
+                    .get(npc_entity.0 as usize)
+                    .map_or("NPC", String::as_str);
                 let dr = Rect::new(2, fb.height.saturating_sub(12), fb.width.saturating_sub(4), 10);
-                crate::ui::draw_dialogue(fb, dr, node, choice_cursor, &mut self.ui_hits);
+                crate::ui::draw_dialogue(
+                    fb,
+                    dr,
+                    speaker_name,
+                    node_text.as_str(),
+                    &visible_labels,
+                    choice_cursor.min(visible_labels.len().saturating_sub(1)),
+                    &mut self.ui_hits,
+                );
             }
         }
 
@@ -1101,6 +1288,9 @@ impl Game {
 
         if let Some(GameMode::Inventory { cursor }) = self.modes.current() {
             self.compose_inventory_overlay(fb, *cursor);
+        }
+        if let Some(GameMode::Journal { quest_cursor }) = self.modes.current() {
+            self.compose_journal_overlay(fb, *quest_cursor);
         }
         if let Some(GameMode::ItemTransfer {
             container,
@@ -1142,10 +1332,77 @@ impl Game {
             Some(GameMode::Exploration) => "explore",
             Some(GameMode::Dialogue { .. }) => "dialogue",
             Some(GameMode::Inventory { .. }) => "inventory",
+            Some(GameMode::Journal { .. }) => "journal",
             Some(GameMode::ItemTransfer { .. }) => "transfer",
             Some(GameMode::Combat(_)) => "combat",
             None => "none",
         }
+    }
+
+    fn compose_journal_overlay(&self, fb: &mut FrameBuffer, quest_cursor: usize) {
+        fn status_label(s: QuestJournalStatus) -> &'static str {
+            match s {
+                QuestJournalStatus::InProgress => "In progress",
+                QuestJournalStatus::Failed => "Failed",
+                QuestJournalStatus::Completed => "Completed",
+            }
+        }
+
+        let (left, right) = crate::ui::layout::split_horizontal_outer(
+            fb.width,
+            fb.height,
+            2,
+            3,
+            3,
+            2,
+            18,
+        );
+        crate::ui::draw_bordered_panel(fb, left, "Quests");
+        let inner_l = crate::ui::layout::panel_inner(left);
+        let journals = &self.narrative.quest_journal;
+        let n = journals.len();
+        let mut rows: Vec<String> = Vec::new();
+        if n == 0 {
+            rows.push("(no entries yet)".into());
+        } else {
+            for (i, q) in journals.iter().enumerate() {
+                let mark = if i == quest_cursor.min(n.saturating_sub(1)) {
+                    "> "
+                } else {
+                    "  "
+                };
+                let tag = status_label(q.status);
+                rows.push(format!("{}{} [{}]", mark, q.title, tag));
+            }
+        }
+        rows.push("---".into());
+        rows.push("j/k move  Esc close".into());
+        crate::ui::draw_text_block(fb, inner_l, &rows);
+
+        crate::ui::draw_bordered_panel(fb, right, "Entries");
+        let inner_r = crate::ui::layout::panel_inner(right);
+        let line_w = inner_r.w.saturating_sub(2) as usize;
+        let mut detail: Vec<String> = Vec::new();
+        if n == 0 {
+            detail.push("Quest lines appear when you talk,".into());
+            detail.push("pick up certain items, or advance".into());
+            detail.push("a story beat.".into());
+        } else {
+            let q = &journals[quest_cursor.min(n.saturating_sub(1))];
+            detail.push(format!("{} — {}", q.title, status_label(q.status)));
+            detail.push(String::new());
+            let mut entries: Vec<_> = q.entries.iter().collect();
+            entries.sort_by_key(|e| e.seq);
+            for e in entries {
+                let line = format!("[{}] {}", e.seq, e.text);
+                detail.extend(crate::ui::wrap::wrap_words(&line, line_w.max(12)));
+                detail.push(String::new());
+            }
+            if q.entries.is_empty() {
+                detail.push("(no log lines yet)".into());
+            }
+        }
+        crate::ui::draw_text_block(fb, inner_r, &detail);
     }
 
     fn compose_inventory_overlay(&self, fb: &mut FrameBuffer, cursor: usize) {
@@ -1421,5 +1678,37 @@ impl Game {
         self.apply_save(sg)?;
         self.log.push(format!("Loaded save from {path}."));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Game;
+
+    #[test]
+    fn dialogue_hides_unmet_required_choices() {
+        let game = Game::new_bootstrapped(80, 30);
+        let tree = game.content.dialogues.get("guide").copied().unwrap();
+        let node = &tree.nodes[1];
+        let visible = game.dialogue_visible_choice_indices(node);
+        assert_eq!(visible, vec![0, 1, 4]);
+    }
+
+    #[test]
+    fn dialogue_shows_choice_when_requirements_met() {
+        let mut game = Game::new_bootstrapped(80, 30);
+        game.narrative.inventory.add("cellar_key", 1);
+        game.narrative.journal_set_status(
+            crate::game_content::quests::QUEST_GUIDE_FETCH,
+            crate::content::QuestJournalStatus::InProgress,
+        );
+        game.narrative.journal_set_status(
+            crate::game_content::quests::QUEST_VILLAGER_HELP,
+            crate::content::QuestJournalStatus::Completed,
+        );
+        let tree = game.content.dialogues.get("guide").copied().unwrap();
+        let node = &tree.nodes[1];
+        let visible = game.dialogue_visible_choice_indices(node);
+        assert_eq!(visible, vec![0, 1, 2, 3, 4]);
     }
 }

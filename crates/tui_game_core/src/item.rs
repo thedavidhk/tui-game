@@ -146,7 +146,12 @@ impl Inventory {
     }
 
     /// Move up to `n` items from `other` into `self`.
-    pub fn transfer_from(&mut self, other: &mut Inventory, id: &str, n: u32) -> Result<(), InventoryError> {
+    pub fn transfer_from(
+        &mut self,
+        other: &mut Inventory,
+        id: &str,
+        n: u32,
+    ) -> Result<(), InventoryError> {
         other.try_remove(id, n)?;
         self.add(id.to_string(), n);
         Ok(())

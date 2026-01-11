@@ -70,11 +70,7 @@ fn los_clear(map: &MapGrid, x0: i32, y0: i32, x1: i32, y1: i32) -> bool {
 }
 
 /// Mark explored where visible OR already explored (caller merges).
-pub fn merge_explored(
-    map: &MapGrid,
-    visible: &[bool],
-    explored: &mut [bool],
-) {
+pub fn merge_explored(map: &MapGrid, visible: &[bool], explored: &mut [bool]) {
     let n = (map.width as usize) * (map.height as usize);
     for i in 0..n.min(visible.len()).min(explored.len()) {
         if visible[i] {
@@ -105,6 +101,9 @@ mod tests {
         let mut vis = vec![false; 49];
         compute_visible(&map, 3, 0, 4, &mut vis);
         assert!(vis[3 + 0 * 7]);
-        assert!(!vis[3 + 5 * 7], "cell behind wall along column should stay hidden");
+        assert!(
+            !vis[3 + 5 * 7],
+            "cell behind wall along column should stay hidden"
+        );
     }
 }

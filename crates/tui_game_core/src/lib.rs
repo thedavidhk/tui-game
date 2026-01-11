@@ -15,7 +15,7 @@ pub mod save;
 pub mod ui;
 pub mod world;
 
-pub use content::EntityBlueprint;
-pub use item::{EquipSlot, Inventory, ItemCatalog, ItemCategory, ItemDef, ItemStack};
-pub use narrative::NarrativeState;
+pub use content::{EntityBlueprint, QuestJournalStatus};
 pub use game::Game;
+pub use item::{EquipSlot, Inventory, ItemCatalog, ItemCategory, ItemDef, ItemStack};
+pub use narrative::{JournalEntry, JournalQuestRecord, NarrativeState};

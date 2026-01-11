@@ -11,6 +11,7 @@ pub fn route(game: &mut Game, ev: InputEvent) {
         Some(GameMode::Exploration) => game.handle_explore(ev),
         Some(GameMode::Dialogue { .. }) => game.handle_dialogue(ev),
         Some(GameMode::Inventory { .. }) => game.handle_inventory(ev),
+        Some(GameMode::Journal { .. }) => game.handle_journal(ev),
         Some(GameMode::ItemTransfer { .. }) => game.handle_item_transfer(ev),
         Some(GameMode::Combat(ref c)) => game.handle_combat(ev, c.clone()),
     }

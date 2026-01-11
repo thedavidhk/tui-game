@@ -1,7 +1,12 @@
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, Style};
 
-pub fn draw_log(fb: &mut FrameBuffer, inner: Rect, lines: &[String], mouse_regions: &mut Vec<Rect>) {
+pub fn draw_log(
+    fb: &mut FrameBuffer,
+    inner: Rect,
+    lines: &[String],
+    mouse_regions: &mut Vec<Rect>,
+) {
     let _ = mouse_regions;
     let fg = Color::rgb(190, 200, 175);
     let bg = Color::rgb(14, 18, 14);

@@ -8,15 +8,25 @@ use std::time::{Duration, Instant};
 
 use crossterm::{
     cursor::{Hide, Show},
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton as CMouseButton, MouseEventKind as CMouseKind},
+    event::{
+        self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton as CMouseButton,
+        MouseEventKind as CMouseKind,
+    },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
     QueueableCommand,
 };
 use tui_game_core::game::GameMode;
-use tui_game_core::input::{InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseCell, MouseEventKind};
+use tui_game_core::input::{
+    InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseCell, MouseEventKind,
+};
 use tui_game_core::rect::Rect;
-use tui_game_core::render::{encode_frame_delta, encode_frame_full, FrameBuffer, FrameSample, FrameStatsRing};
+use tui_game_core::render::{
+    encode_frame_delta, encode_frame_full, FrameBuffer, FrameSample, FrameStatsRing,
+};
 use tui_game_core::Game;
 
 fn main() -> std::io::Result<()> {
@@ -37,9 +47,8 @@ fn main() -> std::io::Result<()> {
         let level = tui_game_core::level::level_from_ron(&raw).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, format!("ron: {e}"))
         })?;
-        Game::from_level_file(&level, tw, th).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-        })?
+        Game::from_level_file(&level, tw, th)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
     } else {
         Game::new_bootstrapped(tw, th)
     };
@@ -47,7 +56,6 @@ fn main() -> std::io::Result<()> {
     let mut stats = FrameStatsRing::new(120);
     let mut full_redraw_next = true;
     while !game.quit_requested {
-
         let (world_r, hud_r, log_r) = layout(tw, th);
         game.viewport_w = tw;
         game.viewport_h = th;
@@ -95,7 +103,11 @@ fn main() -> std::io::Result<()> {
                         if let Some(ev) = map_key(k) {
                             if matches!(
                                 ev,
-                                InputEvent::Key(KeyChord { key: Key::Char('q'), ctrl: true, .. })
+                                InputEvent::Key(KeyChord {
+                                    key: Key::Char('q'),
+                                    ctrl: true,
+                                    ..
+                                })
                             ) {
                                 game.quit_requested = true;
                                 break;
@@ -113,7 +125,10 @@ fn main() -> std::io::Result<()> {
                         th = h;
                         fb.resize(w, h);
                         full_redraw_next = true;
-                        batch.push(InputEvent::Resize { width: w, height: h });
+                        batch.push(InputEvent::Resize {
+                            width: w,
+                            height: h,
+                        });
                     }
                     _ => {}
                 }

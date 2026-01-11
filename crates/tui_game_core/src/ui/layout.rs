@@ -25,13 +25,8 @@ pub fn split_horizontal_outer(
     min_col_w: u16,
 ) -> (Rect, Rect) {
     let inner_w = full_w.saturating_sub(margin_x * 2);
-    let each = inner_w
-        .saturating_sub(mid_gap)
-        / 2
-        .max(min_col_w);
-    let h = full_h
-        .saturating_sub(margin_top + margin_bottom)
-        .max(8);
+    let each = inner_w.saturating_sub(mid_gap) / 2.max(min_col_w);
+    let h = full_h.saturating_sub(margin_top + margin_bottom).max(8);
     let left = Rect::new(margin_x, margin_top, each, h);
     let right = Rect::new(
         margin_x.saturating_add(each).saturating_add(mid_gap),
