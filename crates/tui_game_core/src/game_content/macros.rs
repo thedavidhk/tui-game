@@ -26,16 +26,20 @@ macro_rules! dialogue_tree {
                 $node:ident => {
                     text: $text:expr,
                     $(text_fn: $text_fn:expr,)?
+                    $(effects: $node_effects:expr,)?
                     choices: [
                         $(
                             {
                                 label: $label:expr,
                                 next: $next:ident,
                                 requires: $requires:expr,
-                                effects: $effects:expr $(,)?
+                                $(requires_fn: $requires_fn:expr,)?
+                                effects: $effects:expr,
+                                $(effects_fn: $effects_fn:expr,)?
                             }
                         ),* $(,)?
                     ],
+                    $(continue_to: $continue_to:ident,)?
                 }
             ),+ $(,)?
         }
@@ -50,15 +54,20 @@ macro_rules! dialogue_tree {
         static __NODES: &[crate::content::DialogueNode] = &[
             $(
                 crate::content::DialogueNode {
+                    id: stringify!($node),
                     text: $text,
                     text_fn: dialogue_tree!(@opt_text_fn $($text_fn)?),
+                    effects: dialogue_tree!(@opt_node_effects $($node_effects)?),
+                    auto_next: dialogue_tree!(@opt_continue __Node, __EXIT $(, $continue_to)?),
                     choices: &[
                         $(
                             crate::content::DialogueChoice {
                                 label: $label,
                                 next: dialogue_tree!(@next __Node, __EXIT, $next),
                                 requires: $requires,
+                                requires_fn: dialogue_tree!(@opt_requires_fn $($requires_fn)?),
                                 effects: $effects,
+                                effects_fn: dialogue_tree!(@opt_effects_fn $($effects_fn)?),
                             }
                         ),*
                     ],
@@ -82,6 +91,30 @@ macro_rules! dialogue_tree {
         Some($text_fn)
     };
     (@opt_text_fn) => {
+        None
+    };
+    (@opt_node_effects $effects:expr) => {
+        $effects
+    };
+    (@opt_node_effects) => {
+        &[]
+    };
+    (@opt_continue $enum_name:ident, $exit:ident , $continue:ident) => {
+        Some(dialogue_tree!(@next $enum_name, $exit, $continue))
+    };
+    (@opt_continue $enum_name:ident, $exit:ident) => {
+        None
+    };
+    (@opt_requires_fn $requires_fn:expr) => {
+        Some($requires_fn)
+    };
+    (@opt_requires_fn) => {
+        None
+    };
+    (@opt_effects_fn $effects_fn:expr) => {
+        Some($effects_fn)
+    };
+    (@opt_effects_fn) => {
         None
     };
     (@count $($nodes:ident),+ $(,)?) => {

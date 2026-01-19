@@ -1,12 +1,10 @@
 //! Player narrative state: inventory, equipment, quest progression, and effect application.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::content::{
-    Condition, DemoQuestPhase, Effect, QuestJournalStatus, TriggerEvent, TriggerRule,
-};
+use crate::content::{Condition, DemoQuestPhase, Effect, QuestJournalStatus};
 use crate::item::{EquipSlot, Inventory, InventoryError};
 
 /// One timestamped line under a quest in the journal (ordering uses `seq`).
@@ -38,9 +36,9 @@ pub struct NarrativeState {
     /// Quest journal: one record per quest id, in discovery order.
     #[serde(default)]
     pub quest_journal: Vec<JournalQuestRecord>,
-    /// Trigger ids already fired for `once` rules.
+    /// Dialogue ids for which the player has already passed the first auto-continue beat (`_intro` / `_greet`).
     #[serde(default)]
-    pub fired_triggers: std::collections::HashSet<String>,
+    pub met_npcs: HashSet<String>,
     pub inventory: Inventory,
     pub container_inventories: HashMap<u32, Inventory>,
     pub equipment: HashMap<EquipSlot, String>,
@@ -53,7 +51,7 @@ impl Default for NarrativeState {
             quest_stages: HashMap::new(),
             journal_next_seq: 0,
             quest_journal: Vec::new(),
-            fired_triggers: std::collections::HashSet::new(),
+            met_npcs: HashSet::new(),
             inventory: Inventory::default(),
             container_inventories: HashMap::new(),
             equipment: HashMap::new(),
@@ -61,7 +59,7 @@ impl Default for NarrativeState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NarrativeApplyError {
     MissingItemForTake,
     Inventory(InventoryError),
@@ -94,6 +92,15 @@ impl NarrativeState {
     #[must_use]
     pub fn quest_is_failed(&self, quest_id: &str) -> bool {
         self.quest_status_is(quest_id, QuestJournalStatus::Failed)
+    }
+
+    #[must_use]
+    pub fn has_seen_dialogue_intro(&self, dialogue_id: &str) -> bool {
+        self.met_npcs.contains(dialogue_id)
+    }
+
+    pub fn mark_dialogue_intro_seen(&mut self, dialogue_id: &str) {
+        self.met_npcs.insert(dialogue_id.to_string());
     }
 
     /// Append a journal line for `quest_id`, creating the quest row if needed.
@@ -191,30 +198,6 @@ impl NarrativeState {
         Ok(())
     }
 
-    pub fn apply_trigger(
-        &mut self,
-        log: &mut Vec<String>,
-        rules: &[TriggerRule],
-        ev: TriggerEvent<'_>,
-    ) -> Result<(), NarrativeApplyError> {
-        for rule in rules {
-            if !rule.when.matches(ev) {
-                continue;
-            }
-            if rule.once && self.fired_triggers.contains(rule.id) {
-                continue;
-            }
-            if !self.requires_met(rule.requires) {
-                continue;
-            }
-            self.apply_effects(log, rule.effects)?;
-            if rule.once {
-                self.fired_triggers.insert(rule.id.to_string());
-            }
-        }
-        Ok(())
-    }
-
     pub fn apply_effects(
         &mut self,
         log: &mut Vec<String>,
@@ -265,9 +248,7 @@ impl NarrativeState {
 
 #[cfg(test)]
 mod tests {
-    use crate::content::{
-        DemoQuestPhase, Effect, QuestJournalStatus, TriggerEvent, TriggerKind, TriggerRule,
-    };
+    use crate::content::{DemoQuestPhase, Effect, QuestJournalStatus};
 
     use super::NarrativeState;
 
@@ -308,33 +289,6 @@ mod tests {
         assert_eq!(q.status, QuestJournalStatus::Completed);
         assert_eq!(q.entries.len(), 1);
         assert_eq!(q.entries[0].text, "Started.");
-    }
-
-    #[test]
-    fn once_trigger_runs_once() {
-        static RULES: &[TriggerRule] = &[TriggerRule {
-            id: "r1",
-            when: TriggerKind::InventoryCheck {
-                item_id: "cellar_key",
-                min_count: 1,
-            },
-            requires: &[],
-            effects: &[Effect::AddQuestStage {
-                quest: "guide_fetch",
-                delta: 1,
-            }],
-            once: true,
-        }];
-        let mut n = NarrativeState::default();
-        n.inventory.add("cellar_key", 1);
-        let mut log = Vec::new();
-        let ev = TriggerEvent::InventoryCheck {
-            item_id: "cellar_key",
-            min_count: 1,
-        };
-        n.apply_trigger(&mut log, RULES, ev).unwrap();
-        n.apply_trigger(&mut log, RULES, ev).unwrap();
-        assert_eq!(n.quest_stages.get("guide_fetch").copied(), Some(1));
     }
 
     #[test]

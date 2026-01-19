@@ -7,6 +7,7 @@ use crate::rect::Rect;
 pub enum UiHitTarget {
     MainMenuItem(usize),
     DialogueChoice(usize),
+    DialogueContinue,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -79,95 +79,29 @@ pub enum Effect {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum TriggerKind {
-    DialogueChoice {
-        dialogue_id: &'static str,
-        node_index: usize,
-        choice_label: &'static str,
-    },
-    InventoryCheck {
-        item_id: &'static str,
-        min_count: u32,
-    },
-    RegionEnter {
-        region_id: &'static str,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TriggerRule {
-    pub id: &'static str,
-    pub when: TriggerKind,
-    pub requires: &'static [Condition],
-    pub effects: &'static [Effect],
-    pub once: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum TriggerEvent<'a> {
-    DialogueChoice {
-        dialogue_id: &'a str,
-        node_index: usize,
-        choice_label: &'a str,
-    },
-    InventoryCheck {
-        item_id: &'a str,
-        min_count: u32,
-    },
-    RegionEnter {
-        region_id: &'a str,
-    },
-}
-
-impl TriggerKind {
-    #[must_use]
-    pub fn matches(self, ev: TriggerEvent<'_>) -> bool {
-        match (self, ev) {
-            (
-                Self::DialogueChoice {
-                    dialogue_id: ad,
-                    node_index: an,
-                    choice_label: ac,
-                },
-                TriggerEvent::DialogueChoice {
-                    dialogue_id: bd,
-                    node_index: bn,
-                    choice_label: bc,
-                },
-            ) => ad == bd && an == bn && ac == bc,
-            (
-                Self::InventoryCheck {
-                    item_id: ai,
-                    min_count: am,
-                },
-                TriggerEvent::InventoryCheck {
-                    item_id: bi,
-                    min_count: bm,
-                },
-            ) => ai == bi && bm >= am,
-            (Self::RegionEnter { region_id: ar }, TriggerEvent::RegionEnter { region_id: br }) => {
-                ar == br
-            }
-            _ => false,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct DialogueChoice {
     pub label: &'static str,
     pub next: usize,
     pub requires: &'static [Condition],
+    pub requires_fn: Option<DialogueChoiceRequiresFn>,
     pub effects: &'static [Effect],
+    pub effects_fn: Option<DialogueChoiceEffectsFn>,
 }
 
 pub type DialogueTextFn = fn(&crate::narrative::NarrativeState) -> String;
+pub type DialogueChoiceRequiresFn = fn(&crate::narrative::NarrativeState) -> bool;
+pub type DialogueChoiceEffectsFn =
+    fn(&mut crate::narrative::NarrativeState, &mut Vec<String>) -> Result<(), String>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct DialogueNode {
+    pub id: &'static str,
     pub text: &'static str,
     pub text_fn: Option<DialogueTextFn>,
+    pub effects: &'static [Effect],
+    /// When [`choices`](Self::choices) is empty, proceed to this node on continue (Enter / Space / E).
+    pub auto_next: Option<usize>,
     pub choices: &'static [DialogueChoice],
 }
 
@@ -175,6 +109,13 @@ pub struct DialogueNode {
 pub struct DialogueTree {
     pub id: &'static str,
     pub nodes: &'static [DialogueNode],
+}
+
+impl DialogueTree {
+    #[must_use]
+    pub fn node_index(&self, node_id: &str) -> Option<usize> {
+        self.nodes.iter().position(|node| node.id == node_id)
+    }
 }
 
 /// Static definition for an entity type that may appear in [`LevelFile`](crate::level::LevelFile)
@@ -203,7 +144,6 @@ pub struct ContentPack {
     pub dialogues: HashMap<&'static str, &'static DialogueTree>,
     pub guide_dialogue: &'static DialogueTree,
     pub quest_defs: &'static [QuestDef],
-    pub trigger_rules: &'static [TriggerRule],
     pub entity_blueprints: &'static [EntityBlueprint],
     pub item_defs: &'static [ItemDef],
 }
@@ -269,7 +209,59 @@ impl ContentPack {
                 return Err(format!("duplicate dialogue id: {k}"));
             }
             let exit = tree.nodes.len();
+            let mut node_ids = HashSet::new();
             for (i, node) in tree.nodes.iter().enumerate() {
+                if !node_ids.insert(node.id) {
+                    return Err(format!(
+                        "dialogue {} has duplicate node id {:?}",
+                        tree.id, node.id
+                    ));
+                }
+                if node.choices.is_empty() {
+                    if node.auto_next.is_none() {
+                        return Err(format!(
+                            "dialogue {} node {} has empty choices but no continue_to target",
+                            tree.id, i
+                        ));
+                    }
+                } else if node.auto_next.is_some() {
+                    return Err(format!(
+                        "dialogue {} node {} mixes choices with continue_to (not allowed)",
+                        tree.id, i
+                    ));
+                }
+                if let Some(n) = node.auto_next {
+                    if n > exit {
+                        return Err(format!(
+                            "dialogue {} node {} continue_to points to invalid {}",
+                            tree.id, i, n
+                        ));
+                    }
+                }
+                for eff in node.effects {
+                    match *eff {
+                        Effect::GiveItem(id) | Effect::TakeItem(id) => {
+                            if !self.item_id_known(id) {
+                                return Err(format!(
+                                    "dialogue {} node {} effect item unknown {id:?}",
+                                    tree.id, i
+                                ));
+                            }
+                        }
+                        Effect::SetDemoQuest(_) | Effect::Log(_) => {}
+                        Effect::SetQuestStage { quest, .. }
+                        | Effect::AddQuestStage { quest, .. }
+                        | Effect::JournalAppend { quest, .. }
+                        | Effect::JournalSetStatus { quest, .. } => {
+                            if !self.quest_id_known(quest) {
+                                return Err(format!(
+                                    "dialogue {} node {} effect quest unknown {quest:?}",
+                                    tree.id, i
+                                ));
+                            }
+                        }
+                    }
+                }
                 for c in node.choices {
                     if c.next > exit {
                         return Err(format!(
@@ -356,76 +348,6 @@ impl ContentPack {
                 }
             }
         }
-        let mut trig_ids = HashSet::new();
-        for t in self.trigger_rules {
-            if !trig_ids.insert(t.id) {
-                return Err(format!("duplicate trigger_rule id: {}", t.id));
-            }
-            match t.when {
-                TriggerKind::DialogueChoice { dialogue_id, .. } => {
-                    if !self.dialogues.contains_key(dialogue_id) {
-                        return Err(format!(
-                            "trigger_rule {:?} references unknown dialogue {:?}",
-                            t.id, dialogue_id
-                        ));
-                    }
-                }
-                TriggerKind::InventoryCheck { item_id, .. } => {
-                    if !self.item_id_known(item_id) {
-                        return Err(format!(
-                            "trigger_rule {:?} inventory item unknown {:?}",
-                            t.id, item_id
-                        ));
-                    }
-                }
-                TriggerKind::RegionEnter { .. } => {}
-            }
-            for cond in t.requires {
-                match *cond {
-                    Condition::HasItem(id) | Condition::ItemCountAtLeast { id, .. } => {
-                        if !self.item_id_known(id) {
-                            return Err(format!(
-                                "trigger_rule {:?} condition item unknown {:?}",
-                                t.id, id
-                            ));
-                        }
-                    }
-                    Condition::QuestStageAtLeast { quest, .. }
-                    | Condition::QuestStatusIs { quest, .. } => {
-                        if !self.quest_id_known(quest) {
-                            return Err(format!(
-                                "trigger_rule {:?} condition quest unknown {:?}",
-                                t.id, quest
-                            ));
-                        }
-                    }
-                }
-            }
-            for eff in t.effects {
-                match *eff {
-                    Effect::GiveItem(id) | Effect::TakeItem(id) => {
-                        if !self.item_id_known(id) {
-                            return Err(format!(
-                                "trigger_rule {:?} effect item unknown {:?}",
-                                t.id, id
-                            ));
-                        }
-                    }
-                    Effect::SetDemoQuest(_) | Effect::Log(_) => {}
-                    Effect::SetQuestStage { quest, .. }
-                    | Effect::AddQuestStage { quest, .. }
-                    | Effect::JournalAppend { quest, .. }
-                    | Effect::JournalSetStatus { quest, .. } => {
-                        if !self.quest_id_known(quest) {
-                            return Err(format!(
-                                "trigger_rule {:?} effect quest unknown {:?}",
-                                t.id, quest
-                            ));
-                        }
-                    }
-                }
-            }
-        }
         Ok(())
     }
 }
@@ -436,7 +358,7 @@ mod validate_tests {
 
     use super::{
         Condition, ContentPack, DialogueChoice, DialogueNode, DialogueTree, Effect, EntityBlueprint,
-        QuestDef, TriggerKind, TriggerRule,
+        QuestDef,
     };
     use crate::item::{ItemCategory, ItemDef};
 
@@ -445,11 +367,16 @@ mod validate_tests {
         label: "x",
         next: 0,
         requires: &[],
+        requires_fn: None,
         effects: BAD_GIVE_EFF,
+        effects_fn: None,
     }];
     static BAD_NODE: [DialogueNode; 1] = [DialogueNode {
+        id: "bad",
         text: "t",
         text_fn: None,
+        effects: &[],
+        auto_next: None,
         choices: &BAD_GIVE,
     }];
     static BAD_TREE: DialogueTree = DialogueTree {
@@ -465,7 +392,6 @@ mod validate_tests {
             dialogues,
             guide_dialogue: &BAD_TREE,
             quest_defs: &[],
-            trigger_rules: &[],
             entity_blueprints: &[],
             item_defs: &[],
         };
@@ -498,7 +424,6 @@ mod validate_tests {
             dialogues,
             guide_dialogue: &BAD_TREE,
             quest_defs: &[],
-            trigger_rules: &[],
             entity_blueprints: &BP,
             item_defs: &IDS,
         };
@@ -517,11 +442,16 @@ mod validate_tests {
             label: "x",
             next: 0,
             requires: &[],
+            requires_fn: None,
             effects: E,
+            effects_fn: None,
         }];
         static N: [DialogueNode; 1] = [DialogueNode {
+            id: "t",
             text: "t",
             text_fn: None,
+            effects: &[],
+            auto_next: None,
             choices: &C,
         }];
         static T: DialogueTree = DialogueTree { id: "t", nodes: &N };
@@ -534,7 +464,6 @@ mod validate_tests {
             dialogues,
             guide_dialogue: &T,
             quest_defs: QUESTS,
-            trigger_rules: &[],
             entity_blueprints: &[],
             item_defs: &[],
         };
@@ -543,17 +472,25 @@ mod validate_tests {
     }
 
     #[test]
-    fn validate_rejects_unknown_quest_id_in_trigger_rule() {
+    fn validate_rejects_unknown_quest_id_in_dialogue_condition() {
         let mut dialogues = HashMap::new();
         static GOOD_CHOICES: [DialogueChoice; 1] = [DialogueChoice {
             label: "x",
             next: 0,
-            requires: &[],
+            requires: &[Condition::QuestStageAtLeast {
+                quest: "missing",
+                min: 1,
+            }],
+            requires_fn: None,
             effects: &[],
+            effects_fn: None,
         }];
         static GOOD_NODES: [DialogueNode; 1] = [DialogueNode {
+            id: "good",
             text: "t",
             text_fn: None,
+            effects: &[],
+            auto_next: None,
             choices: &GOOD_CHOICES,
         }];
         static GOOD_TREE: DialogueTree = DialogueTree {
@@ -564,19 +501,6 @@ mod validate_tests {
         static QUESTS: &[QuestDef] = &[QuestDef {
             id: "known",
             title: "Known",
-        }];
-        static RULES: &[TriggerRule] = &[TriggerRule {
-            id: "r1",
-            when: TriggerKind::InventoryCheck {
-                item_id: "a",
-                min_count: 1,
-            },
-            requires: &[Condition::QuestStageAtLeast {
-                quest: "missing",
-                min: 1,
-            }],
-            effects: &[],
-            once: false,
         }];
         static IDS: [ItemDef; 1] = [ItemDef {
             id: "a",
@@ -589,7 +513,6 @@ mod validate_tests {
             dialogues,
             guide_dialogue: &GOOD_TREE,
             quest_defs: QUESTS,
-            trigger_rules: RULES,
             entity_blueprints: &[],
             item_defs: &IDS,
         };

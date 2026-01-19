@@ -1,17 +1,14 @@
 //! Static narrative and entity definitions for this game.
 //! Keep [`crate::content`] free of game-specific tables so validation and pack shape stay reusable.
 
-use std::collections::HashMap;
-
 use crate::content::{ContentPack, DialogueNode};
-use crate::narrative::NarrativeState;
+use crate::narrative::{NarrativeApplyError, NarrativeState};
 
 mod blueprints;
-pub mod dialogues;
 mod items;
 mod macros;
+mod npcs;
 pub mod quests;
-mod triggers;
 
 pub(crate) use macros::{dialogue_tree, effects, quest_defs, requires};
 
@@ -23,19 +20,41 @@ pub fn resolve_dialogue_text(node: &DialogueNode, narrative: &NarrativeState) ->
 /// The default [`ContentPack`] for this workspace (game + level editor).
 #[must_use]
 pub fn content_pack() -> ContentPack {
-    let mut dialogues = HashMap::new();
-    dialogues.insert("guide", &dialogues::TREE_GUIDE);
-    dialogues.insert("healer", &dialogues::TREE_HEALER);
-    dialogues.insert("scholar", &dialogues::TREE_SCHOLAR);
-    dialogues.insert("merchant", &dialogues::TREE_MERCHANT);
+    fn entity_blueprints() -> &'static [crate::content::EntityBlueprint] {
+        use std::sync::OnceLock;
+        static ALL: OnceLock<Vec<crate::content::EntityBlueprint>> = OnceLock::new();
+        ALL.get_or_init(|| {
+            let mut out = Vec::new();
+            out.extend_from_slice(npcs::npc_blueprints());
+            out.extend_from_slice(blueprints::ENTITY_BLUEPRINTS);
+            out
+        })
+    }
+
+    let dialogues = npcs::dialogue_map();
     ContentPack {
         dialogues,
-        guide_dialogue: &dialogues::TREE_GUIDE,
+        guide_dialogue: npcs::guide_dialogue(),
         quest_defs: quests::QUEST_DEFS,
-        trigger_rules: triggers::TRIGGER_RULES,
-        entity_blueprints: blueprints::ENTITY_BLUEPRINTS,
+        entity_blueprints: entity_blueprints(),
         item_defs: items::ITEM_DEFS,
     }
+}
+
+pub fn on_item_picked(
+    item_id: &str,
+    narrative: &mut NarrativeState,
+    log: &mut Vec<String>,
+) -> Result<(), NarrativeApplyError> {
+    npcs::on_item_picked(item_id, narrative, log)
+}
+
+pub fn on_region_enter(
+    region_id: &str,
+    narrative: &mut NarrativeState,
+    log: &mut Vec<String>,
+) -> Result<(), NarrativeApplyError> {
+    npcs::on_region_enter(region_id, narrative, log)
 }
 
 #[cfg(test)]

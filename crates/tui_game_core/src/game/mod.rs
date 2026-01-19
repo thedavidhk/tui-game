@@ -7,7 +7,7 @@ use std::fs;
 use serde::{Deserialize, Serialize};
 
 use crate::combat::CombatState;
-use crate::content::{ContentPack, DemoQuestPhase, QuestJournalStatus, TriggerEvent};
+use crate::content::{ContentPack, DemoQuestPhase, QuestJournalStatus};
 use crate::entity::{EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseEventKind};
@@ -109,36 +109,6 @@ pub struct Game {
 }
 
 impl Game {
-    fn apply_trigger_event(&mut self, ev: TriggerEvent<'_>) {
-        if let Err(e) = self
-            .narrative
-            .apply_trigger(&mut self.log, self.content.trigger_rules, ev)
-        {
-            self.log.push(format!("Trigger apply failed: {e:?}"));
-        }
-    }
-
-    fn run_inventory_triggers_for(&mut self, item_id: &str) {
-        let n = self.narrative.inventory.count_of(item_id);
-        self.apply_trigger_event(TriggerEvent::InventoryCheck {
-            item_id,
-            min_count: n,
-        });
-    }
-
-    fn run_all_inventory_triggers(&mut self) {
-        let ids: Vec<String> = self
-            .narrative
-            .inventory
-            .stacks
-            .iter()
-            .map(|s| s.id.clone())
-            .collect();
-        for id in ids {
-            self.run_inventory_triggers_for(id.as_str());
-        }
-    }
-
     fn maybe_region_id_for_pos(&self, x: i32, y: i32) -> Option<&'static str> {
         if x >= 18 && y <= 6 {
             return Some("tavern_approach");
@@ -150,7 +120,11 @@ impl Game {
         node.choices
             .iter()
             .enumerate()
-            .filter_map(|(i, c)| self.narrative.requires_met(c.requires).then_some(i))
+            .filter_map(|(i, c)| {
+                let base_ok = self.narrative.requires_met(c.requires);
+                let fn_ok = c.requires_fn.map_or(true, |f| f(&self.narrative));
+                (base_ok && fn_ok).then_some(i)
+            })
             .collect()
     }
 
@@ -406,7 +380,13 @@ impl Game {
         self.log.push(format!("Move to ({}, {}).", nx, ny));
         self.try_pickup_ground_items(pid);
         if let Some(region_id) = self.maybe_region_id_for_pos(nx, ny) {
-            self.apply_trigger_event(TriggerEvent::RegionEnter { region_id });
+            if let Err(e) = game_content::on_region_enter(
+                region_id,
+                &mut self.narrative,
+                &mut self.log,
+            ) {
+                self.log.push(format!("Region hook failed: {e:?}"));
+            }
         }
         self.refresh_fow();
     }
@@ -436,7 +416,13 @@ impl Game {
                     _ => self.narrative.quests = DemoQuestPhase::HasCellarKey,
                 }
             }
-            self.run_inventory_triggers_for(stack.id.as_str());
+            if let Err(e) = game_content::on_item_picked(
+                stack.id.as_str(),
+                &mut self.narrative,
+                &mut self.log,
+            ) {
+                self.log.push(format!("Pickup hook failed: {e:?}"));
+            }
             self.log
                 .push(format!("Picked up {} x{}.", stack.id, stack.count));
             self.entities.despawn(eid);
@@ -447,8 +433,24 @@ impl Game {
         let kind = self.entities.npc_kind[npc.0 as usize]
             .clone()
             .unwrap_or_default();
-        let start_node = if kind == "guide" && self.narrative.quests != DemoQuestPhase::NotStarted {
-            1
+        let tree = self
+            .content
+            .dialogues
+            .get(kind.as_str())
+            .copied()
+            .unwrap_or(self.content.guide_dialogue);
+        let start_node = if kind == "guide" && self.narrative.quests != DemoQuestPhase::NotStarted
+        {
+            tree.node_index("hub").unwrap_or(0)
+        } else if self.narrative.has_seen_dialogue_intro(kind.as_str()) {
+            if kind == "guide" {
+                tree
+                    .node_index("welcome")
+                    .or_else(|| tree.node_index("hub"))
+                    .unwrap_or(0)
+            } else {
+                tree.node_index("hub").unwrap_or(0)
+            }
         } else {
             0
         };
@@ -458,6 +460,7 @@ impl Game {
             node_index: start_node,
             choice_cursor: 0,
         });
+        self.apply_dialogue_node_effects(tree, start_node);
         self.log.push(format!("Talking ({}).", kind));
     }
 
@@ -679,13 +682,47 @@ impl Game {
             let _ = self.modes.pop();
             return;
         };
+        let exit_sentinel = tree.nodes.len();
+
+        if node.choices.is_empty() {
+            if node.auto_next.is_some() {
+                match ev {
+                    InputEvent::Mouse {
+                        kind: MouseEventKind::Down(MouseButton::Left),
+                        cell,
+                        ..
+                    } => {
+                        if matches!(
+                            self.ui_hits.pick(cell),
+                            Some(UiHitTarget::DialogueContinue)
+                        ) {
+                            self.apply_dialogue_continue(tree, exit_sentinel);
+                        }
+                    }
+                    InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
+                        let _ = self.modes.pop();
+                    }
+                    InputEvent::Key(KeyChord {
+                        key: Key::Enter | Key::Char(' ') | Key::Char('e'),
+                        ..
+                    }) => {
+                        self.apply_dialogue_continue(tree, exit_sentinel);
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            let _ = self.modes.pop();
+            self.log.push("No available dialogue choices.".into());
+            return;
+        }
+
         let visible = self.dialogue_visible_choice_indices(node);
         if visible.is_empty() {
             let _ = self.modes.pop();
             self.log.push("No available dialogue choices.".into());
             return;
         }
-        let exit_sentinel = tree.nodes.len();
 
         match ev {
             InputEvent::Mouse {
@@ -750,6 +787,46 @@ impl Game {
         }
     }
 
+    fn apply_dialogue_continue(
+        &mut self,
+        tree: &'static crate::content::DialogueTree,
+        exit_sentinel: usize,
+    ) {
+        let Some(GameMode::Dialogue {
+            dialogue_id,
+            node_index,
+            ..
+        }) = self.modes.current().cloned()
+        else {
+            return;
+        };
+        let Some(node) = tree.nodes.get(node_index) else {
+            let _ = self.modes.pop();
+            return;
+        };
+        if node.id == "_intro" || node.id == "_greet" {
+            self.narrative
+                .mark_dialogue_intro_seen(dialogue_id.as_str());
+        }
+        let Some(next) = node.auto_next else {
+            return;
+        };
+        if next == exit_sentinel {
+            let _ = self.modes.pop();
+            return;
+        }
+        if let Some(GameMode::Dialogue {
+            node_index: ni,
+            choice_cursor: cc,
+            ..
+        }) = self.modes.current_mut()
+        {
+            *ni = next;
+            *cc = 0;
+        }
+        self.apply_dialogue_node_effects(tree, next);
+    }
+
     pub(crate) fn apply_dialogue_choice(
         &mut self,
         tree: &'static crate::content::DialogueTree,
@@ -782,12 +859,13 @@ impl Game {
                 .push(format!("Dialogue effect failed: {e:?}"));
             return;
         }
-        self.run_all_inventory_triggers();
-        self.apply_trigger_event(TriggerEvent::DialogueChoice {
-            dialogue_id: tree.id,
-            node_index,
-            choice_label: choice.label,
-        });
+        if let Some(effects_fn) = choice.effects_fn {
+            if let Err(e) = effects_fn(&mut self.narrative, &mut self.log) {
+                self.log
+                    .push(format!("Dialogue custom effect failed: {e}"));
+                return;
+            }
+        }
         let next = choice.next;
         if next == exit_sentinel {
             let _ = self.modes.pop();
@@ -801,6 +879,24 @@ impl Game {
         {
             *ni = next;
             *cc = 0;
+        }
+        self.apply_dialogue_node_effects(tree, next);
+    }
+
+    fn apply_dialogue_node_effects(
+        &mut self,
+        tree: &'static crate::content::DialogueTree,
+        node_index: usize,
+    ) {
+        let Some(node) = tree.nodes.get(node_index) else {
+            return;
+        };
+        if node.effects.is_empty() {
+            return;
+        }
+        if let Err(e) = self.narrative.apply_effects(&mut self.log, node.effects) {
+            self.log
+                .push(format!("Dialogue node effect failed: {e:?}"));
         }
     }
 
@@ -1258,6 +1354,8 @@ impl Game {
                     .get(npc_entity.0 as usize)
                     .map_or("NPC", String::as_str);
                 let dr = Rect::new(2, fb.height.saturating_sub(12), fb.width.saturating_sub(4), 10);
+                let continue_only =
+                    node.choices.is_empty() && node.auto_next.is_some();
                 crate::ui::draw_dialogue(
                     fb,
                     dr,
@@ -1265,6 +1363,7 @@ impl Game {
                     node_text.as_str(),
                     &visible_labels,
                     choice_cursor.min(visible_labels.len().saturating_sub(1)),
+                    continue_only,
                     &mut self.ui_hits,
                 );
             }
@@ -1689,7 +1788,10 @@ mod tests {
     fn dialogue_hides_unmet_required_choices() {
         let game = Game::new_bootstrapped(80, 30);
         let tree = game.content.dialogues.get("guide").copied().unwrap();
-        let node = &tree.nodes[1];
+        let node = tree
+            .node_index("hub")
+            .and_then(|idx| tree.nodes.get(idx))
+            .expect("guide hub node must exist");
         let visible = game.dialogue_visible_choice_indices(node);
         assert_eq!(visible, vec![0, 1, 4]);
     }
@@ -1707,7 +1809,10 @@ mod tests {
             crate::content::QuestJournalStatus::Completed,
         );
         let tree = game.content.dialogues.get("guide").copied().unwrap();
-        let node = &tree.nodes[1];
+        let node = tree
+            .node_index("hub")
+            .and_then(|idx| tree.nodes.get(idx))
+            .expect("guide hub node must exist");
         let visible = game.dialogue_visible_choice_indices(node);
         assert_eq!(visible, vec![0, 1, 2, 3, 4]);
     }

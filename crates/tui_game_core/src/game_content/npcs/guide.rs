@@ -1,10 +1,26 @@
-use crate::content::{Condition, DemoQuestPhase, Effect, QuestJournalStatus};
+use crate::content::{Condition, DemoQuestPhase, Effect, EntityBlueprint, QuestJournalStatus};
 use crate::game_content::{dialogue_tree, effects, quests, requires};
+
+pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
+    kind: "guide",
+    display_name: "Guide",
+    description: "Demo NPC; dialogue id \"guide\".",
+    default_glyph: 'g',
+    default_label: "Guide",
+    dialogue_id: Some("guide"),
+    world_item: None,
+    is_container: false,
+};
 
 dialogue_tree! {
     TREE_GUIDE, "guide", {
-        _intro => {
-            text: "I'm the village guide. I keep track of who needs help and who can give it.",
+        _greet => {
+            text: "(looks up from a tally slate) New boots on our mud-that usually means you're willing to work.",
+            choices: [],
+            continue_to: welcome,
+        },
+        welcome => {
+            text: "I'm the guide here; I pair strangers with chores before they stumble into trouble.",
             choices: [
                 {
                     label: "How can I make myself useful?",
@@ -36,7 +52,7 @@ dialogue_tree! {
             ],
         },
         hub => {
-            text: "Good to see you again. Need direction, a progress check, or the cellar key?",
+            text: "Back already-good. Direction, a progress check, or that cellar key?",
             choices: [
                 {
                     label: "How can I make myself useful?",
@@ -49,6 +65,44 @@ dialogue_tree! {
                     next: report,
                     requires: requires![],
                     effects: effects![],
+                    effects_fn: |narrative, log| {
+                        let ready = narrative.quest_status_is(
+                            quests::QUEST_VILLAGER_HELP,
+                            QuestJournalStatus::InProgress,
+                        ) && narrative.quest_status_is(
+                            quests::QUEST_HEALER_DELIVERY,
+                            QuestJournalStatus::Completed,
+                        ) && narrative.quest_status_is(
+                            quests::QUEST_SCHOLAR_RING,
+                            QuestJournalStatus::Completed,
+                        ) && narrative.quest_status_is(
+                            quests::QUEST_TAVERN_VISIT,
+                            QuestJournalStatus::Completed,
+                        );
+                        if !ready {
+                            return Ok(());
+                        }
+                        narrative
+                            .apply_effects(
+                                log,
+                                &[
+                                    Effect::SetQuestStage {
+                                        quest: quests::QUEST_VILLAGER_HELP,
+                                        stage: 3,
+                                    },
+                                    Effect::JournalAppend {
+                                        quest: quests::QUEST_VILLAGER_HELP,
+                                        title_if_new: Some(quests::QUEST_VILLAGER_HELP_TITLE),
+                                        text: "Rowan said the village is in better shape thanks to my help.",
+                                    },
+                                    Effect::JournalSetStatus {
+                                        quest: quests::QUEST_VILLAGER_HELP,
+                                        status: QuestJournalStatus::Completed,
+                                    },
+                                ],
+                            )
+                            .map_err(|e| format!("{e:?}"))
+                    },
                 },
                 {
                     label: "I'd like to borrow the cellar key.",
@@ -83,7 +137,7 @@ dialogue_tree! {
             ],
         },
         jobs => {
-            text: "Start with Mara, Aldwin, and Riva. They'll tell you exactly what they need.",
+            text: "Start with Mara, Aldwin, and Riva-they'll hand you specifics faster than I can guess.",
             choices: [
                 {
                     label: "Back.",
@@ -135,7 +189,7 @@ dialogue_tree! {
             ],
         },
         key_offer => {
-            text: "You've earned it. Take the cellar key, and bring it back when you're done.",
+            text: "You've earned this. Take the cellar key-bring it home when the dust settles.",
             choices: [
                 {
                     label: "Understood.",
@@ -190,3 +244,8 @@ dialogue_tree! {
         }
     }
 }
+
+pub const NPC_GUIDE: super::NpcSpec = super::NpcSpec {
+    blueprint: BLUEPRINT,
+    dialogue: &TREE_GUIDE,
+};

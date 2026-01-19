@@ -10,6 +10,7 @@ pub fn draw_dialogue(
     node_text: &str,
     choice_labels: &[&str],
     choice_cursor: usize,
+    continue_only: bool,
     hits: &mut UiHitState,
 ) {
     super::draw_bordered_panel(fb, r, "Dialogue");
@@ -22,6 +23,16 @@ pub fn draw_dialogue(
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!("{speaker_name}: {node_text}"));
     lines.push(String::new());
+    if continue_only {
+        lines.push("  (Enter, Space, or E to continue)".into());
+        super::draw_text_block(fb, inner, &lines);
+        let hint_y = inner.y + 3;
+        hits.push(
+            UiHitTarget::DialogueContinue,
+            Rect::new(inner.x, hint_y, inner.w, inner.h.saturating_sub(3)),
+        );
+        return;
+    }
     for (i, c) in choice_labels.iter().enumerate() {
         let prefix = if i == choice_cursor { "> " } else { "  " };
         lines.push(format!("{}{}", prefix, c));
