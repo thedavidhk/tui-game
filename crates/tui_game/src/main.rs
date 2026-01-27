@@ -116,7 +116,7 @@ fn main() -> std::io::Result<()> {
                         }
                     }
                     Event::Mouse(m) => {
-                        if let Some(ev) = map_mouse(m.column, m.row, m.kind) {
+                        if let Some(ev) = map_mouse(m) {
                             batch.push(ev);
                         }
                     }
@@ -186,9 +186,13 @@ fn map_key(k: KeyEvent) -> Option<InputEvent> {
     Some(InputEvent::Key(chord))
 }
 
-fn map_mouse(col: u16, row: u16, kind: crossterm::event::MouseEventKind) -> Option<InputEvent> {
-    let cell = MouseCell { x: col, y: row };
-    let kind = match kind {
+fn map_mouse(m: crossterm::event::MouseEvent) -> Option<InputEvent> {
+    use crossterm::event::KeyModifiers;
+    let cell = MouseCell {
+        x: m.column,
+        y: m.row,
+    };
+    let kind = match m.kind {
         CMouseKind::Down(b) => MouseEventKind::Down(match b {
             CMouseButton::Left => MouseButton::Left,
             CMouseButton::Right => MouseButton::Right,
@@ -207,11 +211,14 @@ fn map_mouse(col: u16, row: u16, kind: crossterm::event::MouseEventKind) -> Opti
         CMouseKind::ScrollUp => MouseEventKind::ScrollUp,
         CMouseKind::ScrollDown => MouseEventKind::ScrollDown,
         CMouseKind::ScrollLeft | CMouseKind::ScrollRight => return None,
-        CMouseKind::Moved => return None,
+        CMouseKind::Moved => MouseEventKind::Moved,
     };
     Some(InputEvent::Mouse {
         kind,
         cell,
-        column: col,
+        column: m.column,
+        shift: m.modifiers.contains(KeyModifiers::SHIFT),
+        ctrl: m.modifiers.contains(KeyModifiers::CONTROL),
+        alt: m.modifiers.contains(KeyModifiers::ALT),
     })
 }

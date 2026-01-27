@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use crossterm::{
     cursor::{Hide, Show},
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton as CMouseButton, MouseEventKind as CMouseKind},
     execute,
     terminal::{
         disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
@@ -18,14 +18,17 @@ use crossterm::{
 };
 use tui_game_core::content::ContentPack;
 use tui_game_core::game_content;
-use tui_game_core::input::{InputBatch, InputEvent, Key, KeyChord};
+use tui_game_core::input::{
+    InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseCell, MouseEventKind,
+};
 use tui_game_core::level::{level_from_ron, level_to_ron, EntitySpawn, LevelFile};
 use tui_game_core::rect::Rect;
 use tui_game_core::render::{
     encode_frame_delta, encode_frame_full, Cell, Color, FrameBuffer, Style,
 };
 use tui_game_core::ui::{
-    centered_rect, draw_bordered_panel, draw_text_block, draw_text_field, TextField,
+    cell_in_axis_rect, cell_in_brush, cell_local_in_rect, centered_rect, draw_bordered_panel,
+    draw_text_block, draw_text_field, for_each_in_brush, for_each_in_rect, map_view_rect, TextField,
     TextFieldOutput, TextFilter, PRESET_COLORS,
 };
 use tui_game_core::world::{TileDef, TileId, TileTable};
@@ -43,12 +46,31 @@ struct Editor {
     mode: Mode,
     status: String,
     dialog: Option<Dialog>,
+    /// Last framebuffer size (updated in `compose`).
+    viewport_w: u16,
+    viewport_h: u16,
+    /// Chebyshev brush radius in cells (0 = single cell).
+    brush_radius: u8,
+    /// Shift–left drag rectangle: anchor corner until mouse up.
+    rect_drag_start: Option<(i32, i32)>,
+    last_paint_cell: Option<(i32, i32)>,
+    /// Hit targets for the current frame (sidebar rows).
+    sidebar_hits: Vec<(SidebarHit, Rect)>,
+    /// Map cell under the mouse (level coords), when over the map and no modal dialog.
+    hover_map_cell: Option<(i32, i32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     PaintTiles,
     PlaceSpawns,
+    EraseSpawns,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SidebarHit {
+    Terrain(usize),
+    Entity(usize),
 }
 
 enum Dialog {
@@ -139,6 +161,13 @@ impl Editor {
             mode: Mode::PaintTiles,
             status,
             dialog: None,
+            viewport_w: 80,
+            viewport_h: 24,
+            brush_radius: 0,
+            rect_drag_start: None,
+            last_paint_cell: None,
+            sidebar_hits: Vec::new(),
+            hover_map_cell: None,
         }
     }
 
@@ -222,13 +251,245 @@ impl Editor {
 
     fn step(&mut self, input: &InputBatch) {
         for ev in &input.events {
-            let InputEvent::Key(chord) = ev else {
-                continue;
-            };
-            if self.handle_dialog(chord) {
-                continue;
+            match ev {
+                InputEvent::Key(chord) => {
+                    if self.handle_dialog(chord) {
+                        continue;
+                    }
+                    self.step_main_key(chord);
+                }
+                InputEvent::Mouse { .. } => {
+                    if self.dialog.is_some() {
+                        continue;
+                    }
+                    self.step_main_mouse(ev);
+                }
+                InputEvent::Resize { .. } => {}
             }
-            self.step_main(chord);
+        }
+    }
+
+    fn sidebar_pick(&self, cell: MouseCell) -> Option<SidebarHit> {
+        self.sidebar_hits
+            .iter()
+            .rev()
+            .find(|(_, r)| r.contains(cell.x, cell.y))
+            .map(|(h, _)| *h)
+    }
+
+    fn set_tile_clamped(&mut self, tx: i32, ty: i32, tile: TileId) {
+        let w = self.level.width as i32;
+        let h = self.level.height as i32;
+        if tx < 0 || ty < 0 || tx >= w || ty >= h {
+            return;
+        }
+        let i = ty as usize * self.level.width as usize + tx as usize;
+        if i < self.level.tiles.len() {
+            self.level.tiles[i] = tile;
+        }
+    }
+
+    fn apply_paint_brush(&mut self, cx: i32, cy: i32) {
+        let t = self.current_tile;
+        for_each_in_brush(cx, cy, self.brush_radius, |tx, ty| {
+            self.set_tile_clamped(tx, ty, t);
+        });
+    }
+
+    fn fill_rect_tiles(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
+        if self.mode != Mode::PaintTiles {
+            return;
+        }
+        let t = self.current_tile;
+        for_each_in_rect(x0, y0, x1, y1, |tx, ty| {
+            self.set_tile_clamped(tx, ty, t);
+        });
+        self.status = format!("Filled tiles ({x0},{y0})—({x1},{y1}).");
+    }
+
+    fn cell_has_spawn(&self, tx: i32, ty: i32) -> bool {
+        self.level
+            .spawns
+            .iter()
+            .any(|s| s.x == tx && s.y == ty)
+    }
+
+    /// Remove every spawn whose cell lies in the brush around `(cx, cy)`.
+    fn remove_spawns_in_brush(&mut self, cx: i32, cy: i32) -> usize {
+        let r = self.brush_radius;
+        let before = self.level.spawns.len();
+        self.level
+            .spawns
+            .retain(|s| !cell_in_brush(s.x, s.y, cx, cy, r));
+        before.saturating_sub(self.level.spawns.len())
+    }
+
+    /// Remove every spawn in the inclusive axis-aligned rectangle.
+    fn remove_spawns_in_rect(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) -> usize {
+        let before = self.level.spawns.len();
+        self.level.spawns.retain(|s| {
+            !cell_in_axis_rect(s.x, s.y, x0, y0, x1, y1)
+        });
+        before.saturating_sub(self.level.spawns.len())
+    }
+
+    fn cycle_mode(&mut self) {
+        self.mode = match self.mode {
+            Mode::PaintTiles => Mode::PlaceSpawns,
+            Mode::PlaceSpawns => Mode::EraseSpawns,
+            Mode::EraseSpawns => Mode::PaintTiles,
+        };
+        self.status = format!("Mode: {:?}", self.mode);
+    }
+
+    fn place_spawn_at(&mut self, tx: i32, ty: i32) {
+        let Some(bp) = self.current_spawn_blueprint() else {
+            self.status = "No entity blueprints in content pack.".into();
+            return;
+        };
+        self.cursor_x = tx.clamp(0, self.level.width as i32 - 1);
+        self.cursor_y = ty.clamp(0, self.level.height as i32 - 1);
+        self.level.spawns.push(EntitySpawn {
+            kind: bp.kind.to_string(),
+            x: self.cursor_x,
+            y: self.cursor_y,
+            glyph: bp.default_glyph,
+            name: bp.default_label.to_string(),
+        });
+        self.status = format!(
+            "Spawn {} at ({}, {}).",
+            bp.kind, self.cursor_x, self.cursor_y
+        );
+    }
+
+    fn step_main_mouse(&mut self, ev: &InputEvent) {
+        let InputEvent::Mouse {
+            kind,
+            cell,
+            shift,
+            ctrl: _,
+            alt: _,
+            ..
+        } = ev
+        else {
+            return;
+        };
+        let map_rect = map_view_rect(
+            self.level.width,
+            self.level.height,
+            self.viewport_w,
+            self.viewport_h,
+        );
+
+        self.hover_map_cell = cell_local_in_rect(*cell, map_rect);
+
+        if matches!(kind, MouseEventKind::Moved) {
+            return;
+        }
+
+        if matches!(
+            kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) {
+            if cell_local_in_rect(*cell, map_rect).is_some() {
+                if matches!(kind, MouseEventKind::ScrollUp) {
+                    self.brush_radius = (self.brush_radius + 1).min(4);
+                } else {
+                    self.brush_radius = self.brush_radius.saturating_sub(1);
+                }
+                self.status = format!("Brush radius {}", self.brush_radius);
+            }
+            return;
+        }
+
+        if let Some(hit) = self.sidebar_pick(*cell) {
+            match kind {
+                MouseEventKind::Down(MouseButton::Left) => match hit {
+                    SidebarHit::Terrain(i) => {
+                        if let Some(d) = self.level.tile_defs.get(i) {
+                            self.current_tile = d.id;
+                            self.mode = Mode::PaintTiles;
+                            self.status = format!("Brush: {} ({})", d.name, d.id);
+                        }
+                    }
+                    SidebarHit::Entity(i) => {
+                        if i < self.content.entity_blueprints.len() {
+                            self.spawn_blueprint_idx = i;
+                            self.mode = Mode::PlaceSpawns;
+                            let bp = &self.content.entity_blueprints[i];
+                            self.status = format!("Place: {}", bp.kind);
+                        }
+                    }
+                },
+                _ => {}
+            }
+            return;
+        }
+
+        let Some((tx, ty)) = cell_local_in_rect(*cell, map_rect) else {
+            return;
+        };
+
+        match kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if *shift {
+                    self.rect_drag_start = Some((tx, ty));
+                    self.last_paint_cell = None;
+                } else {
+                    self.rect_drag_start = None;
+                    match self.mode {
+                        Mode::PaintTiles => {
+                            self.apply_paint_brush(tx, ty);
+                            self.status = format!(
+                                "Paint at ({tx},{ty}) r{}.",
+                                self.brush_radius
+                            );
+                        }
+                        Mode::PlaceSpawns => self.place_spawn_at(tx, ty),
+                        Mode::EraseSpawns => {
+                            let n = self.remove_spawns_in_brush(tx, ty);
+                            self.status = format!("Removed {n} spawn(s) at ({tx},{ty}) r{}.", self.brush_radius);
+                        }
+                    }
+                    self.last_paint_cell = Some((tx, ty));
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.rect_drag_start.is_some() {
+                    return;
+                }
+                if self.last_paint_cell != Some((tx, ty)) {
+                    match self.mode {
+                        Mode::PaintTiles => {
+                            self.apply_paint_brush(tx, ty);
+                            self.status = format!("Paint drag ({tx},{ty}).");
+                        }
+                        Mode::PlaceSpawns => self.place_spawn_at(tx, ty),
+                        Mode::EraseSpawns => {
+                            let n = self.remove_spawns_in_brush(tx, ty);
+                            if n > 0 {
+                                self.status = format!("Removed {n} spawn(s) (drag).");
+                            }
+                        }
+                    }
+                    self.last_paint_cell = Some((tx, ty));
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some((sx, sy)) = self.rect_drag_start.take() {
+                    match self.mode {
+                        Mode::PaintTiles => self.fill_rect_tiles(sx, sy, tx, ty),
+                        Mode::EraseSpawns => {
+                            let n = self.remove_spawns_in_rect(sx, sy, tx, ty);
+                            self.status =
+                                format!("Removed {n} spawn(s) in rectangle ({sx},{sy})—({tx},{ty}).");
+                        }
+                        Mode::PlaceSpawns => {}
+                    }
+                }
+                self.last_paint_cell = None;
+            }
+            _ => {}
         }
     }
 
@@ -400,8 +661,39 @@ impl Editor {
         }
     }
 
-    fn step_main(&mut self, chord: &KeyChord) {
+    fn step_main_key(&mut self, chord: &KeyChord) {
         match chord {
+            KeyChord {
+                key: Key::Tab,
+                ctrl: false,
+                ..
+            } => {
+                self.cycle_mode();
+            }
+            KeyChord {
+                key: Key::Char('=') | Key::Char('+'),
+                ctrl: false,
+                ..
+            } => {
+                self.brush_radius = (self.brush_radius + 1).min(4);
+                self.status = format!("Brush radius {}", self.brush_radius);
+            }
+            KeyChord {
+                key: Key::Char('-') | Key::Char('_'),
+                ctrl: false,
+                ..
+            } => {
+                self.brush_radius = self.brush_radius.saturating_sub(1);
+                self.status = format!("Brush radius {}", self.brush_radius);
+            }
+            KeyChord {
+                key: Key::Esc,
+                ctrl: false,
+                ..
+            } => {
+                self.rect_drag_start = None;
+                self.last_paint_cell = None;
+            }
             KeyChord {
                 key: Key::Char('s'),
                 ctrl: true,
@@ -416,40 +708,47 @@ impl Editor {
                 ctrl: false,
                 ..
             } => {
-                self.mode = if self.mode == Mode::PaintTiles {
-                    Mode::PlaceSpawns
-                } else {
-                    Mode::PaintTiles
-                };
-                self.status = format!("Mode: {:?}", self.mode);
+                self.cycle_mode();
             }
             KeyChord {
                 key: Key::Char(' '),
                 ctrl: false,
                 ..
             } => {
-                if self.mode == Mode::PaintTiles {
-                    let i =
-                        self.cursor_y as usize * self.level.width as usize + self.cursor_x as usize;
-                    if i < self.level.tiles.len() {
-                        self.level.tiles[i] = self.current_tile;
+                match self.mode {
+                    Mode::PaintTiles => {
+                        self.apply_paint_brush(self.cursor_x, self.cursor_y);
+                        self.status = format!(
+                            "Paint at ({},{}) r{}.",
+                            self.cursor_x, self.cursor_y, self.brush_radius
+                        );
                     }
-                } else {
-                    let Some(bp) = self.current_spawn_blueprint() else {
-                        self.status = "No entity blueprints in content pack.".into();
-                        return;
-                    };
-                    self.level.spawns.push(EntitySpawn {
-                        kind: bp.kind.to_string(),
-                        x: self.cursor_x,
-                        y: self.cursor_y,
-                        glyph: bp.default_glyph,
-                        name: bp.default_label.to_string(),
-                    });
-                    self.status = format!(
-                        "Spawn {} at ({}, {}).",
-                        bp.kind, self.cursor_x, self.cursor_y
-                    );
+                    Mode::PlaceSpawns => {
+                        let Some(bp) = self.current_spawn_blueprint() else {
+                            self.status = "No entity blueprints in content pack.".into();
+                            return;
+                        };
+                        self.level.spawns.push(EntitySpawn {
+                            kind: bp.kind.to_string(),
+                            x: self.cursor_x,
+                            y: self.cursor_y,
+                            glyph: bp.default_glyph,
+                            name: bp.default_label.to_string(),
+                        });
+                        self.status = format!(
+                            "Spawn {} at ({}, {}).",
+                            bp.kind, self.cursor_x, self.cursor_y
+                        );
+                    }
+                    Mode::EraseSpawns => {
+                        let n = self.remove_spawns_in_brush(self.cursor_x, self.cursor_y);
+                        self.status = format!(
+                            "Removed {n} spawn(s) at ({},{}) r{}.",
+                            self.cursor_x,
+                            self.cursor_y,
+                            self.brush_radius
+                        );
+                    }
                 }
             }
             KeyChord {
@@ -459,6 +758,7 @@ impl Editor {
             } => match self.mode {
                 Mode::PaintTiles => self.cycle_tile_palette(-1),
                 Mode::PlaceSpawns => self.cycle_spawn_blueprint(-1),
+                Mode::EraseSpawns => {}
             },
             KeyChord {
                 key: Key::Char(']') | Key::Char('j'),
@@ -467,6 +767,7 @@ impl Editor {
             } => match self.mode {
                 Mode::PaintTiles => self.cycle_tile_palette(1),
                 Mode::PlaceSpawns => self.cycle_spawn_blueprint(1),
+                Mode::EraseSpawns => {}
             },
             KeyChord {
                 key: Key::F(2),
@@ -550,7 +851,11 @@ impl Editor {
         }
     }
 
-    fn compose(&self, fb: &mut FrameBuffer) {
+    fn compose(&mut self, fb: &mut FrameBuffer) {
+        self.viewport_w = fb.width;
+        self.viewport_h = fb.height;
+        self.sidebar_hits.clear();
+
         let fg = Color::rgb(210, 210, 200);
         let bg = Color::rgb(12, 12, 18);
         for y in 0..fb.height {
@@ -581,6 +886,51 @@ impl Editor {
                     bg,
                     style: Style::default(),
                 };
+                if self.dialog.is_none() {
+                    if let Some((hx, hy)) = self.hover_map_cell {
+                        let txi = tx as i32;
+                        let tyi = ty as i32;
+                        let mut lift: u8 = 0;
+                        match self.mode {
+                            Mode::PaintTiles => {
+                                if cell_in_brush(txi, tyi, hx, hy, self.brush_radius) {
+                                    lift = lift.max(14);
+                                }
+                                if let Some((sx, sy)) = self.rect_drag_start {
+                                    if cell_in_axis_rect(txi, tyi, sx, sy, hx, hy) {
+                                        lift = lift.max(20);
+                                    }
+                                }
+                            }
+                            Mode::PlaceSpawns => {
+                                if txi == hx && tyi == hy {
+                                    lift = lift.max(14);
+                                }
+                            }
+                            Mode::EraseSpawns => {
+                                if cell_in_brush(txi, tyi, hx, hy, self.brush_radius) {
+                                    let mut l: u8 = 12;
+                                    if self.cell_has_spawn(txi, tyi) {
+                                        l = l.max(28);
+                                    }
+                                    lift = lift.max(l);
+                                }
+                                if let Some((sx, sy)) = self.rect_drag_start {
+                                    if cell_in_axis_rect(txi, tyi, sx, sy, hx, hy) {
+                                        let mut l: u8 = 10;
+                                        if self.cell_has_spawn(txi, tyi) {
+                                            l = l.max(26);
+                                        }
+                                        lift = lift.max(l);
+                                    }
+                                }
+                            }
+                        }
+                        if lift > 0 {
+                            c.bg = c.bg.lighten(lift);
+                        }
+                    }
+                }
                 if tx as i32 == self.cursor_x && ty as i32 == self.cursor_y {
                     c.style.bold = true;
                     c.fg = Color::rgb(255, 255, 120);
@@ -594,10 +944,23 @@ impl Editor {
                 && (s.x as u16) < self.level.width
                 && (s.y as u16) < self.level.height
             {
+                let mut spawn_bg = bg;
+                if self.dialog.is_none() && self.mode == Mode::EraseSpawns {
+                    if let Some((hx, hy)) = self.hover_map_cell {
+                        if cell_in_brush(s.x, s.y, hx, hy, self.brush_radius) {
+                            spawn_bg = spawn_bg.lighten(18);
+                        }
+                        if let Some((sx, sy)) = self.rect_drag_start {
+                            if cell_in_axis_rect(s.x, s.y, sx, sy, hx, hy) {
+                                spawn_bg = spawn_bg.lighten(14);
+                            }
+                        }
+                    }
+                }
                 let c = Cell {
                     ch: s.glyph,
                     fg: Color::rgb(255, 160, 80),
-                    bg,
+                    bg: spawn_bg,
                     style: Style {
                         bold: true,
                         dim: false,
@@ -620,7 +983,7 @@ impl Editor {
         }
     }
 
-    fn compose_sidebar(&self, fb: &mut FrameBuffer, help: Rect) {
+    fn compose_sidebar(&mut self, fb: &mut FrameBuffer, help: Rect) {
         let inner = Rect::new(
             help.x.saturating_add(1),
             help.y.saturating_add(1),
@@ -644,15 +1007,28 @@ impl Editor {
             &row(&format!("Level: {}", self.level.name)),
         );
         Self::sidebar_plain(fb, inner, &mut y, "");
-        Self::sidebar_plain(fb, inner, &mut y, "WASD move  [/]jk brush  m mode");
-        Self::sidebar_plain(fb, inner, &mut y, "Space paint/spawn  F2-F5  C-S save");
-        Self::sidebar_plain(fb, inner, &mut y, &row(&format!("Mode: {:?}", self.mode)));
+        Self::sidebar_plain(fb, inner, &mut y, "WASD move  Tab/m: paint|place|erase");
+        Self::sidebar_plain(fb, inner, &mut y, "Space / mouse L: act  +/- wheel: r");
+        Self::sidebar_plain(fb, inner, &mut y, "Shift+L drag: rect (tiles or spawns)");
+        Self::sidebar_plain(fb, inner, &mut y, "Sidebar: terrain / entity pick (paint|place)");
+        Self::sidebar_plain(fb, inner, &mut y, "F2-F5 dialogs  C-S save  Esc clear drag");
+        Self::sidebar_plain(
+            fb,
+            inner,
+            &mut y,
+            &row(&format!(
+                "Mode: {:?}  r{}",
+                self.mode, self.brush_radius
+            )),
+        );
         Self::sidebar_plain(fb, inner, &mut y, "");
 
         Self::sidebar_plain(fb, inner, &mut y, "-- Terrain --");
-        for def in &self.level.tile_defs {
+        let n_terrains = self.level.tile_defs.len();
+        for ti in 0..n_terrains {
+            let def = self.level.tile_defs[ti].clone();
             let sel = def.id == self.current_tile && self.mode == Mode::PaintTiles;
-            Self::sidebar_tile_row(fb, inner, &mut y, def, sel);
+            self.sidebar_tile_row(fb, inner, &mut y, ti, &def, sel);
         }
         if self.mode == Mode::PaintTiles {
             if let Some(d) = self.current_tile_def() {
@@ -674,7 +1050,7 @@ impl Editor {
         } else {
             for (i, bp) in self.content.entity_blueprints.iter().enumerate() {
                 let sel = i == self.spawn_blueprint_idx && self.mode == Mode::PlaceSpawns;
-                Self::sidebar_entity_row(fb, inner, &mut y, bp, sel);
+                self.sidebar_entity_row(fb, inner, &mut y, i, bp, sel);
             }
         }
         if self.mode == Mode::PlaceSpawns {
@@ -690,6 +1066,20 @@ impl Editor {
                 Self::sidebar_plain(fb, inner, &mut y, &row(&place));
                 Self::sidebar_plain(fb, inner, &mut y, &row(bp.description));
             }
+        }
+        if self.mode == Mode::EraseSpawns {
+            Self::sidebar_plain(
+                fb,
+                inner,
+                &mut y,
+                &row("> Erase: brush removes all spawns in footprint"),
+            );
+            Self::sidebar_plain(
+                fb,
+                inner,
+                &mut y,
+                &row("  Shift+L rect clears spawns in box"),
+            );
         }
     }
 
@@ -720,15 +1110,18 @@ impl Editor {
     }
 
     fn sidebar_tile_row(
+        &mut self,
         fb: &mut FrameBuffer,
         inner: Rect,
         y: &mut u16,
+        terrain_idx: usize,
         def: &TileDef,
         selected: bool,
     ) {
         if *y >= inner.bottom() {
             return;
         }
+        let row_y = *y;
         let right = inner.right();
         let bg = Color::rgb(18, 16, 22);
         let meta_fg = Color::rgb(175, 170, 160);
@@ -764,19 +1157,27 @@ impl Editor {
                 break;
             }
         }
+        let row_w = inner.w.min(right.saturating_sub(inner.x));
+        self.sidebar_hits.push((
+            SidebarHit::Terrain(terrain_idx),
+            Rect::new(inner.x, row_y, row_w, 1),
+        ));
         *y = y.saturating_add(1);
     }
 
     fn sidebar_entity_row(
+        &mut self,
         fb: &mut FrameBuffer,
         inner: Rect,
         y: &mut u16,
+        entity_idx: usize,
         bp: &EntityBlueprint,
         selected: bool,
     ) {
         if *y >= inner.bottom() {
             return;
         }
+        let row_y = *y;
         let right = inner.right();
         let bg = Color::rgb(18, 16, 22);
         let meta_fg = Color::rgb(175, 170, 160);
@@ -810,6 +1211,11 @@ impl Editor {
                 break;
             }
         }
+        let row_w = inner.w.min(right.saturating_sub(inner.x));
+        self.sidebar_hits.push((
+            SidebarHit::Entity(entity_idx),
+            Rect::new(inner.x, row_y, row_w, 1),
+        ));
         *y = y.saturating_add(1);
     }
 
@@ -998,7 +1404,12 @@ fn main() -> std::io::Result<()> {
 
     let mut stdout = stdout();
     enable_raw_mode()?;
-    execute!(stdout, EnterAlternateScreen, Hide)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        Hide,
+        event::EnableMouseCapture,
+    )?;
 
     let (mut tw, mut th) = crossterm::terminal::size()?;
     let mut fb = FrameBuffer::new(tw, th);
@@ -1030,6 +1441,11 @@ fn main() -> std::io::Result<()> {
                             batch.push(ev);
                         }
                     }
+                    Event::Mouse(m) => {
+                        if let Some(ev) = map_mouse(m) {
+                            batch.push(ev);
+                        }
+                    }
                     Event::Resize(w, h) => {
                         tw = w;
                         th = h;
@@ -1046,9 +1462,50 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    execute!(stdout, Show, LeaveAlternateScreen)?;
+    execute!(
+        stdout,
+        event::DisableMouseCapture,
+        Show,
+        LeaveAlternateScreen
+    )?;
     disable_raw_mode()?;
     Ok(())
+}
+
+fn map_mouse(m: event::MouseEvent) -> Option<InputEvent> {
+    let cell = MouseCell {
+        x: m.column,
+        y: m.row,
+    };
+    let kind = match m.kind {
+        CMouseKind::Down(b) => MouseEventKind::Down(match b {
+            CMouseButton::Left => MouseButton::Left,
+            CMouseButton::Right => MouseButton::Right,
+            CMouseButton::Middle => MouseButton::Middle,
+        }),
+        CMouseKind::Up(b) => MouseEventKind::Up(match b {
+            CMouseButton::Left => MouseButton::Left,
+            CMouseButton::Right => MouseButton::Right,
+            CMouseButton::Middle => MouseButton::Middle,
+        }),
+        CMouseKind::Drag(b) => MouseEventKind::Drag(match b {
+            CMouseButton::Left => MouseButton::Left,
+            CMouseButton::Right => MouseButton::Right,
+            CMouseButton::Middle => MouseButton::Middle,
+        }),
+        CMouseKind::ScrollUp => MouseEventKind::ScrollUp,
+        CMouseKind::ScrollDown => MouseEventKind::ScrollDown,
+        CMouseKind::ScrollLeft | CMouseKind::ScrollRight => return None,
+        CMouseKind::Moved => MouseEventKind::Moved,
+    };
+    Some(InputEvent::Mouse {
+        kind,
+        cell,
+        column: m.column,
+        shift: m.modifiers.contains(KeyModifiers::SHIFT),
+        ctrl: m.modifiers.contains(KeyModifiers::CONTROL),
+        alt: m.modifiers.contains(KeyModifiers::ALT),
+    })
 }
 
 fn map_key(k: KeyEvent) -> Option<InputEvent> {

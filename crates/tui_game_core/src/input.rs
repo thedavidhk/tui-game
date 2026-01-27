@@ -1,4 +1,7 @@
 //! Normalized input events (no crossterm types).
+//!
+//! Mouse events carry **modifier flags** (`shift` / `ctrl` / `alt`) so UIs can distinguish
+//! chorded clicks (e.g. shift–drag) without duplicating platform state.
 
 use crate::rect::Rect;
 
@@ -42,6 +45,8 @@ pub enum MouseEventKind {
     Down(MouseButton),
     Up(MouseButton),
     Drag(MouseButton),
+    /// Cursor moved to a new cell (no button action).
+    Moved,
     ScrollUp,
     ScrollDown,
 }
@@ -60,6 +65,9 @@ pub enum InputEvent {
         cell: MouseCell,
         /// Raw column if needed for wide-char alignment (optional).
         column: u16,
+        shift: bool,
+        ctrl: bool,
+        alt: bool,
     },
     Resize {
         width: u16,

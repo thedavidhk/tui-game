@@ -12,6 +12,16 @@ impl Color {
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
+
+    /// Lighten (add the same delta to RGB channels, saturating).
+    #[must_use]
+    pub fn lighten(self, delta: u8) -> Self {
+        Self {
+            r: self.r.saturating_add(delta),
+            g: self.g.saturating_add(delta),
+            b: self.b.saturating_add(delta),
+        }
+    }
 }
 
 impl Default for Color {
