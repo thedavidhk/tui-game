@@ -12,6 +12,16 @@ pub mod quests;
 
 pub(crate) use macros::{dialogue_tree, effects, quest_defs, requires};
 
+/// Default serialized level: `assets/levels/demo_level.ron` (editor or hand edit, then rebuild).
+const EMBEDDED_DEMO_LEVEL_RON: &str = include_str!("../../../../assets/levels/demo_level.ron");
+
+/// Parsed embedded demo level (same file as `assets/levels/demo_level.ron` on disk).
+#[must_use]
+pub fn embedded_demo_level() -> crate::level::LevelFile {
+    crate::level::level_from_ron(EMBEDDED_DEMO_LEVEL_RON)
+        .expect("embedded demo_level.ron must parse; fix the RON or schema")
+}
+
 #[must_use]
 pub fn resolve_dialogue_text(node: &DialogueNode, narrative: &NarrativeState) -> String {
     node.text_fn.map_or_else(|| node.text.to_string(), |f| f(narrative))
@@ -68,6 +78,13 @@ mod tests {
     fn content_pack_validates() {
         let p = content_pack();
         p.validate().unwrap();
+    }
+
+    #[test]
+    fn embedded_demo_level_validates() {
+        let p = content_pack();
+        let level = super::embedded_demo_level();
+        p.validate_level(&level).unwrap();
     }
 
     #[test]

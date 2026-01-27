@@ -17,7 +17,7 @@ use crate::narrative::NarrativeState;
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
 use crate::ui::hit::{UiHitState, UiHitTarget};
-use crate::world::{compute_visible, merge_explored, MapGrid, TileTable};
+use crate::world::{compute_visible, merge_explored, MapGrid};
 
 const FOW_RADIUS: i32 = 8;
 
@@ -110,7 +110,10 @@ pub struct Game {
 
 impl Game {
     fn maybe_region_id_for_pos(&self, x: i32, y: i32) -> Option<&'static str> {
-        if x >= 18 && y <= 6 {
+        let w = i32::from(self.map.width);
+        let h = i32::from(self.map.height);
+        // Northeast quarter: tavern approach (scales with map size).
+        if x * 4 >= w * 3 && y * 4 <= h {
             return Some("tavern_approach");
         }
         None
@@ -129,118 +132,14 @@ impl Game {
     }
 
     pub fn new_bootstrapped(viewport_w: u16, viewport_h: u16) -> Self {
-        let content = game_content::content_pack();
-        let _ = content.validate();
-
-        let table = TileTable::default_pack();
-        let mut map = MapGrid::filled(24, 16, 0, table);
-        // Simple room with walls
-        for x in 0..map.width {
-            map.set_tile(x as i32, 0, 1);
-            map.set_tile(x as i32, map.height as i32 - 1, 1);
-        }
-        for y in 0..map.height {
-            map.set_tile(0, y as i32, 1);
-            map.set_tile(map.width as i32 - 1, y as i32, 1);
-        }
-
-        let mut entities = EntityArena::new();
-        let player = entities.spawn(
-            GridPos { x: 4, y: 4 },
-            '@',
-            "You".into(),
-            false,
-            None,
-            None,
-            false,
-        );
-        entities.set_player(player);
-        entities.spawn(
-            GridPos { x: 8, y: 10 },
-            'm',
-            "Merchant".into(),
-            true,
-            Some("merchant".into()),
-            None,
-            false,
-        );
-        entities.spawn(
-            GridPos { x: 10, y: 10 },
-            'g',
-            "Guide".into(),
-            true,
-            Some("guide".into()),
-            None,
-            false,
-        );
-        entities.spawn(
-            GridPos { x: 14, y: 10 },
-            'h',
-            "Healer".into(),
-            true,
-            Some("healer".into()),
-            None,
-            false,
-        );
-        entities.spawn(
-            GridPos { x: 18, y: 10 },
-            's',
-            "Scholar".into(),
-            true,
-            Some("scholar".into()),
-            None,
-            false,
-        );
-        entities.spawn(
-            GridPos { x: 10, y: 7 },
-            '□',
-            "Chest".into(),
-            true,
-            None,
-            None,
-            true,
-        );
-        entities.spawn(
-            GridPos { x: 13, y: 7 },
-            '!',
-            "Tonic".into(),
-            false,
-            None,
-            Some(ItemStack::new("health_tonic", 1)),
-            false,
-        );
-        entities.spawn(
-            GridPos { x: 16, y: 7 },
-            '=',
-            "Ring".into(),
-            false,
-            None,
-            Some(ItemStack::new("brass_ring", 1)),
-            false,
-        );
-
-        let n = (map.width as usize) * (map.height as usize);
-        let mut game = Self {
-            modes: GameModeStack {
-                stack: vec![GameMode::MainMenu { selected: 0 }],
-            },
-            map,
-            entities,
-            explored: vec![false; n],
-            visible: vec![false; n],
-            narrative: NarrativeState::default(),
-            content,
-            rng_seed: 1,
-            debug_overlay: false,
-            viewport_w,
-            viewport_h,
-            log: vec!["Welcome. WASD move, E interact, I inventory, J journal, F1 debug.".into()],
-            menu_items: vec!["Start game", "Quit"],
-            quit_requested: false,
-            ui_hits: UiHitState::default(),
-            last_perf: None,
+        let level = game_content::embedded_demo_level();
+        let mut game = Self::from_level_file(&level, viewport_w, viewport_h)
+            .expect("built-in default village level must load");
+        game.modes = GameModeStack {
+            stack: vec![GameMode::MainMenu { selected: 0 }],
         };
-        game.refresh_fow();
+        game.rng_seed = 1;
+        game.log = vec!["Welcome. WASD move, E interact, I inventory, J journal, F1 debug.".into()];
         game
     }
 

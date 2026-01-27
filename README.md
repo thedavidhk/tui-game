@@ -12,15 +12,15 @@ Cross-platform terminal game and level editor in Rust: custom frame loop with **
 From the repository root:
 
 ```bash
-# Run the game (built-in demo room; start with the main menu)
+# Run the game (embedded `assets/levels/demo_level.ron`; start with the main menu)
 cargo run -p tui_game
 
-# Run the game with a level file produced by the editor
-cargo run -p tui_game -- path/to/level.ron
+# Run the game with a level file produced by the editor (any path)
+cargo run -p tui_game -- assets/levels/demo_level.ron
 
-# Run the level editor (optional initial path; use F2 in-app to change save path)
+# Run the level editor (optional initial path; default opens `assets/levels/demo_level.ron` from repo root)
 cargo run -p tui_level_editor
-cargo run -p tui_level_editor -- my_level.ron
+cargo run -p tui_level_editor -- assets/levels/other_level.ron
 ```
 
 Saves written from the game use **`save.ron`** in the current working directory (see in-game keys below).
@@ -87,7 +87,7 @@ These are implemented in **`Game`** (`game/mod.rs`); the binary forwards keyboar
 - **Ctrl+S**: save to the current file path
 - **Ctrl+Q**: quit
 
-Spawns store `kind` matching an **`EntityBlueprint`** from **`game_content`** (see `game_content.rs`). Add blueprints there, then pick them in the editor; **`Ctrl+S`** refuses to save if the level references unknown tile ids or unknown spawn kinds. Blueprint fields include optional **`world_item`** (spawns a pickable ground entity for that `ItemDef.id`) and **`is_container`** (adjacent **E** opens transfer instead of dialogue). Demo `demo_level.ron` includes a guide, a floor **key** pickup, and a **chest**.
+Spawns store `kind` matching an **`EntityBlueprint`** from **`game_content`** (see `game_content.rs`). Add blueprints there, then pick them in the editor; **`Ctrl+S`** refuses to save if the level references unknown tile ids or unknown spawn kinds. Blueprint fields include optional **`world_item`** (spawns a pickable ground entity for that `ItemDef.id`) and **`is_container`** (adjacent **E** opens transfer instead of dialogue). Demo level **[`assets/levels/demo_level.ron`](assets/levels/demo_level.ron)** includes villagers, quest pickups, and a **chest** (open in the editor from the repo root so the default path resolves).
 
 Longer-term **quest / inventory / UI** refactors (phased roadmap, acceptance criteria, and completion log) live in **[`docs/REFACTOR_QUEST_INVENTORY_UI.md`](docs/REFACTOR_QUEST_INVENTORY_UI.md)**.
 

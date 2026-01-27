@@ -1,6 +1,6 @@
 //! Game binary: crossterm terminal setup and main loop.
 //!
-//! Optional: `tui_game path/to/level.ron` loads a level from disk (see `demo_level.ron`).
+//! Optional: `tui_game path/to/level.ron` loads a level from disk (default layout: `assets/levels/demo_level.ron`).
 
 use std::env;
 use std::io::{stdout, Write};

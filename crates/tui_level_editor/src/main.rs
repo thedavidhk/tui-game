@@ -993,7 +993,7 @@ fn main() -> std::io::Result<()> {
     let path = env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("demo_level.ron"));
+        .unwrap_or_else(|| PathBuf::from("assets/levels/demo_level.ron"));
     let mut ed = Editor::load_or_new(&path);
 
     let mut stdout = stdout();
