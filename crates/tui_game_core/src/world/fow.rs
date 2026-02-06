@@ -100,7 +100,7 @@ mod tests {
         map.set_tile(3, 3, 1);
         let mut vis = vec![false; 49];
         compute_visible(&map, 3, 0, 4, &mut vis);
-        assert!(vis[3 + 0 * 7]);
+        assert!(vis[3]);
         assert!(
             !vis[3 + 5 * 7],
             "cell behind wall along column should stay hidden"

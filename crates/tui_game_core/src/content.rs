@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::entity::ActorStats;
 use crate::item::{ItemCatalog, ItemDef};
 use crate::level::LevelFile;
 
@@ -79,10 +80,16 @@ pub enum Effect {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DialogueAction {
+    StartFriendlyTrainingCombat,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct DialogueChoice {
     pub label: &'static str,
     pub next: usize,
+    pub action: Option<DialogueAction>,
     pub requires: &'static [Condition],
     pub requires_fn: Option<DialogueChoiceRequiresFn>,
     pub effects: &'static [Effect],
@@ -137,6 +144,10 @@ pub struct EntityBlueprint {
     pub world_item: Option<&'static str>,
     /// Entity opens `ItemTransfer` when interacted adjacent.
     pub is_container: bool,
+    pub base_max_hp: u16,
+    pub base_strength: u16,
+    pub base_agility: u16,
+    pub base_speed: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -162,6 +173,19 @@ impl ContentPack {
     #[must_use]
     pub fn item_def(&self, id: &str) -> Option<&'static ItemDef> {
         self.item_catalog().get(id)
+    }
+
+    #[must_use]
+    pub fn blueprint_stats(&self, kind: &str) -> Option<ActorStats> {
+        self.blueprint(kind).map(|bp| {
+            ActorStats::from_full(
+                bp.base_max_hp,
+                bp.base_max_hp,
+                bp.base_strength,
+                bp.base_agility,
+                bp.base_speed,
+            )
+        })
     }
 
     fn item_id_known(&self, id: &str) -> bool {
@@ -366,6 +390,7 @@ mod validate_tests {
     static BAD_GIVE: [DialogueChoice; 1] = [DialogueChoice {
         label: "x",
         next: 0,
+        action: None,
         requires: &[],
         requires_fn: None,
         effects: BAD_GIVE_EFF,
@@ -412,6 +437,10 @@ mod validate_tests {
             dialogue_id: None,
             world_item: Some("nope"),
             is_container: false,
+            base_max_hp: 1,
+            base_strength: 1,
+            base_agility: 1,
+            base_speed: 1,
         }];
         static IDS: [ItemDef; 1] = [ItemDef {
             id: "a",
@@ -441,6 +470,7 @@ mod validate_tests {
         static C: [DialogueChoice; 1] = [DialogueChoice {
             label: "x",
             next: 0,
+            action: None,
             requires: &[],
             requires_fn: None,
             effects: E,
@@ -477,6 +507,7 @@ mod validate_tests {
         static GOOD_CHOICES: [DialogueChoice; 1] = [DialogueChoice {
             label: "x",
             next: 0,
+            action: None,
             requires: &[Condition::QuestStageAtLeast {
                 quest: "missing",
                 min: 1,

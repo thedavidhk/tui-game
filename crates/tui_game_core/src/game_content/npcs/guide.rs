@@ -10,6 +10,10 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     dialogue_id: Some("guide"),
     world_item: None,
     is_container: false,
+    base_max_hp: 16,
+    base_strength: 5,
+    base_agility: 5,
+    base_speed: 5,
 };
 
 dialogue_tree! {

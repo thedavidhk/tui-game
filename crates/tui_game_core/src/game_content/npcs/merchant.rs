@@ -13,6 +13,10 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     dialogue_id: Some("merchant"),
     world_item: None,
     is_container: false,
+    base_max_hp: 15,
+    base_strength: 4,
+    base_agility: 5,
+    base_speed: 4,
 };
 
 pub fn on_region_enter(

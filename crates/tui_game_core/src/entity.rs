@@ -11,6 +11,34 @@ pub struct GridPos {
     pub y: i32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActorStats {
+    pub hp: u16,
+    pub max_hp: u16,
+    pub strength: u16,
+    pub agility: u16,
+    pub speed: u16,
+}
+
+impl ActorStats {
+    pub const fn from_full(hp: u16, max_hp: u16, strength: u16, agility: u16, speed: u16) -> Self {
+        Self {
+            hp,
+            max_hp,
+            strength,
+            agility,
+            speed,
+        }
+    }
+}
+
+impl Default for ActorStats {
+    fn default() -> Self {
+        // Conservative baseline for non-combat props.
+        Self::from_full(1, 1, 1, 1, 1)
+    }
+}
+
 /// SoA-style stores indexed by `EntityId.0` (dense for small games).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct EntityArena {
@@ -26,6 +54,8 @@ pub struct EntityArena {
     pub item: Vec<Option<ItemStack>>,
     /// Opens `ItemTransfer` when adjacent interact in exploration.
     pub is_container: Vec<bool>,
+    #[serde(default)]
+    pub combat_stats: Vec<ActorStats>,
     /// Player entity always id 0 after bootstrap if used.
     pub player: Option<EntityId>,
 }
@@ -70,6 +100,7 @@ impl EntityArena {
             self.npc_kind.push(None);
             self.item.push(None);
             self.is_container.push(false);
+            self.combat_stats.push(ActorStats::default());
         }
     }
 
@@ -102,6 +133,7 @@ impl EntityArena {
         self.is_container[i] = false;
         self.glyph[i] = '?';
         self.name[i].clear();
+        self.combat_stats[i] = ActorStats::default();
     }
 
     pub fn set_player(&mut self, id: EntityId) {
@@ -151,5 +183,19 @@ impl EntityArena {
             }
         }
         true
+    }
+
+    pub fn set_stats(&mut self, id: EntityId, stats: ActorStats) {
+        if let Some(slot) = self.combat_stats.get_mut(id.0 as usize) {
+            *slot = stats;
+        }
+    }
+
+    pub fn stats(&self, id: EntityId) -> Option<ActorStats> {
+        self.combat_stats.get(id.0 as usize).copied()
+    }
+
+    pub fn stats_mut(&mut self, id: EntityId) -> Option<&mut ActorStats> {
+        self.combat_stats.get_mut(id.0 as usize)
     }
 }

@@ -67,9 +67,9 @@ impl TextField {
             return TextFieldOutput::Edited;
         }
         match key.key {
-            Key::Esc => return TextFieldOutput::Cancel,
-            Key::Enter => return TextFieldOutput::Edited,
-            Key::Tab => return TextFieldOutput::Tab,
+            Key::Esc => TextFieldOutput::Cancel,
+            Key::Enter => TextFieldOutput::Edited,
+            Key::Tab => TextFieldOutput::Tab,
             Key::Left => {
                 self.cursor = self.cursor.saturating_sub(1);
                 TextFieldOutput::Edited

@@ -41,9 +41,8 @@ fn main() -> std::io::Result<()> {
 
     let (mut tw, mut th) = crossterm::terminal::size()?;
     let mut game = if let Some(path) = env::args().nth(1) {
-        let raw = std::fs::read_to_string(&path).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("read {path}: {e}"))
-        })?;
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| std::io::Error::other(format!("read {path}: {e}")))?;
         let level = tui_game_core::level::level_from_ron(&raw).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, format!("ron: {e}"))
         })?;

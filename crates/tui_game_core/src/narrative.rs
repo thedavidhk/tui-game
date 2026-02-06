@@ -23,7 +23,7 @@ pub struct JournalQuestRecord {
     pub entries: Vec<JournalEntry>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct NarrativeState {
     /// Demo storyline phase (HUD and simple gating).
     pub quests: DemoQuestPhase,
@@ -42,21 +42,6 @@ pub struct NarrativeState {
     pub inventory: Inventory,
     pub container_inventories: HashMap<u32, Inventory>,
     pub equipment: HashMap<EquipSlot, String>,
-}
-
-impl Default for NarrativeState {
-    fn default() -> Self {
-        Self {
-            quests: DemoQuestPhase::default(),
-            quest_stages: HashMap::new(),
-            journal_next_seq: 0,
-            quest_journal: Vec::new(),
-            met_npcs: HashSet::new(),
-            inventory: Inventory::default(),
-            container_inventories: HashMap::new(),
-            equipment: HashMap::new(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -11,6 +11,10 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     dialogue_id: Some("scholar"),
     world_item: None,
     is_container: false,
+    base_max_hp: 14,
+    base_strength: 4,
+    base_agility: 6,
+    base_speed: 5,
 };
 
 pub fn on_item_picked(

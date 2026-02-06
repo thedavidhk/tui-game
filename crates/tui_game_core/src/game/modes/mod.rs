@@ -1,5 +1,13 @@
 //! Input routing for [`super::Game`] (Phase D: isolate mode dispatch from orchestration).
 
+pub(super) mod combat;
+pub(super) mod dialogue;
+pub(super) mod exploration;
+pub(super) mod inventory;
+pub(super) mod journal;
+pub(super) mod menu;
+pub(super) mod transfer;
+
 use crate::input::InputEvent;
 
 use super::{Game, GameMode};

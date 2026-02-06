@@ -32,6 +32,7 @@ macro_rules! dialogue_tree {
                             {
                                 label: $label:expr,
                                 next: $next:ident,
+                                $(action: $action:expr,)?
                                 requires: $requires:expr,
                                 $(requires_fn: $requires_fn:expr,)?
                                 effects: $effects:expr,
@@ -64,6 +65,7 @@ macro_rules! dialogue_tree {
                             crate::content::DialogueChoice {
                                 label: $label,
                                 next: dialogue_tree!(@next __Node, __EXIT, $next),
+                                action: dialogue_tree!(@opt_action $($action)?),
                                 requires: $requires,
                                 requires_fn: dialogue_tree!(@opt_requires_fn $($requires_fn)?),
                                 effects: $effects,
@@ -109,6 +111,12 @@ macro_rules! dialogue_tree {
         Some($requires_fn)
     };
     (@opt_requires_fn) => {
+        None
+    };
+    (@opt_action $action:expr) => {
+        Some($action)
+    };
+    (@opt_action) => {
         None
     };
     (@opt_effects_fn $effects_fn:expr) => {

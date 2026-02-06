@@ -8,7 +8,10 @@ use std::time::Duration;
 
 use crossterm::{
     cursor::{Hide, Show},
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton as CMouseButton, MouseEventKind as CMouseKind},
+    event::{
+        self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton as CMouseButton,
+        MouseEventKind as CMouseKind,
+    },
     execute,
     terminal::{
         disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
@@ -28,8 +31,8 @@ use tui_game_core::render::{
 };
 use tui_game_core::ui::{
     cell_in_axis_rect, cell_in_brush, cell_local_in_rect, centered_rect, draw_bordered_panel,
-    draw_text_block, draw_text_field, for_each_in_brush, for_each_in_rect, map_view_rect, TextField,
-    TextFieldOutput, TextFilter, PRESET_COLORS,
+    draw_text_block, draw_text_field, for_each_in_brush, for_each_in_rect, map_view_rect,
+    TextField, TextFieldOutput, TextFilter, PRESET_COLORS,
 };
 use tui_game_core::world::{TileDef, TileId, TileTable};
 use tui_game_core::EntityBlueprint;
@@ -308,10 +311,7 @@ impl Editor {
     }
 
     fn cell_has_spawn(&self, tx: i32, ty: i32) -> bool {
-        self.level
-            .spawns
-            .iter()
-            .any(|s| s.x == tx && s.y == ty)
+        self.level.spawns.iter().any(|s| s.x == tx && s.y == ty)
     }
 
     /// Remove every spawn whose cell lies in the brush around `(cx, cy)`.
@@ -327,9 +327,9 @@ impl Editor {
     /// Remove every spawn in the inclusive axis-aligned rectangle.
     fn remove_spawns_in_rect(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) -> usize {
         let before = self.level.spawns.len();
-        self.level.spawns.retain(|s| {
-            !cell_in_axis_rect(s.x, s.y, x0, y0, x1, y1)
-        });
+        self.level
+            .spawns
+            .retain(|s| !cell_in_axis_rect(s.x, s.y, x0, y0, x1, y1));
         before.saturating_sub(self.level.spawns.len())
     }
 
@@ -387,10 +387,7 @@ impl Editor {
             return;
         }
 
-        if matches!(
-            kind,
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-        ) {
+        if matches!(kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
             if cell_local_in_rect(*cell, map_rect).is_some() {
                 if matches!(kind, MouseEventKind::ScrollUp) {
                     self.brush_radius = (self.brush_radius + 1).min(4);
@@ -403,8 +400,8 @@ impl Editor {
         }
 
         if let Some(hit) = self.sidebar_pick(*cell) {
-            match kind {
-                MouseEventKind::Down(MouseButton::Left) => match hit {
+            if let MouseEventKind::Down(MouseButton::Left) = kind {
+                match hit {
                     SidebarHit::Terrain(i) => {
                         if let Some(d) = self.level.tile_defs.get(i) {
                             self.current_tile = d.id;
@@ -420,8 +417,7 @@ impl Editor {
                             self.status = format!("Place: {}", bp.kind);
                         }
                     }
-                },
-                _ => {}
+                }
             }
             return;
         }
@@ -440,15 +436,15 @@ impl Editor {
                     match self.mode {
                         Mode::PaintTiles => {
                             self.apply_paint_brush(tx, ty);
-                            self.status = format!(
-                                "Paint at ({tx},{ty}) r{}.",
-                                self.brush_radius
-                            );
+                            self.status = format!("Paint at ({tx},{ty}) r{}.", self.brush_radius);
                         }
                         Mode::PlaceSpawns => self.place_spawn_at(tx, ty),
                         Mode::EraseSpawns => {
                             let n = self.remove_spawns_in_brush(tx, ty);
-                            self.status = format!("Removed {n} spawn(s) at ({tx},{ty}) r{}.", self.brush_radius);
+                            self.status = format!(
+                                "Removed {n} spawn(s) at ({tx},{ty}) r{}.",
+                                self.brush_radius
+                            );
                         }
                     }
                     self.last_paint_cell = Some((tx, ty));
@@ -481,8 +477,9 @@ impl Editor {
                         Mode::PaintTiles => self.fill_rect_tiles(sx, sy, tx, ty),
                         Mode::EraseSpawns => {
                             let n = self.remove_spawns_in_rect(sx, sy, tx, ty);
-                            self.status =
-                                format!("Removed {n} spawn(s) in rectangle ({sx},{sy})—({tx},{ty}).");
+                            self.status = format!(
+                                "Removed {n} spawn(s) in rectangle ({sx},{sy})—({tx},{ty})."
+                            );
                         }
                         Mode::PlaceSpawns => {}
                     }
@@ -499,36 +496,37 @@ impl Editor {
             self.status = "QUIT".into();
             return true;
         }
-        if matches!(chord.key, Key::Enter) && !chord.ctrl {
-            if matches!(&self.dialog, Some(Dialog::NewTerrain { .. })) {
-                if let Some(Dialog::NewTerrain {
-                    name,
-                    glyph,
-                    solid,
-                    color_idx,
-                    ..
-                }) = self.dialog.take()
-                {
-                    let gch = glyph.text.chars().next().unwrap_or('.');
-                    let mut n = name.text.trim().to_string();
-                    if n.is_empty() {
-                        n = "terrain".into();
-                    }
-                    let fg = PRESET_COLORS[color_idx % PRESET_COLORS.len()];
-                    let id = self.next_tile_id();
-                    let def = TileDef {
-                        id,
-                        glyph: gch,
-                        blocks_movement: solid,
-                        blocks_sight: solid,
-                        name: n.clone(),
-                        fg,
-                    };
-                    self.level.tile_defs.push(def);
-                    self.current_tile = id;
-                    self.status = format!("Added tile id {id} ({n}).");
-                    return true;
+        if matches!(chord.key, Key::Enter)
+            && !chord.ctrl
+            && matches!(&self.dialog, Some(Dialog::NewTerrain { .. }))
+        {
+            if let Some(Dialog::NewTerrain {
+                name,
+                glyph,
+                solid,
+                color_idx,
+                ..
+            }) = self.dialog.take()
+            {
+                let gch = glyph.text.chars().next().unwrap_or('.');
+                let mut n = name.text.trim().to_string();
+                if n.is_empty() {
+                    n = "terrain".into();
                 }
+                let fg = PRESET_COLORS[color_idx % PRESET_COLORS.len()];
+                let id = self.next_tile_id();
+                let def = TileDef {
+                    id,
+                    glyph: gch,
+                    blocks_movement: solid,
+                    blocks_sight: solid,
+                    name: n.clone(),
+                    fg,
+                };
+                self.level.tile_defs.push(def);
+                self.current_tile = id;
+                self.status = format!("Added tile id {id} ({n}).");
+                return true;
             }
         }
         let Some(d) = self.dialog.as_mut() else {
@@ -714,43 +712,39 @@ impl Editor {
                 key: Key::Char(' '),
                 ctrl: false,
                 ..
-            } => {
-                match self.mode {
-                    Mode::PaintTiles => {
-                        self.apply_paint_brush(self.cursor_x, self.cursor_y);
-                        self.status = format!(
-                            "Paint at ({},{}) r{}.",
-                            self.cursor_x, self.cursor_y, self.brush_radius
-                        );
-                    }
-                    Mode::PlaceSpawns => {
-                        let Some(bp) = self.current_spawn_blueprint() else {
-                            self.status = "No entity blueprints in content pack.".into();
-                            return;
-                        };
-                        self.level.spawns.push(EntitySpawn {
-                            kind: bp.kind.to_string(),
-                            x: self.cursor_x,
-                            y: self.cursor_y,
-                            glyph: bp.default_glyph,
-                            name: bp.default_label.to_string(),
-                        });
-                        self.status = format!(
-                            "Spawn {} at ({}, {}).",
-                            bp.kind, self.cursor_x, self.cursor_y
-                        );
-                    }
-                    Mode::EraseSpawns => {
-                        let n = self.remove_spawns_in_brush(self.cursor_x, self.cursor_y);
-                        self.status = format!(
-                            "Removed {n} spawn(s) at ({},{}) r{}.",
-                            self.cursor_x,
-                            self.cursor_y,
-                            self.brush_radius
-                        );
-                    }
+            } => match self.mode {
+                Mode::PaintTiles => {
+                    self.apply_paint_brush(self.cursor_x, self.cursor_y);
+                    self.status = format!(
+                        "Paint at ({},{}) r{}.",
+                        self.cursor_x, self.cursor_y, self.brush_radius
+                    );
                 }
-            }
+                Mode::PlaceSpawns => {
+                    let Some(bp) = self.current_spawn_blueprint() else {
+                        self.status = "No entity blueprints in content pack.".into();
+                        return;
+                    };
+                    self.level.spawns.push(EntitySpawn {
+                        kind: bp.kind.to_string(),
+                        x: self.cursor_x,
+                        y: self.cursor_y,
+                        glyph: bp.default_glyph,
+                        name: bp.default_label.to_string(),
+                    });
+                    self.status = format!(
+                        "Spawn {} at ({}, {}).",
+                        bp.kind, self.cursor_x, self.cursor_y
+                    );
+                }
+                Mode::EraseSpawns => {
+                    let n = self.remove_spawns_in_brush(self.cursor_x, self.cursor_y);
+                    self.status = format!(
+                        "Removed {n} spawn(s) at ({},{}) r{}.",
+                        self.cursor_x, self.cursor_y, self.brush_radius
+                    );
+                }
+            },
             KeyChord {
                 key: Key::Char('[') | Key::Char('k'),
                 ctrl: false,
@@ -1010,16 +1004,18 @@ impl Editor {
         Self::sidebar_plain(fb, inner, &mut y, "WASD move  Tab/m: paint|place|erase");
         Self::sidebar_plain(fb, inner, &mut y, "Space / mouse L: act  +/- wheel: r");
         Self::sidebar_plain(fb, inner, &mut y, "Shift+L drag: rect (tiles or spawns)");
-        Self::sidebar_plain(fb, inner, &mut y, "Sidebar: terrain / entity pick (paint|place)");
+        Self::sidebar_plain(
+            fb,
+            inner,
+            &mut y,
+            "Sidebar: terrain / entity pick (paint|place)",
+        );
         Self::sidebar_plain(fb, inner, &mut y, "F2-F5 dialogs  C-S save  Esc clear drag");
         Self::sidebar_plain(
             fb,
             inner,
             &mut y,
-            &row(&format!(
-                "Mode: {:?}  r{}",
-                self.mode, self.brush_radius
-            )),
+            &row(&format!("Mode: {:?}  r{}", self.mode, self.brush_radius)),
         );
         Self::sidebar_plain(fb, inner, &mut y, "");
 

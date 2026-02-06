@@ -9,6 +9,10 @@ pub const BLUEPRINT_PROP: EntityBlueprint = EntityBlueprint {
     dialogue_id: None,
     world_item: None,
     is_container: false,
+    base_max_hp: 1,
+    base_strength: 1,
+    base_agility: 1,
+    base_speed: 1,
 };
 
 pub const BLUEPRINT_HEALTH_TONIC_DROP: EntityBlueprint = EntityBlueprint {
@@ -20,6 +24,10 @@ pub const BLUEPRINT_HEALTH_TONIC_DROP: EntityBlueprint = EntityBlueprint {
     dialogue_id: None,
     world_item: Some("health_tonic"),
     is_container: false,
+    base_max_hp: 1,
+    base_strength: 1,
+    base_agility: 1,
+    base_speed: 1,
 };
 
 pub const BLUEPRINT_BRASS_RING_DROP: EntityBlueprint = EntityBlueprint {
@@ -31,6 +39,10 @@ pub const BLUEPRINT_BRASS_RING_DROP: EntityBlueprint = EntityBlueprint {
     dialogue_id: None,
     world_item: Some("brass_ring"),
     is_container: false,
+    base_max_hp: 1,
+    base_strength: 1,
+    base_agility: 1,
+    base_speed: 1,
 };
 
 pub const BLUEPRINT_WOODEN_CHEST: EntityBlueprint = EntityBlueprint {
@@ -42,6 +54,10 @@ pub const BLUEPRINT_WOODEN_CHEST: EntityBlueprint = EntityBlueprint {
     dialogue_id: None,
     world_item: None,
     is_container: true,
+    base_max_hp: 20,
+    base_strength: 1,
+    base_agility: 1,
+    base_speed: 1,
 };
 
 pub static ENTITY_BLUEPRINTS: &[EntityBlueprint] = &[

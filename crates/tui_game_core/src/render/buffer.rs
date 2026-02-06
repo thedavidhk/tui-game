@@ -30,21 +30,11 @@ impl Default for Color {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct Style {
     pub bold: bool,
     pub dim: bool,
     pub underline: bool,
-}
-
-impl Default for Style {
-    fn default() -> Self {
-        Self {
-            bold: false,
-            dim: false,
-            underline: false,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

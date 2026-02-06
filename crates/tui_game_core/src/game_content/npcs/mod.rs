@@ -2,6 +2,7 @@ mod guide;
 mod healer;
 mod merchant;
 mod scholar;
+mod trainer;
 
 use std::collections::HashMap;
 
@@ -20,6 +21,7 @@ pub static NPC_SPECS: &[NpcSpec] = &[
     healer::NPC_HEALER,
     scholar::NPC_SCHOLAR,
     merchant::NPC_MERCHANT,
+    trainer::NPC_TRAINER,
 ];
 
 #[must_use]
