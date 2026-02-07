@@ -77,9 +77,14 @@ These are implemented in **`Game`** (`game/mod.rs`); the binary forwards keyboar
 ## Level editor controls
 
 - **WASD** or arrows: move cursor
+- **Tab** or **m**: cycle **paint tiles** → **place spawns** → **erase spawns** → …
 - **`[`** / **`]`** or **`k`** / **`j`**: cycle brush — **terrain** in paint mode, **entity blueprint** in spawn mode (sidebar lists names, ids, solid/open, and glyph colors)
-- **Space**: paint tile (paint mode) or add a spawn (spawn mode)
-- **m**: toggle paint vs place spawns
+- **Space**: paint with brush (paint mode), place one spawn (spawn mode), or **erase spawns in brush** (erase mode)
+- **`+`** / **`-`** (or **`=`** / **`_`**): brush **radius** (square brush, paint mode); **mouse wheel** over the map changes radius too
+- **Left drag** on the map: paint, stamp spawns, or **erase spawns in brush** by mode; **Shift + left drag** then release: fill a **tile** rectangle (paint) or remove **all spawns** in a rectangle (erase)
+- **Hover** on the map: the brush footprint (or spawn cell, or shift-rectangle preview) is shown with a **slightly lighter background** before you click
+- **Left click** a **terrain** or **entity** row in the sidebar: select that brush and switch to the matching mode
+- **Esc** (no dialog): cancel a shift-rectangle in progress
 - **F2**: save as — type a path (`.ron` is added if you omit an extension), **Enter** to write and close
 - **F3**: edit the level’s display name (`LevelFile.name`)
 - **F4**: resize map (width/height, **Tab** between fields, **Enter** to apply; valid range 3–256)

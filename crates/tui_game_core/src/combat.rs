@@ -167,7 +167,7 @@ impl CombatState {
                 CombatActionReport {
                     applied: true,
                     end_combat: self.should_end_combat(arena),
-                    message: Some("Moved.".into()),
+                    message: None,
                 }
             }
             CombatAction::Attack { target } => {
@@ -251,7 +251,7 @@ impl CombatState {
                 CombatActionReport {
                     applied: true,
                     end_combat: self.should_end_combat(arena),
-                    message: Some("Turn passed.".into()),
+                    message: None,
                 }
             }
             CombatAction::Flee => CombatActionReport {
@@ -262,7 +262,7 @@ impl CombatState {
         }
     }
 
-    fn current_ap_units(&self) -> Option<u16> {
+    pub fn current_ap_units(&self) -> Option<u16> {
         self.ap_remaining.get(self.turn_index).copied()
     }
 
@@ -304,7 +304,7 @@ fn roll_d20(seed: &mut u64) -> u16 {
     (next_u32(seed) % 20 + 1) as u16
 }
 
-fn move_cost_units(from: GridPos, to: GridPos) -> Option<u16> {
+pub fn move_cost_units(from: GridPos, to: GridPos) -> Option<u16> {
     let dx = (to.x - from.x).abs();
     let dy = (to.y - from.y).abs();
     if dx == 0 && dy == 0 {

@@ -54,40 +54,10 @@ fn main() -> std::io::Result<()> {
     let mut fb = FrameBuffer::new(tw, th);
     let mut stats = FrameStatsRing::new(120);
     let mut full_redraw_next = true;
+    let mut first_frame = true;
     while !game.quit_requested {
-        let (world_r, hud_r, log_r) = layout(tw, th);
         game.viewport_w = tw;
         game.viewport_h = th;
-        game.compose(&mut fb, world_r, hud_r, log_r);
-
-        let use_full = full_redraw_next;
-        full_redraw_next = false;
-
-        let encode_start = Instant::now();
-        let (buf, dirty) = if use_full {
-            (encode_frame_full(&fb), fb.width as u32 * fb.height as u32)
-        } else {
-            encode_frame_delta(&fb)
-        };
-        let encode_nanos = encode_start.elapsed().as_nanos() as u64;
-        fb.commit_frame();
-
-        let sample = FrameSample {
-            encode_nanos,
-            cells_dirty: dirty,
-            bytes_written: buf.len() as u32,
-            terminal_w: tw,
-            terminal_h: th,
-        };
-        stats.push(sample);
-        game.last_perf = stats.last();
-
-        stdout.queue(crossterm::cursor::MoveTo(0, 0))?;
-        if use_full {
-            stdout.queue(Clear(ClearType::All))?;
-        }
-        stdout.write_all(&buf)?;
-        stdout.flush()?;
 
         let poll_ms = if matches!(game.modes.current(), Some(GameMode::Exploration)) {
             33
@@ -95,7 +65,13 @@ fn main() -> std::io::Result<()> {
             250
         };
         let mut batch = InputBatch::default();
-        if event::poll(Duration::from_millis(poll_ms))? {
+        let poll_wait = if first_frame {
+            first_frame = false;
+            Duration::ZERO
+        } else {
+            Duration::from_millis(poll_ms)
+        };
+        if event::poll(poll_wait)? {
             loop {
                 match event::read()? {
                     Event::Key(k) => {
@@ -137,6 +113,38 @@ fn main() -> std::io::Result<()> {
             }
         }
         game.step(&batch);
+
+        let (world_r, hud_r, log_r) = layout(tw, th);
+        game.compose(&mut fb, world_r, hud_r, log_r);
+
+        let use_full = full_redraw_next;
+        full_redraw_next = false;
+
+        let encode_start = Instant::now();
+        let (buf, dirty) = if use_full {
+            (encode_frame_full(&fb), fb.width as u32 * fb.height as u32)
+        } else {
+            encode_frame_delta(&fb)
+        };
+        let encode_nanos = encode_start.elapsed().as_nanos() as u64;
+        fb.commit_frame();
+
+        let sample = FrameSample {
+            encode_nanos,
+            cells_dirty: dirty,
+            bytes_written: buf.len() as u32,
+            terminal_w: tw,
+            terminal_h: th,
+        };
+        stats.push(sample);
+        game.last_perf = stats.last();
+
+        stdout.queue(crossterm::cursor::MoveTo(0, 0))?;
+        if use_full {
+            stdout.queue(Clear(ClearType::All))?;
+        }
+        stdout.write_all(&buf)?;
+        stdout.flush()?;
     }
 
     execute!(

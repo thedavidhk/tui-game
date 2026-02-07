@@ -1,5 +1,5 @@
 use crate::ai::{AiIntent, CombatAiCtx, CombatDecisionPolicy};
-use crate::combat::CombatAction;
+use crate::combat::{move_cost_units, CombatAction, ATTACK_COST_UNITS};
 use crate::entity::EntityId;
 use crate::world::plan_path;
 
@@ -35,8 +35,12 @@ impl CombatDecisionPolicy for ChaseNearestPolicy {
         };
         let dx = (actor_pos.x - target_pos.x).abs();
         let dy = (actor_pos.y - target_pos.y).abs();
+        let ap = ctx.state.current_ap_units().unwrap_or(0);
         if dx.max(dy) == 1 {
-            return AiIntent::Combat(CombatAction::Attack { target: target_id });
+            if ap >= ATTACK_COST_UNITS {
+                return AiIntent::Combat(CombatAction::Attack { target: target_id });
+            }
+            return AiIntent::Wait;
         }
         let plan = plan_path(
             ctx.map,
@@ -53,6 +57,12 @@ impl CombatDecisionPolicy for ChaseNearestPolicy {
         let Some(next) = plan.path.get(1).copied() else {
             return AiIntent::Wait;
         };
+        let Some(step_cost) = move_cost_units(actor_pos, next) else {
+            return AiIntent::Wait;
+        };
+        if ap < step_cost {
+            return AiIntent::Wait;
+        }
         AiIntent::Combat(CombatAction::Move { target: next })
     }
 }

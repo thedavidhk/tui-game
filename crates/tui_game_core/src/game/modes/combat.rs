@@ -85,7 +85,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
             game.combat_try_attack(&mut next);
         }
         InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
-            game.finish_combat(&next, "Combat ended.");
+            game.finish_combat_player_quit(&next);
             return;
         }
         _ => {}

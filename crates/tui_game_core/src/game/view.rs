@@ -33,9 +33,13 @@ pub(crate) fn compose(
         log_rect.w.saturating_sub(2),
         log_rect.h.saturating_sub(2),
     );
-    let tail: Vec<String> = game.log.iter().rev().take(6).cloned().collect();
-    let rev: Vec<String> = tail.into_iter().rev().collect();
-    crate::ui::draw_log(fb, log_inner, &rev, &mut Vec::new());
+    // Only as many lines as fit vertically; always the newest entries (bottom of `game.log`).
+    // A fixed `take(6)` with a shorter `log_inner` used to clip the newest lines off-screen.
+    let max_rows = log_inner.h.max(1) as usize;
+    let n = max_rows.min(game.log.len());
+    let start = game.log.len().saturating_sub(n);
+    let log_lines: Vec<String> = game.log[start..].to_vec();
+    crate::ui::draw_log(fb, log_inner, &log_lines, &mut Vec::new());
 
     if let Some(GameMode::MainMenu { selected }) = game.modes.current().cloned() {
         let menu_r = Rect::new(2, 2, 30, 10);

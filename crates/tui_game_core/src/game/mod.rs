@@ -299,7 +299,6 @@ impl Game {
             }
         }
         self.entities.set_pos(pid, GridPos { x: nx, y: ny });
-        self.log.push(format!("Move to ({}, {}).", nx, ny));
         self.try_pickup_ground_items(pid);
         if let Some(region_id) = self.maybe_region_id_for_pos(nx, ny) {
             if let Err(e) =
@@ -356,7 +355,7 @@ impl Game {
         }
         self.player_walk_path = path;
         self.player_walk_goal = Some(goal);
-        if !plan.reached_goal {
+        if !plan.reached_goal && self.debug_overlay {
             self.log
                 .push("Target unreachable; walking to closest reachable point.".into());
         }
@@ -511,7 +510,6 @@ impl Game {
             choice_cursor: 0,
         });
         self.apply_dialogue_node_effects(tree, start_node);
-        self.log.push(format!("Talking ({}).", kind));
     }
 
     fn start_item_transfer(&mut self, container: EntityId) {
@@ -525,8 +523,6 @@ impl Game {
             cursor_player: 0,
             cursor_container: 0,
         });
-        self.log
-            .push("Transfer: Tab/hl side, jk rows, Enter move stack, Esc close.".into());
     }
 
     pub fn step(&mut self, input: &InputBatch) {
@@ -880,11 +876,11 @@ impl Game {
             self.log.push(msg);
         }
         if report.end_combat {
-            self.finish_combat(state, "Combat ended.");
+            self.finish_combat(state);
         }
     }
 
-    fn finish_combat(&mut self, state: &CombatState, message: &str) {
+    fn finish_combat(&mut self, state: &CombatState) {
         self.npc_combat_ai_tick_cooldown = 0;
         if state.friendly {
             for id in &state.initiative {
@@ -895,8 +891,14 @@ impl Game {
             self.log
                 .push("Training fight ends. Everyone catches their breath.".into());
         }
+        self.log.push("Combat ended.".into());
         let _ = self.modes.pop();
-        self.log.push(message.into());
+    }
+
+    /// Leave combat from the UI (Esc); message is logged before combat state is torn down.
+    pub(crate) fn finish_combat_player_quit(&mut self, state: &CombatState) {
+        self.log.push("You leave the fight.".into());
+        self.finish_combat(state);
     }
 
     fn quest_status_lines(narrative: &NarrativeState) -> Vec<String> {
@@ -1362,7 +1364,7 @@ mod tests {
                 stats.hp = 1;
             }
         }
-        game.finish_combat(&cs, "Combat ended.");
+        game.finish_combat(&cs);
         for id in &cs.initiative {
             let stats = game
                 .entities
@@ -1422,6 +1424,56 @@ mod tests {
         game.step(&InputBatch::default());
         let after = game.entities.stats(player).expect("player stats").hp;
         assert!(after < before, "npc should attack adjacent player");
+    }
+
+    #[test]
+    fn npc_combat_ai_passes_when_adjacent_and_ap_insufficient_to_attack() {
+        use crate::combat::ATTACK_COST_UNITS;
+
+        let mut game = Game::new_bootstrapped(80, 30);
+        let player = game.player_id().expect("player must exist");
+        let trainer = game
+            .entities
+            .npc_kind
+            .iter()
+            .enumerate()
+            .find(|(_, kind)| kind.as_deref() == Some("trainer"))
+            .map(|(idx, _)| crate::entity::EntityId(idx as u32))
+            .expect("trainer entity should exist");
+        game.entities.set_pos(player, GridPos { x: 10, y: 10 });
+        game.entities.set_pos(trainer, GridPos { x: 11, y: 10 });
+        let mut rng = 1;
+        let mut cs = CombatState::from_participants(
+            vec![trainer, player],
+            &game.entities,
+            game.map.width,
+            game.map.height,
+            &mut rng,
+            false,
+        );
+        let trainer_turn = cs
+            .initiative
+            .iter()
+            .position(|id| *id == trainer)
+            .expect("trainer should be in initiative");
+        cs.turn_index = trainer_turn;
+        cs.ap_remaining[trainer_turn] = ATTACK_COST_UNITS - 1;
+        game.modes.stack = vec![GameMode::Combat(cs)];
+        let hp_before = game.entities.stats(player).expect("player stats").hp;
+        game.step(&InputBatch::default());
+        let hp_after = game.entities.stats(player).expect("player stats").hp;
+        assert_eq!(
+            hp_before, hp_after,
+            "npc must not attack when AP is below attack cost"
+        );
+        let Some(GameMode::Combat(cs2)) = game.modes.current() else {
+            panic!("expected combat to continue");
+        };
+        assert_eq!(
+            cs2.current_actor(),
+            Some(player),
+            "trainer should pass the turn when unable to attack"
+        );
     }
 
     #[test]
