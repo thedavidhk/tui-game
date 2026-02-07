@@ -1,5 +1,5 @@
 use crate::combat::{CombatAction, CombatState};
-use crate::entity::EntityId;
+use crate::entity::{EntityArena, EntityId};
 use crate::world::MapGrid;
 
 pub mod combat;
@@ -14,6 +14,7 @@ pub enum AiIntent {
 pub struct CombatAiCtx<'a> {
     pub state: &'a CombatState,
     pub map: &'a MapGrid,
+    pub entities: &'a EntityArena,
 }
 
 pub trait CombatDecisionPolicy {

@@ -8,18 +8,20 @@ use std::fs;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ai::combat::ChaseNearestPolicy;
+use crate::ai::{AiIntent, CombatAiCtx, CombatDecisionPolicy};
 use crate::combat::{CombatAction, CombatState};
 use crate::content::{ContentPack, DemoQuestPhase, DialogueAction, QuestJournalStatus};
 use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
-use crate::input::{InputBatch, InputEvent};
+use crate::input::{InputBatch, InputEvent, MouseCell};
 use crate::item::ItemStack;
 use crate::level::LevelFile;
 use crate::narrative::NarrativeState;
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
 use crate::ui::hit::UiHitState;
-use crate::world::{compute_visible, merge_explored, MapGrid};
+use crate::world::{compute_visible, merge_explored, plan_path_player_fow, MapGrid};
 
 const FOW_RADIUS: i32 = 8;
 
@@ -114,6 +116,11 @@ pub struct Game {
     /// Last-frame mouse hit targets (menu rows, dialogue choices, …).
     pub ui_hits: UiHitState,
     pub last_perf: Option<FrameSample>,
+    player_walk_path: Vec<GridPos>,
+    player_walk_goal: Option<GridPos>,
+    player_walk_tick_cooldown: u16,
+    /// When > 0, NPC combat AI waits (same tick pacing as exploration auto-walk).
+    npc_combat_ai_tick_cooldown: u16,
 }
 
 impl Game {
@@ -224,6 +231,10 @@ impl Game {
             quit_requested: false,
             ui_hits: UiHitState::default(),
             last_perf: None,
+            player_walk_path: Vec::new(),
+            player_walk_goal: None,
+            player_walk_tick_cooldown: 0,
+            npc_combat_ai_tick_cooldown: 0,
         };
         game.refresh_fow();
         Ok(game)
@@ -254,24 +265,29 @@ impl Game {
     }
 
     pub fn try_move_player(&mut self, dx: i32, dy: i32) {
+        self.clear_player_walk();
+        let _ = self.try_move_player_step(dx, dy);
+    }
+
+    fn try_move_player_step(&mut self, dx: i32, dy: i32) -> bool {
         let Some(pid) = self.player_id() else {
-            return;
+            return false;
         };
         let Some(p) = self.entities.pos(pid) else {
-            return;
+            return false;
         };
         let nx = p.x + dx;
         let ny = p.y + dy;
         if !self.map.in_bounds(nx, ny) {
-            return;
+            return false;
         }
         if self.map.blocks_movement(nx, ny) {
-            return;
+            return false;
         }
         if let Some(occ) = self.entities.first_npc_at(nx, ny) {
             if occ != pid {
                 self.start_dialogue(occ);
-                return;
+                return false;
             }
         }
         for oid in self.entities.occupants_at(nx, ny) {
@@ -279,7 +295,7 @@ impl Game {
                 continue;
             }
             if self.entities.blocks_movement[oid.0 as usize] {
-                return;
+                return false;
             }
         }
         self.entities.set_pos(pid, GridPos { x: nx, y: ny });
@@ -293,6 +309,140 @@ impl Game {
             }
         }
         self.refresh_fow();
+        true
+    }
+
+    pub(crate) fn try_set_player_walk_goal_from_screen(&mut self, cell: MouseCell) {
+        let Some(goal) = self.screen_cell_to_world(cell) else {
+            return;
+        };
+        self.try_set_player_walk_goal(goal);
+    }
+
+    pub(crate) fn try_set_player_walk_goal(&mut self, goal: GridPos) {
+        let Some(start) = self.player_pos() else {
+            return;
+        };
+        let Some(pid) = self.player_id() else {
+            return;
+        };
+        if start == goal {
+            self.clear_player_walk();
+            return;
+        }
+        let explored = self.explored.clone();
+        let plan = plan_path_player_fow(
+            &self.map,
+            &self.entities,
+            &explored,
+            start,
+            goal,
+            Some(pid),
+            true,
+            u32::MAX,
+        );
+        let Ok(plan) = plan else {
+            self.log.push("No viable path to target.".into());
+            self.clear_player_walk();
+            return;
+        };
+        let mut path = plan.path;
+        if !path.is_empty() && path[0] == start {
+            let _ = path.remove(0);
+        }
+        if path.is_empty() {
+            self.clear_player_walk();
+            return;
+        }
+        self.player_walk_path = path;
+        self.player_walk_goal = Some(goal);
+        if !plan.reached_goal {
+            self.log
+                .push("Target unreachable; walking to closest reachable point.".into());
+        }
+    }
+
+    fn step_player_walk(&mut self) {
+        if !matches!(self.modes.current(), Some(GameMode::Exploration)) {
+            self.clear_player_walk();
+            return;
+        }
+        if self.player_walk_tick_cooldown > 0 {
+            self.player_walk_tick_cooldown = self.player_walk_tick_cooldown.saturating_sub(1);
+            return;
+        }
+        if self.player_walk_path.is_empty() {
+            self.player_walk_goal = None;
+            return;
+        }
+        let Some(current) = self.player_pos() else {
+            self.clear_player_walk();
+            return;
+        };
+        let next = self.player_walk_path[0];
+        let dx = next.x - current.x;
+        let dy = next.y - current.y;
+        if dx.abs().max(dy.abs()) != 1 || (dx == 0 && dy == 0) {
+            self.replan_walk_goal();
+            return;
+        }
+        let moved = self.try_move_player_step(dx, dy);
+        if moved {
+            let _ = self.player_walk_path.remove(0);
+            self.player_walk_tick_cooldown = self
+                .player_id()
+                .and_then(|id| self.entities.stats(id))
+                .map_or(0, |stats| {
+                    services::pacing::visual_step_cooldown_ticks_from_speed(stats.speed)
+                });
+            if self.player_walk_path.is_empty() {
+                self.player_walk_goal = None;
+            }
+            return;
+        }
+        self.replan_walk_goal();
+    }
+
+    fn replan_walk_goal(&mut self) {
+        let goal = self.player_walk_goal;
+        self.player_walk_path.clear();
+        if let Some(goal) = goal {
+            self.try_set_player_walk_goal(goal);
+        }
+    }
+
+    fn clear_player_walk(&mut self) {
+        self.player_walk_path.clear();
+        self.player_walk_goal = None;
+        self.player_walk_tick_cooldown = 0;
+    }
+
+    fn screen_cell_to_world(&self, cell: MouseCell) -> Option<GridPos> {
+        let world_rect = self.world_rect_for_viewport();
+        if !world_rect.contains(cell.x, cell.y) {
+            return None;
+        }
+        let Some(p) = self.player_pos() else {
+            return None;
+        };
+        let cam_w = world_rect.w as i32;
+        let cam_h = world_rect.h as i32;
+        let ox = p.x - cam_w / 2;
+        let oy = p.y - cam_h / 2;
+        let wx = ox + i32::from(cell.x.saturating_sub(world_rect.x));
+        let wy = oy + i32::from(cell.y.saturating_sub(world_rect.y));
+        self.map.in_bounds(wx, wy).then_some(GridPos { x: wx, y: wy })
+    }
+
+    fn world_rect_for_viewport(&self) -> Rect {
+        let hud_w = 28u16.min(self.viewport_w.saturating_sub(10));
+        let log_h = 5u16.min(self.viewport_h.saturating_sub(3));
+        Rect::new(
+            0,
+            0,
+            self.viewport_w.saturating_sub(hud_w),
+            self.viewport_h.saturating_sub(log_h),
+        )
     }
 
     fn try_pickup_ground_items(&mut self, player: EntityId) {
@@ -382,6 +532,66 @@ impl Game {
     pub fn step(&mut self, input: &InputBatch) {
         for ev in &input.events {
             self.handle_event(ev.clone());
+        }
+        self.step_npc_combat_ai();
+        self.step_player_walk();
+    }
+
+    fn step_npc_combat_ai(&mut self) {
+        let Some(GameMode::Combat(state)) = self.modes.current().cloned() else {
+            self.npc_combat_ai_tick_cooldown = 0;
+            return;
+        };
+        let Some(actor) = state.current_actor() else {
+            return;
+        };
+        if self.player_id() == Some(actor) {
+            self.npc_combat_ai_tick_cooldown = 0;
+            return;
+        }
+        if self.npc_combat_ai_tick_cooldown > 0 {
+            self.npc_combat_ai_tick_cooldown =
+                self.npc_combat_ai_tick_cooldown.saturating_sub(1);
+            return;
+        }
+        let mut next = state;
+        let ai = ChaseNearestPolicy;
+        let intent = ai.decide(
+            actor,
+            &CombatAiCtx {
+                state: &next,
+                map: &self.map,
+                entities: &self.entities,
+            },
+        );
+        let pace_after_success = matches!(
+            &intent,
+            AiIntent::Combat(CombatAction::Move { .. } | CombatAction::Attack { .. })
+        );
+        let report = match intent {
+            AiIntent::Combat(action) => {
+                next.apply_action(action, &mut self.entities, &mut self.rng_seed, |x, y| {
+                    self.map.blocks_movement(x, y)
+                })
+            }
+            AiIntent::Wait => next.apply_action(
+                CombatAction::Pass,
+                &mut self.entities,
+                &mut self.rng_seed,
+                |_x, _y| false,
+            ),
+        };
+        if report.applied && pace_after_success {
+            let speed = self
+                .entities
+                .stats(actor)
+                .map_or(1, |stats| stats.speed);
+            self.npc_combat_ai_tick_cooldown =
+                services::pacing::visual_step_cooldown_ticks_from_speed(speed);
+        }
+        self.apply_combat_report(&next, report);
+        if let Some(GameMode::Combat(cs)) = self.modes.current_mut() {
+            *cs = next;
         }
     }
 
@@ -675,6 +885,7 @@ impl Game {
     }
 
     fn finish_combat(&mut self, state: &CombatState, message: &str) {
+        self.npc_combat_ai_tick_cooldown = 0;
         if state.friendly {
             for id in &state.initiative {
                 if let Some(stats) = self.entities.stats_mut(*id) {
@@ -1062,7 +1273,9 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::{Game, GameMode};
-    use crate::input::{InputEvent, Key, KeyChord};
+    use crate::combat::CombatState;
+    use crate::entity::GridPos;
+    use crate::input::{InputBatch, InputEvent, Key, KeyChord};
 
     #[test]
     fn dialogue_hides_unmet_required_choices() {
@@ -1157,5 +1370,103 @@ mod tests {
                 .expect("combatant stats must exist");
             assert_eq!(stats.hp, stats.max_hp);
         }
+    }
+
+    #[test]
+    fn player_walk_goal_advances_over_ticks() {
+        let mut game = Game::new_bootstrapped(80, 30);
+        game.modes.stack = vec![GameMode::Exploration];
+        let start = game.player_pos().expect("player position should exist");
+        let goal = crate::entity::GridPos {
+            x: start.x + 3,
+            y: start.y,
+        };
+        game.try_set_player_walk_goal(goal);
+        for _ in 0..20 {
+            game.step(&InputBatch::default());
+        }
+        assert_eq!(game.player_pos(), Some(goal));
+    }
+
+    #[test]
+    fn npc_combat_ai_attacks_adjacent_player() {
+        let mut game = Game::new_bootstrapped(80, 30);
+        let player = game.player_id().expect("player must exist");
+        let trainer = game
+            .entities
+            .npc_kind
+            .iter()
+            .enumerate()
+            .find(|(_, kind)| kind.as_deref() == Some("trainer"))
+            .map(|(idx, _)| crate::entity::EntityId(idx as u32))
+            .expect("trainer entity should exist");
+        game.entities.set_pos(player, GridPos { x: 10, y: 10 });
+        game.entities.set_pos(trainer, GridPos { x: 11, y: 10 });
+        let mut rng = 1;
+        let mut cs = CombatState::from_participants(
+            vec![trainer, player],
+            &game.entities,
+            game.map.width,
+            game.map.height,
+            &mut rng,
+            false,
+        );
+        cs.turn_index = cs
+            .initiative
+            .iter()
+            .position(|id| *id == trainer)
+            .expect("trainer should be in initiative");
+        cs.ap_remaining[cs.turn_index] = 100;
+        game.modes.stack = vec![GameMode::Combat(cs)];
+        let before = game.entities.stats(player).expect("player stats").hp;
+        game.step(&InputBatch::default());
+        let after = game.entities.stats(player).expect("player stats").hp;
+        assert!(after < before, "npc should attack adjacent player");
+    }
+
+    #[test]
+    fn npc_combat_ai_move_pacing_skips_tick_while_cooldown() {
+        let mut game = Game::new_bootstrapped(80, 30);
+        let player = game.player_id().expect("player must exist");
+        let trainer = game
+            .entities
+            .npc_kind
+            .iter()
+            .enumerate()
+            .find(|(_, kind)| kind.as_deref() == Some("trainer"))
+            .map(|(idx, _)| crate::entity::EntityId(idx as u32))
+            .expect("trainer entity should exist");
+        game.entities.set_pos(player, GridPos { x: 10, y: 10 });
+        game.entities.set_pos(trainer, GridPos { x: 14, y: 10 });
+        let mut rng = 1;
+        let mut cs = CombatState::from_participants(
+            vec![trainer, player],
+            &game.entities,
+            game.map.width,
+            game.map.height,
+            &mut rng,
+            false,
+        );
+        cs.turn_index = cs
+            .initiative
+            .iter()
+            .position(|id| *id == trainer)
+            .expect("trainer should be in initiative");
+        cs.ap_remaining[cs.turn_index] = 100;
+        game.modes.stack = vec![GameMode::Combat(cs)];
+        game.step(&InputBatch::default());
+        let after_first = game.entities.pos(trainer).expect("trainer position");
+        game.step(&InputBatch::default());
+        let after_cooldown_tick = game.entities.pos(trainer).expect("trainer position");
+        assert_eq!(
+            after_first, after_cooldown_tick,
+            "trainer should not take a second step on the pacing tick (speed 7 => 1 tick cooldown)"
+        );
+        game.step(&InputBatch::default());
+        let after_third = game.entities.pos(trainer).expect("trainer position");
+        assert_ne!(
+            after_first, after_third,
+            "trainer should advance again once cooldown elapsed"
+        );
     }
 }

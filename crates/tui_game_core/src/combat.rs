@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity::{EntityArena, EntityId, GridPos};
 
-pub const MOVE_AP_COST: u16 = 1;
-pub const ATTACK_AP_COST: u16 = 2;
+pub const ACTION_UNIT: u16 = 10;
+pub const MOVE_ORTHOGONAL_COST_UNITS: u16 = 10;
+pub const MOVE_DIAGONAL_COST_UNITS: u16 = 14;
+pub const ATTACK_COST_UNITS: u16 = 20;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CombatAction {
@@ -53,7 +55,7 @@ impl CombatState {
         let initiative: Vec<EntityId> = ranked.into_iter().map(|(id, _, _)| id).collect();
         let ap_remaining = initiative
             .iter()
-            .map(|id| arena.stats(*id).map_or(1, |s| ap_from_speed(s.speed)))
+            .map(|id| arena.stats(*id).map_or(1, |s| ap_from_speed(s.speed)) * ACTION_UNIT)
             .collect();
         Self {
             initiative,
@@ -74,7 +76,9 @@ impl CombatState {
     }
 
     pub fn current_ap(&self) -> Option<u16> {
-        self.ap_remaining.get(self.turn_index).copied()
+        self.ap_remaining
+            .get(self.turn_index)
+            .map(|units| units / ACTION_UNIT)
     }
 
     pub fn end_turn(&mut self, arena: &EntityArena) {
@@ -87,7 +91,7 @@ impl CombatState {
             let id = self.initiative[idx];
             if actor_can_act(arena, id) {
                 self.turn_index = idx;
-                self.ap_remaining[idx] = arena.stats(id).map_or(1, |s| ap_from_speed(s.speed));
+                self.ap_remaining[idx] = arena.stats(id).map_or(1, |s| ap_from_speed(s.speed)) * ACTION_UNIT;
                 return;
             }
         }
@@ -117,7 +121,21 @@ impl CombatState {
         }
         match action {
             CombatAction::Move { target } => {
-                if self.current_ap().unwrap_or(0) < MOVE_AP_COST {
+                let Some(actor_pos) = arena.pos(actor) else {
+                    return CombatActionReport {
+                        applied: false,
+                        end_combat: false,
+                        message: Some("Actor has no position.".into()),
+                    };
+                };
+                let Some(move_cost) = move_cost_units(actor_pos, target) else {
+                    return CombatActionReport {
+                        applied: false,
+                        end_combat: false,
+                        message: Some("Movement target must be adjacent.".into()),
+                    };
+                };
+                if self.current_ap_units().unwrap_or(0) < move_cost {
                     return CombatActionReport {
                         applied: false,
                         end_combat: false,
@@ -144,7 +162,7 @@ impl CombatState {
                     };
                 }
                 arena.set_pos(actor, target);
-                self.consume_current_ap(MOVE_AP_COST);
+                self.consume_current_ap_units(move_cost);
                 self.advance_turn_if_needed(arena);
                 CombatActionReport {
                     applied: true,
@@ -153,7 +171,7 @@ impl CombatState {
                 }
             }
             CombatAction::Attack { target } => {
-                if self.current_ap().unwrap_or(0) < ATTACK_AP_COST {
+                if self.current_ap_units().unwrap_or(0) < ATTACK_COST_UNITS {
                     return CombatActionReport {
                         applied: false,
                         end_combat: false,
@@ -181,8 +199,9 @@ impl CombatState {
                         message: Some("Target has no position.".into()),
                     };
                 };
-                let dist = (attacker_pos.x - target_pos.x).abs() + (attacker_pos.y - target_pos.y).abs();
-                if dist != 1 {
+                let dx = (attacker_pos.x - target_pos.x).abs();
+                let dy = (attacker_pos.y - target_pos.y).abs();
+                if dx.max(dy) != 1 {
                     return CombatActionReport {
                         applied: false,
                         end_combat: false,
@@ -219,7 +238,7 @@ impl CombatState {
                         }
                     }
                 }
-                self.consume_current_ap(ATTACK_AP_COST);
+                self.consume_current_ap_units(ATTACK_COST_UNITS);
                 self.advance_turn_if_needed(arena);
                 CombatActionReport {
                     applied: true,
@@ -243,14 +262,21 @@ impl CombatState {
         }
     }
 
-    fn consume_current_ap(&mut self, cost: u16) {
+    fn current_ap_units(&self) -> Option<u16> {
+        self.ap_remaining.get(self.turn_index).copied()
+    }
+
+    fn consume_current_ap_units(&mut self, cost: u16) {
         if let Some(ap) = self.ap_remaining.get_mut(self.turn_index) {
             *ap = ap.saturating_sub(cost);
         }
     }
 
     fn advance_turn_if_needed(&mut self, arena: &EntityArena) {
-        if self.current_ap().unwrap_or(0) == 0 {
+        if self
+            .current_ap_units()
+            .is_some_and(|units| units < MOVE_ORTHOGONAL_COST_UNITS)
+        {
             self.end_turn(arena);
         }
     }
@@ -276,6 +302,21 @@ fn next_u32(seed: &mut u64) -> u32 {
 
 fn roll_d20(seed: &mut u64) -> u16 {
     (next_u32(seed) % 20 + 1) as u16
+}
+
+fn move_cost_units(from: GridPos, to: GridPos) -> Option<u16> {
+    let dx = (to.x - from.x).abs();
+    let dy = (to.y - from.y).abs();
+    if dx == 0 && dy == 0 {
+        return None;
+    }
+    if dx > 1 || dy > 1 {
+        return None;
+    }
+    if dx == 1 && dy == 1 {
+        return Some(MOVE_DIAGONAL_COST_UNITS);
+    }
+    Some(MOVE_ORTHOGONAL_COST_UNITS)
 }
 
 pub fn speed_modifier(speed: u16) -> i16 {
@@ -336,7 +377,7 @@ mod tests {
             .position(|id| *id == a)
             .expect("attacker must exist in initiative");
         let target = b;
-        state.ap_remaining[state.turn_index] = 10;
+        state.ap_remaining[state.turn_index] = 100;
         let report = state.apply_action(
             CombatAction::Attack { target },
             &mut arena,

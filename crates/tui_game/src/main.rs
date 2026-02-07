@@ -94,8 +94,8 @@ fn main() -> std::io::Result<()> {
         } else {
             250
         };
+        let mut batch = InputBatch::default();
         if event::poll(Duration::from_millis(poll_ms))? {
-            let mut batch = InputBatch::default();
             loop {
                 match event::read()? {
                     Event::Key(k) => {
@@ -135,8 +135,8 @@ fn main() -> std::io::Result<()> {
                     break;
                 }
             }
-            game.step(&batch);
         }
+        game.step(&batch);
     }
 
     execute!(

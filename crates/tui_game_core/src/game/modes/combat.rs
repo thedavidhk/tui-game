@@ -60,6 +60,24 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
         }) => {
             game.combat_try_move(&mut next, 1, 0);
         }
+        InputEvent::Key(KeyChord { key: Key::Home, .. }) => {
+            game.combat_try_move(&mut next, -1, -1);
+        }
+        InputEvent::Key(KeyChord {
+            key: Key::PageUp,
+            ..
+        }) => {
+            game.combat_try_move(&mut next, 1, -1);
+        }
+        InputEvent::Key(KeyChord { key: Key::End, .. }) => {
+            game.combat_try_move(&mut next, -1, 1);
+        }
+        InputEvent::Key(KeyChord {
+            key: Key::PageDown,
+            ..
+        }) => {
+            game.combat_try_move(&mut next, 1, 1);
+        }
         InputEvent::Key(KeyChord {
             key: Key::Char('x'),
             ..

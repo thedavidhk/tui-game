@@ -1,5 +1,5 @@
 use crate::game::{Game, GameMode};
-use crate::input::{InputEvent, Key, KeyChord};
+use crate::input::{InputEvent, Key, KeyChord, MouseButton, MouseEventKind};
 
 pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
     match ev {
@@ -60,6 +60,21 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
             key: Key::Right,
             ..
         }) => game.try_move_player(1, 0),
+        InputEvent::Key(KeyChord { key: Key::Home, .. }) => game.try_move_player(-1, -1),
+        InputEvent::Key(KeyChord {
+            key: Key::PageUp,
+            ..
+        }) => game.try_move_player(1, -1),
+        InputEvent::Key(KeyChord { key: Key::End, .. }) => game.try_move_player(-1, 1),
+        InputEvent::Key(KeyChord {
+            key: Key::PageDown,
+            ..
+        }) => game.try_move_player(1, 1),
+        InputEvent::Mouse {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            cell,
+            ..
+        } => game.try_set_player_walk_goal_from_screen(cell),
         _ => {}
     }
 }
