@@ -2,6 +2,7 @@ use crate::game::{Game, GameMode};
 use crate::game_content;
 use crate::rect::Rect;
 use crate::render::FrameBuffer;
+use crate::ui::layout::FloatingPanelLayout;
 
 pub(crate) fn compose(
     game: &mut Game,
@@ -42,7 +43,7 @@ pub(crate) fn compose(
     crate::ui::draw_log(fb, log_inner, &log_lines, &mut Vec::new());
 
     if let Some(GameMode::MainMenu { selected }) = game.modes.current().cloned() {
-        let menu_r = Rect::new(2, 2, 30, 10);
+        let menu_r = FloatingPanelLayout::main_menu();
         crate::ui::draw_menu(
             fb,
             menu_r,
@@ -76,7 +77,7 @@ pub(crate) fn compose(
                 .name
                 .get(npc_entity.0 as usize)
                 .map_or("NPC", String::as_str);
-            let dr = Rect::new(2, fb.height.saturating_sub(12), fb.width.saturating_sub(4), 10);
+            let dr = FloatingPanelLayout::dialogue_band(fb.width, fb.height);
             let continue_only = node.choices.is_empty() && node.auto_next.is_some();
             crate::ui::draw_dialogue(
                 fb,
@@ -92,7 +93,7 @@ pub(crate) fn compose(
     }
 
     if let Some(GameMode::Combat(ref c)) = game.modes.current() {
-        let cr = Rect::new(2, 10, 40, 6);
+        let cr = FloatingPanelLayout::combat_hud();
         let actor = c.current_actor();
         let who = actor
             .map(|id| game.entities.name.get(id.0 as usize).cloned().unwrap_or_default())
@@ -133,7 +134,7 @@ pub(crate) fn compose(
     }
 
     if game.debug_overlay {
-        let dbg = Rect::new(2, fb.height.saturating_sub(8), fb.width.saturating_sub(4), 6);
+        let dbg = FloatingPanelLayout::debug_panel(fb.width, fb.height);
         let dirty = fb.dirty_count();
         let enc = game
             .last_perf

@@ -24,6 +24,7 @@ use tui_game_core::input::{
     InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseCell, MouseEventKind,
 };
 use tui_game_core::rect::Rect;
+use tui_game_core::ui::layout::GameShellLayout;
 use tui_game_core::render::{
     encode_frame_delta, encode_frame_full, FrameBuffer, FrameSample, FrameStatsRing,
 };
@@ -158,12 +159,7 @@ fn main() -> std::io::Result<()> {
 }
 
 fn layout(w: u16, h: u16) -> (Rect, Rect, Rect) {
-    let hud_w = 28u16.min(w.saturating_sub(10));
-    let log_h = 5u16.min(h.saturating_sub(3));
-    let world = Rect::new(0, 0, w.saturating_sub(hud_w), h.saturating_sub(log_h));
-    let hud = Rect::new(world.w, 0, hud_w, h.saturating_sub(log_h));
-    let log = Rect::new(0, world.h, w, log_h);
-    (world, hud, log)
+    GameShellLayout::root_panels(w, h)
 }
 
 fn map_key(k: KeyEvent) -> Option<InputEvent> {

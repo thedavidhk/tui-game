@@ -21,6 +21,7 @@ use crate::narrative::NarrativeState;
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
 use crate::ui::hit::UiHitState;
+use crate::ui::layout::GameShellLayout;
 use crate::world::{compute_visible, merge_explored, plan_path_player_fow, MapGrid};
 
 const FOW_RADIUS: i32 = 8;
@@ -434,14 +435,9 @@ impl Game {
     }
 
     fn world_rect_for_viewport(&self) -> Rect {
-        let hud_w = 28u16.min(self.viewport_w.saturating_sub(10));
-        let log_h = 5u16.min(self.viewport_h.saturating_sub(3));
-        Rect::new(
-            0,
-            0,
-            self.viewport_w.saturating_sub(hud_w),
-            self.viewport_h.saturating_sub(log_h),
-        )
+        let (world, _, _) =
+            GameShellLayout::root_panels(self.viewport_w, self.viewport_h);
+        world
     }
 
     fn try_pickup_ground_items(&mut self, player: EntityId) {
@@ -962,8 +958,10 @@ impl Game {
             }
         }
 
-        let (left, right) =
-            crate::ui::layout::split_horizontal_outer(fb.width, fb.height, 2, 3, 3, 2, 18);
+        let (left, right) = crate::ui::layout::OverlaySplitConfig::journal_or_inventory(
+            fb.width,
+            fb.height,
+        );
         crate::ui::draw_bordered_panel(fb, left, "Quests");
         let inner_l = crate::ui::layout::panel_inner(left);
         let journals = &self.narrative.quest_journal;
@@ -1013,8 +1011,10 @@ impl Game {
     }
 
     fn compose_inventory_overlay(&self, fb: &mut FrameBuffer, cursor: usize) {
-        let (left, right) =
-            crate::ui::layout::split_horizontal_outer(fb.width, fb.height, 2, 3, 3, 2, 18);
+        let (left, right) = crate::ui::layout::OverlaySplitConfig::journal_or_inventory(
+            fb.width,
+            fb.height,
+        );
         crate::ui::draw_bordered_panel(fb, left, "Inventory");
         let cat = self.content.item_catalog();
         let stacks = &self.narrative.inventory.stacks;
@@ -1065,7 +1065,7 @@ impl Game {
         cursor_container: usize,
     ) {
         let (left, right) =
-            crate::ui::layout::split_horizontal_outer(fb.width, fb.height, 2, 2, 3, 2, 18);
+            crate::ui::layout::OverlaySplitConfig::item_transfer(fb.width, fb.height);
         let cat = self.content.item_catalog();
         let cname = self
             .entities

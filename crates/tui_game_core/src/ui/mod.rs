@@ -1,4 +1,7 @@
 //! Layout-only UI helpers writing into `FrameBuffer`.
+//!
+//! Screen chrome sizes and positions: `layout` (`GameShellLayout`, `OverlaySplitConfig`,
+//! `FloatingPanelLayout`).
 
 mod dialogue;
 pub mod hit;
