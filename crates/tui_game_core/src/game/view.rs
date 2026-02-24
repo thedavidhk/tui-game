@@ -23,8 +23,25 @@ pub(crate) fn compose(
     let mut lines = vec![format!("Mode: {}", game.mode_label())];
     lines.extend(Game::quest_status_lines(&game.narrative));
     lines.push(format!("Demo quest line: {:?}", game.narrative.quests));
-    lines.push("I: inventory  J: journal  E: talk/chest  C: combat".into());
-    lines.push("F1: debug  F5/F9: save/load".into());
+    match game.modes.current() {
+        Some(GameMode::Exploration) => {
+            lines.extend(crate::game::services::hover::exploration_hover_lines(game));
+        }
+        Some(GameMode::Combat(c)) => {
+            lines.extend(crate::game::services::hover::combat_hover_lines(game, c));
+        }
+        _ => {}
+    }
+    match game.modes.current() {
+        Some(GameMode::Combat(_)) => {
+            lines.push("Combat: WASD / x  Tab pass  Esc quit".into());
+            lines.push("LMB act  RMB move (world)".into());
+        }
+        _ => {
+            lines.push("I: inventory  J: journal  E: talk/chest  C: combat".into());
+            lines.push("F1: debug  F5/F9 save/load".into());
+        }
+    }
     crate::ui::draw_text_block(fb, inner, &lines);
 
     crate::ui::draw_bordered_panel(fb, log_rect, "Log");

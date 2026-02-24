@@ -148,6 +148,8 @@ pub struct EntityBlueprint {
     pub base_strength: u16,
     pub base_agility: u16,
     pub base_speed: u16,
+    /// When true, primary click / combat key resolve to a fight instead of dialogue.
+    pub hostile: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -441,6 +443,7 @@ mod validate_tests {
             base_strength: 1,
             base_agility: 1,
             base_speed: 1,
+            hostile: false,
         }];
         static IDS: [ItemDef; 1] = [ItemDef {
             id: "a",

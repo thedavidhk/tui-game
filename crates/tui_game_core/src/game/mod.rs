@@ -1,7 +1,7 @@
 //! Top-level game state, mode stack, and stepping.
 
 mod modes;
-mod services;
+pub(crate) mod services;
 mod view;
 
 use std::fs;
@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai::combat::ChaseNearestPolicy;
 use crate::ai::{AiIntent, CombatAiCtx, CombatDecisionPolicy};
-use crate::combat::{CombatAction, CombatState};
+use crate::combat::{
+    CombatAction, CombatState, ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
+};
 use crate::content::{ContentPack, DemoQuestPhase, DialogueAction, QuestJournalStatus};
 use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
@@ -22,9 +24,17 @@ use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
 use crate::ui::hit::UiHitState;
 use crate::ui::layout::GameShellLayout;
-use crate::world::{compute_visible, merge_explored, plan_path_player_fow, MapGrid};
+use crate::world::{
+    compute_visible, merge_explored, plan_path, plan_path_player_fow, MapGrid,
+};
 
 const FOW_RADIUS: i32 = 8;
+
+#[derive(Clone, Debug)]
+struct PendingForcedDialogue {
+    npc: EntityId,
+    node_id: String,
+}
 
 fn explored_muted_fg(base: Color) -> Color {
     const M: u32 = 38;
@@ -122,6 +132,11 @@ pub struct Game {
     player_walk_tick_cooldown: u16,
     /// When > 0, NPC combat AI waits (same tick pacing as exploration auto-walk).
     npc_combat_ai_tick_cooldown: u16,
+    /// Last mouse cell over the world view while exploring (for hover text).
+    pub exploration_hover_cell: Option<MouseCell>,
+    /// Last mouse cell over the world view during combat (for hover text).
+    pub combat_hover_cell: Option<MouseCell>,
+    pending_forced_dialogue: Option<PendingForcedDialogue>,
 }
 
 impl Game {
@@ -236,6 +251,9 @@ impl Game {
             player_walk_goal: None,
             player_walk_tick_cooldown: 0,
             npc_combat_ai_tick_cooldown: 0,
+            exploration_hover_cell: None,
+            combat_hover_cell: None,
+            pending_forced_dialogue: None,
         };
         game.refresh_fow();
         Ok(game)
@@ -417,7 +435,7 @@ impl Game {
         self.player_walk_tick_cooldown = 0;
     }
 
-    fn screen_cell_to_world(&self, cell: MouseCell) -> Option<GridPos> {
+    pub(crate) fn screen_cell_to_world(&self, cell: MouseCell) -> Option<GridPos> {
         let world_rect = self.world_rect_for_viewport();
         if !world_rect.contains(cell.x, cell.y) {
             return None;
@@ -434,7 +452,7 @@ impl Game {
         self.map.in_bounds(wx, wy).then_some(GridPos { x: wx, y: wy })
     }
 
-    fn world_rect_for_viewport(&self) -> Rect {
+    pub(crate) fn world_rect_for_viewport(&self) -> Rect {
         let (world, _, _) =
             GameShellLayout::root_panels(self.viewport_w, self.viewport_h);
         world
@@ -499,13 +517,40 @@ impl Game {
         } else {
             0
         };
+        self.push_dialogue_mode(npc, kind, start_node, tree);
+    }
+
+    fn start_dialogue_at_node(&mut self, npc: EntityId, node_id: &str) {
+        let kind = self.entities.npc_kind[npc.0 as usize]
+            .clone()
+            .unwrap_or_default();
+        let tree = self
+            .content
+            .dialogues
+            .get(kind.as_str())
+            .copied()
+            .unwrap_or(self.content.guide_dialogue);
+        let start_node = tree
+            .node_index(node_id)
+            .or_else(|| tree.node_index("hub"))
+            .unwrap_or(0);
+        self.push_dialogue_mode(npc, kind, start_node, tree);
+    }
+
+    fn push_dialogue_mode(
+        &mut self,
+        npc: EntityId,
+        dialogue_id: String,
+        node_index: usize,
+        tree: &'static crate::content::DialogueTree,
+    ) {
         self.modes.push(GameMode::Dialogue {
             npc_entity: npc,
-            dialogue_id: kind.clone(),
-            node_index: start_node,
+            dialogue_id,
+            node_index,
             choice_cursor: 0,
         });
-        self.apply_dialogue_node_effects(tree, start_node);
+        self.apply_dialogue_node_effects(tree, node_index);
     }
 
     fn start_item_transfer(&mut self, container: EntityId) {
@@ -527,6 +572,49 @@ impl Game {
         }
         self.step_npc_combat_ai();
         self.step_player_walk();
+        self.pump_pending_forced_dialogue();
+    }
+
+    fn pump_pending_forced_dialogue(&mut self) {
+        if !matches!(self.modes.current(), Some(GameMode::Exploration)) {
+            return;
+        }
+        if let Some(p) = self.pending_forced_dialogue.take() {
+            if self.entities.is_alive(p.npc) {
+                self.start_dialogue_at_node(p.npc, p.node_id.as_str());
+            }
+        }
+    }
+
+    fn schedule_training_spar_epilogue(&mut self, state: &CombatState) {
+        let Some(pid) = self.player_id() else {
+            return;
+        };
+        let Some(trainer) = state.initiative.iter().copied().find(|id| {
+            self.entities.npc_kind.get(id.0 as usize).and_then(|k| k.as_deref()) == Some("trainer")
+        }) else {
+            return;
+        };
+        if trainer == pid {
+            return;
+        }
+        let Some(ps) = self.entities.stats(pid) else {
+            return;
+        };
+        let Some(ts) = self.entities.stats(trainer) else {
+            return;
+        };
+        let node_id = if ts.hp < ps.hp {
+            "post_spar_yield"
+        } else if ps.hp < ts.hp {
+            "post_spar_help_up"
+        } else {
+            "post_spar_even"
+        };
+        self.pending_forced_dialogue = Some(PendingForcedDialogue {
+            npc: trainer,
+            node_id: node_id.into(),
+        });
     }
 
     fn step_npc_combat_ai(&mut self) {
@@ -606,7 +694,7 @@ impl Game {
         let Some(p) = self.entities.pos(pid) else {
             return;
         };
-        match services::interaction::probe_adjacent(&self.entities, p) {
+        match services::interaction::probe_interaction(&self.entities, p, &self.content) {
             services::interaction::InteractionOutcome::Dialogue(occ) => self.start_dialogue(occ),
             services::interaction::InteractionOutcome::Container(chest) => {
                 self.start_item_transfer(chest);
@@ -617,6 +705,61 @@ impl Game {
         }
     }
 
+    pub(crate) fn try_exploration_primary_click(&mut self, cell: MouseCell) {
+        if !matches!(self.modes.current(), Some(GameMode::Exploration)) {
+            return;
+        }
+        let Some(wp) = self.screen_cell_to_world(cell) else {
+            return;
+        };
+        let Some(pid) = self.player_id() else {
+            return;
+        };
+        let Some(pp) = self.entities.pos(pid) else {
+            return;
+        };
+
+        for &eid in &self.entities.occupants_at(wp.x, wp.y) {
+            if eid == pid {
+                continue;
+            }
+            if self.entities.is_container[eid.0 as usize] {
+                if services::hover::chebyshev(pp, wp) <= 1 {
+                    self.start_item_transfer(eid);
+                }
+                return;
+            }
+        }
+
+        let Some(target) = self.entities.first_npc_at(wp.x, wp.y) else {
+            return;
+        };
+        if target == pid {
+            return;
+        }
+        let Some(kind) = self.entities.npc_kind[target.0 as usize].as_deref() else {
+            return;
+        };
+        let Some(bp) = self.content.blueprint(kind) else {
+            return;
+        };
+        if bp.hostile {
+            if services::hover::chebyshev(pp, wp) <= 1 {
+                self.start_combat_encounter(
+                    vec![pid, target],
+                    false,
+                    "Combat started. x attack, WASD move, Tab pass, f flee.",
+                );
+            }
+            return;
+        }
+        if bp.dialogue_id.is_some()
+            && services::hover::manhattan(pp, wp) <= services::hover::TALK_RANGE_MANHATTAN
+        {
+            self.start_dialogue(target);
+        }
+    }
+
     pub(crate) fn try_start_combat(&mut self) {
         let Some(pid) = self.player_id() else {
             return;
@@ -624,21 +767,43 @@ impl Game {
         let Some(p) = self.entities.pos(pid) else {
             return;
         };
-        let mut others = Vec::new();
-        if let Some(occ) = self.entities.occupant_at(p.x, p.y + 1) {
-            if occ != pid {
-                others.push(occ);
+        let mut target: Option<EntityId> = None;
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let nx = p.x + dx;
+                let ny = p.y + dy;
+                let Some(occ) = self.entities.first_npc_at(nx, ny) else {
+                    continue;
+                };
+                if occ == pid {
+                    continue;
+                }
+                let Some(kind) = self.entities.npc_kind[occ.0 as usize].as_deref() else {
+                    continue;
+                };
+                if self
+                    .content
+                    .blueprint(kind)
+                    .is_some_and(|b| b.hostile)
+                {
+                    target = Some(occ);
+                    break;
+                }
+            }
+            if target.is_some() {
+                break;
             }
         }
-        if others.is_empty() {
+        let Some(t) = target else {
             self.log
-                .push("Combat: stand south of an entity and press c.".into());
+                .push("No hostile target adjacent. (Friendly NPCs want dialogue.)".into());
             return;
-        }
-        let mut ini = vec![pid];
-        ini.extend(others);
+        };
         self.start_combat_encounter(
-            ini,
+            vec![pid, t],
             false,
             "Combat started. x attack, WASD move, Tab pass, f flee.",
         );
@@ -863,6 +1028,206 @@ impl Game {
         self.apply_combat_report(state, report);
     }
 
+    pub(crate) fn combat_try_attack_target(&mut self, state: &mut CombatState, target: EntityId) {
+        let Some(actor) = state.current_actor() else {
+            return;
+        };
+        let Some(p) = self.entities.pos(actor) else {
+            return;
+        };
+        let Some(tp) = self.entities.pos(target) else {
+            return;
+        };
+        let dx = (p.x - tp.x).abs();
+        let dy = (p.y - tp.y).abs();
+        if dx.max(dy) != 1 {
+            return;
+        }
+        let report = state.apply_action(
+            CombatAction::Attack { target },
+            &mut self.entities,
+            &mut self.rng_seed,
+            |_x, _y| false,
+        );
+        self.apply_combat_report(state, report);
+    }
+
+    /// March the current player toward `goal`, optionally stopping when Chebyshev-adjacent to
+    /// `stop_when_adjacent_to`. Returns `true` if combat ended mid-march.
+    fn combat_march_toward(
+        &mut self,
+        state: &mut CombatState,
+        player: EntityId,
+        goal: GridPos,
+        stop_when_adjacent_to: Option<EntityId>,
+        max_steps: u32,
+    ) -> bool {
+        for _ in 0..max_steps {
+            if !matches!(self.modes.current(), Some(GameMode::Combat(_))) {
+                return true;
+            }
+            let Some(actor) = state.current_actor() else {
+                return true;
+            };
+            if actor != player {
+                return false;
+            }
+            let Some(from) = self.entities.pos(player) else {
+                return false;
+            };
+            if let Some(finish_id) = stop_when_adjacent_to {
+                if let Some(tp) = self.entities.pos(finish_id) {
+                    if services::hover::chebyshev(from, tp) <= 1 {
+                        return false;
+                    }
+                }
+            } else if from == goal {
+                return false;
+            }
+            if state.current_ap_units().unwrap_or(0) < MOVE_ORTHOGONAL_COST_UNITS {
+                break;
+            }
+            let Ok(plan) = plan_path(
+                &self.map,
+                &self.entities,
+                from,
+                goal,
+                Some(player),
+                true,
+                u32::MAX,
+            ) else {
+                break;
+            };
+            let Some(next) = plan.path.get(1).copied() else {
+                break;
+            };
+            let report = state.apply_action(
+                CombatAction::Move { target: next },
+                &mut self.entities,
+                &mut self.rng_seed,
+                |x, y| self.map.blocks_movement(x, y),
+            );
+            let applied = report.applied;
+            let ended = report.end_combat;
+            self.apply_combat_report(state, report);
+            if ended {
+                return true;
+            }
+            if !applied {
+                break;
+            }
+        }
+        false
+    }
+
+    fn find_trainer_in_combat(&self, state: &CombatState) -> Option<EntityId> {
+        state.initiative.iter().copied().find(|id| {
+            self.entities
+                .npc_kind
+                .get(id.0 as usize)
+                .and_then(|k| k.as_deref())
+                == Some("trainer")
+        })
+    }
+
+    pub(crate) fn combat_rmb_march_toward(&mut self, state: &mut CombatState, cell: MouseCell) {
+        let Some(pid) = self.player_id() else {
+            return;
+        };
+        if state.current_actor() != Some(pid) {
+            return;
+        }
+        let Some(goal) = self.screen_cell_to_world(cell) else {
+            return;
+        };
+        let _ = self.combat_march_toward(state, pid, goal, None, 64);
+    }
+
+    pub(crate) fn combat_try_primary_click(&mut self, state: &mut CombatState, cell: MouseCell) {
+        let Some(pid) = self.player_id() else {
+            return;
+        };
+        if state.current_actor() != Some(pid) {
+            return;
+        }
+        let Some(wp) = self.screen_cell_to_world(cell) else {
+            return;
+        };
+
+        if state.friendly {
+            let Some(tid) = self.find_trainer_in_combat(state) else {
+                return;
+            };
+            let Some(goal) = self.entities.pos(tid) else {
+                return;
+            };
+            if self.combat_march_toward(state, pid, goal, Some(tid), 64) {
+                return;
+            }
+            if !matches!(self.modes.current(), Some(GameMode::Combat(_))) {
+                return;
+            }
+            if state.current_actor() != Some(pid) {
+                return;
+            }
+            let Some(pp) = self.entities.pos(pid) else {
+                return;
+            };
+            let Some(tp) = self.entities.pos(tid) else {
+                return;
+            };
+            if services::hover::chebyshev(pp, tp) <= 1
+                && state.current_ap_units().unwrap_or(0) >= ATTACK_COST_UNITS
+            {
+                self.combat_try_attack_target(state, tid);
+            }
+            return;
+        }
+
+        for &eid in &self.entities.occupants_at(wp.x, wp.y) {
+            if eid == pid || !state.contains_actor(eid) {
+                continue;
+            }
+            let Some(kind) = self.entities.npc_kind.get(eid.0 as usize).and_then(|k| k.as_deref())
+            else {
+                continue;
+            };
+            if !self
+                .content
+                .blueprint(kind)
+                .is_some_and(|b| b.hostile)
+            {
+                continue;
+            }
+            let Some(epos) = self.entities.pos(eid) else {
+                continue;
+            };
+            if self.combat_march_toward(state, pid, epos, Some(eid), 64) {
+                return;
+            }
+            if !matches!(self.modes.current(), Some(GameMode::Combat(_))) {
+                return;
+            }
+            if state.current_actor() != Some(pid) {
+                return;
+            }
+            let Some(pp) = self.entities.pos(pid) else {
+                return;
+            };
+            let Some(ep) = self.entities.pos(eid) else {
+                return;
+            };
+            if services::hover::chebyshev(pp, ep) <= 1
+                && state.current_ap_units().unwrap_or(0) >= ATTACK_COST_UNITS
+            {
+                self.combat_try_attack_target(state, eid);
+            }
+            return;
+        }
+
+        let _ = self.combat_march_toward(state, pid, wp, None, 64);
+    }
+
     fn apply_combat_report(
         &mut self,
         state: &CombatState,
@@ -878,7 +1243,9 @@ impl Game {
 
     fn finish_combat(&mut self, state: &CombatState) {
         self.npc_combat_ai_tick_cooldown = 0;
+        self.combat_hover_cell = None;
         if state.friendly {
+            self.schedule_training_spar_epilogue(state);
             for id in &state.initiative {
                 if let Some(stats) = self.entities.stats_mut(*id) {
                     stats.hp = stats.max_hp;

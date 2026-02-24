@@ -204,12 +204,13 @@ mod tests {
     }
 
     #[test]
-    fn game_shell_root_panels_matches_previous_defaults() {
+    fn game_shell_root_panels_matches_formula() {
         let w = 100u16;
         let h = 40u16;
         let (world, hud, log) = GameShellLayout::root_panels(w, h);
-        let hud_w = 28u16.min(w.saturating_sub(10));
-        let log_h = 5u16.min(h.saturating_sub(3));
+        let hud_w = GameShellLayout::HUD_WIDTH.min(w.saturating_sub(GameShellLayout::MIN_WORLD_WIDTH));
+        let log_h =
+            GameShellLayout::LOG_HEIGHT.min(h.saturating_sub(GameShellLayout::MIN_WORLD_HEIGHT));
         assert_eq!(hud.w, hud_w);
         assert_eq!(log.h, log_h);
         assert_eq!(

@@ -1,5 +1,7 @@
+use crate::game::services::hover;
 use crate::game::{Game, GameMode};
 use crate::input::{InputEvent, Key, KeyChord, MouseButton, MouseEventKind};
+use crate::ui::layout::GameShellLayout;
 
 pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
     match ev {
@@ -71,10 +73,22 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
             ..
         }) => game.try_move_player(1, 1),
         InputEvent::Mouse {
-            kind: MouseEventKind::Down(MouseButton::Right),
+            kind,
             cell,
             ..
-        } => game.try_set_player_walk_goal_from_screen(cell),
+        } => {
+            let world_r = GameShellLayout::root_panels(game.viewport_w, game.viewport_h).0;
+            hover::sync_exploration_hover(game, cell, world_r);
+            match kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    game.try_exploration_primary_click(cell);
+                }
+                MouseEventKind::Down(MouseButton::Right) => {
+                    game.try_set_player_walk_goal_from_screen(cell);
+                }
+                _ => {}
+            }
+        }
         _ => {}
     }
 }

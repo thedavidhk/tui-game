@@ -1,10 +1,30 @@
 use crate::combat::{CombatAction, CombatState};
 use crate::game::{Game, GameMode};
-use crate::input::{InputEvent, Key, KeyChord};
+use crate::game::services::hover;
+use crate::input::{InputEvent, Key, KeyChord, MouseButton, MouseEventKind};
+use crate::ui::layout::GameShellLayout;
 
 pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
     let mut next = state.clone();
+    let world_r = GameShellLayout::root_panels(game.viewport_w, game.viewport_h).0;
+
     match ev {
+        InputEvent::Mouse {
+            kind,
+            cell,
+            ..
+        } => {
+            hover::sync_combat_hover(game, cell, world_r);
+            match kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    game.combat_try_primary_click(&mut next, cell);
+                }
+                MouseEventKind::Down(MouseButton::Right) => {
+                    game.combat_rmb_march_toward(&mut next, cell);
+                }
+                _ => {}
+            }
+        }
         InputEvent::Key(KeyChord {
             key: Key::Tab | Key::Char(' '),
             ..

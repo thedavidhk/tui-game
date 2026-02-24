@@ -14,6 +14,7 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     base_strength: 5,
     base_agility: 5,
     base_speed: 5,
+    hostile: false,
 };
 
 dialogue_tree! {

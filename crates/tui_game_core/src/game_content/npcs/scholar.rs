@@ -15,6 +15,7 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     base_strength: 4,
     base_agility: 6,
     base_speed: 5,
+    hostile: false,
 };
 
 pub fn on_item_picked(

@@ -13,6 +13,7 @@ pub const BLUEPRINT_PROP: EntityBlueprint = EntityBlueprint {
     base_strength: 1,
     base_agility: 1,
     base_speed: 1,
+    hostile: false,
 };
 
 pub const BLUEPRINT_HEALTH_TONIC_DROP: EntityBlueprint = EntityBlueprint {
@@ -28,6 +29,7 @@ pub const BLUEPRINT_HEALTH_TONIC_DROP: EntityBlueprint = EntityBlueprint {
     base_strength: 1,
     base_agility: 1,
     base_speed: 1,
+    hostile: false,
 };
 
 pub const BLUEPRINT_BRASS_RING_DROP: EntityBlueprint = EntityBlueprint {
@@ -43,6 +45,7 @@ pub const BLUEPRINT_BRASS_RING_DROP: EntityBlueprint = EntityBlueprint {
     base_strength: 1,
     base_agility: 1,
     base_speed: 1,
+    hostile: false,
 };
 
 pub const BLUEPRINT_WOODEN_CHEST: EntityBlueprint = EntityBlueprint {
@@ -58,6 +61,7 @@ pub const BLUEPRINT_WOODEN_CHEST: EntityBlueprint = EntityBlueprint {
     base_strength: 1,
     base_agility: 1,
     base_speed: 1,
+    hostile: false,
 };
 
 pub static ENTITY_BLUEPRINTS: &[EntityBlueprint] = &[
