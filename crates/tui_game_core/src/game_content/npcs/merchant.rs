@@ -1,4 +1,4 @@
-use crate::content::{Effect, EntityBlueprint, QuestJournalStatus};
+use crate::content::{Disposition, Effect, EntityBlueprint, QuestJournalStatus};
 use crate::game_content::{dialogue_tree, effects, quests, requires};
 use crate::narrative::{NarrativeApplyError, NarrativeState};
 
@@ -13,11 +13,12 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     dialogue_id: Some("merchant"),
     world_item: None,
     is_container: false,
+    faction_id: "town",
+    disposition_to_player: Disposition::Neutral,
     base_max_hp: 15,
     base_strength: 4,
     base_agility: 5,
     base_speed: 4,
-    hostile: false,
 };
 
 pub fn on_region_enter(

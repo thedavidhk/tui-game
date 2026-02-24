@@ -9,6 +9,32 @@ pub const MOVE_ORTHOGONAL_COST_UNITS: u16 = 10;
 pub const MOVE_DIAGONAL_COST_UNITS: u16 = 14;
 pub const ATTACK_COST_UNITS: u16 = 20;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CombatRuleset {
+    Lethal,
+    NonLethalSpar,
+    NonLethalBrawl,
+}
+
+impl CombatRuleset {
+    #[must_use]
+    pub fn is_lethal(self) -> bool {
+        matches!(self, Self::Lethal)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EncounterOutcomePolicy {
+    None,
+    TrainingSpar { trainer: EntityId },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EncounterProfile {
+    pub ruleset: CombatRuleset,
+    pub outcome_policy: EncounterOutcomePolicy,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CombatAction {
     Move { target: GridPos },
@@ -30,7 +56,7 @@ pub struct CombatState {
     pub ap_remaining: Vec<u16>,
     pub grid_w: u16,
     pub grid_h: u16,
-    pub friendly: bool,
+    pub profile: EncounterProfile,
 }
 
 impl CombatState {
@@ -40,7 +66,7 @@ impl CombatState {
         w: u16,
         h: u16,
         rng_seed: &mut u64,
-        friendly: bool,
+        profile: EncounterProfile,
     ) -> Self {
         let mut ranked: Vec<(EntityId, i32, i32)> = participants
             .into_iter()
@@ -63,7 +89,7 @@ impl CombatState {
             ap_remaining,
             grid_w: w,
             grid_h: h,
-            friendly,
+            profile,
         }
     }
 
@@ -232,7 +258,7 @@ impl CombatState {
                     }
                     if let Some(updated) = arena.stats(target) {
                         message = format!("Attack hits for {damage} damage ({} HP left).", updated.hp);
-                        if updated.hp == 0 && !self.friendly {
+                        if updated.hp == 0 && self.profile.ruleset.is_lethal() {
                             arena.despawn(target);
                             message = "Attack defeats the target.".into();
                         }
@@ -345,7 +371,10 @@ pub fn damage_on_hit(strength: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ap_from_speed, armor_class, CombatAction, CombatState};
+    use super::{
+        ap_from_speed, armor_class, CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy,
+        EncounterProfile,
+    };
     use crate::entity::{ActorStats, EntityArena, GridPos};
 
     #[test]
@@ -370,7 +399,17 @@ mod tests {
         arena.set_stats(a, ActorStats::from_full(10, 10, 100, 5, 8));
         arena.set_stats(b, ActorStats::from_full(2, 2, 2, 0, 4));
         let mut seed = 7;
-        let mut state = CombatState::from_participants(vec![a, b], &arena, 10, 10, &mut seed, false);
+        let mut state = CombatState::from_participants(
+            vec![a, b],
+            &arena,
+            10,
+            10,
+            &mut seed,
+            EncounterProfile {
+                ruleset: CombatRuleset::Lethal,
+                outcome_policy: EncounterOutcomePolicy::None,
+            },
+        );
         state.turn_index = state
             .initiative
             .iter()

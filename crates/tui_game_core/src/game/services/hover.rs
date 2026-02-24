@@ -77,7 +77,7 @@ pub fn exploration_hover_lines(game: &Game) -> Vec<String> {
                     } else {
                         out.push("Closer to open".into());
                     }
-                } else if bp.hostile {
+                } else if crate::game::services::relation::is_hostile_to_player(game, eid) {
                     if chebyshev(ppos, wp) <= 1 {
                         out.push("LMB: attack".into());
                     } else {
@@ -138,7 +138,10 @@ pub fn combat_hover_lines(game: &Game, state: &CombatState) -> Vec<String> {
     }
 
     if player_turn {
-        if state.friendly {
+        if matches!(
+            state.profile.ruleset,
+            crate::combat::CombatRuleset::NonLethalSpar | crate::combat::CombatRuleset::NonLethalBrawl
+        ) {
             out.push("LMB: engage trainer".into());
         } else {
             out.push("LMB: hostile / move".into());

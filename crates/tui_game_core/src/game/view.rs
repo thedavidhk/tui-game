@@ -120,7 +120,10 @@ pub(crate) fn compose(
             .map(|s| format!("HP: {}/{}  AP: {}", s.hp, s.max_hp, c.current_ap().unwrap_or(0)))
             .unwrap_or_else(|| "HP: n/a  AP: n/a".into());
         let lines = vec![
-            if c.friendly {
+            if matches!(
+                c.profile.ruleset,
+                crate::combat::CombatRuleset::NonLethalSpar | crate::combat::CombatRuleset::NonLethalBrawl
+            ) {
                 "Combat (training)".into()
             } else {
                 "Combat".into()

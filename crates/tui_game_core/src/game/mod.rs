@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::ai::combat::ChaseNearestPolicy;
 use crate::ai::{AiIntent, CombatAiCtx, CombatDecisionPolicy};
 use crate::combat::{
-    CombatAction, CombatState, ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
+    CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy, EncounterProfile,
+    ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
 };
-use crate::content::{ContentPack, DemoQuestPhase, DialogueAction, QuestJournalStatus};
+use crate::content::{ContentPack, DemoQuestPhase, DialogueAction, QuestJournalStatus, Relation};
 use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, MouseCell};
@@ -34,6 +35,11 @@ const FOW_RADIUS: i32 = 8;
 struct PendingForcedDialogue {
     npc: EntityId,
     node_id: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingPlayerAction {
+    command: services::actions::ActionCommand,
 }
 
 fn explored_muted_fg(base: Color) -> Color {
@@ -137,6 +143,7 @@ pub struct Game {
     /// Last mouse cell over the world view during combat (for hover text).
     pub combat_hover_cell: Option<MouseCell>,
     pending_forced_dialogue: Option<PendingForcedDialogue>,
+    pending_player_action: Option<PendingPlayerAction>,
 }
 
 impl Game {
@@ -254,6 +261,7 @@ impl Game {
             exploration_hover_cell: None,
             combat_hover_cell: None,
             pending_forced_dialogue: None,
+            pending_player_action: None,
         };
         game.refresh_fow();
         Ok(game)
@@ -433,6 +441,7 @@ impl Game {
         self.player_walk_path.clear();
         self.player_walk_goal = None;
         self.player_walk_tick_cooldown = 0;
+        self.pending_player_action = None;
     }
 
     pub(crate) fn screen_cell_to_world(&self, cell: MouseCell) -> Option<GridPos> {
@@ -572,6 +581,7 @@ impl Game {
         }
         self.step_npc_combat_ai();
         self.step_player_walk();
+        self.pump_pending_player_action();
         self.pump_pending_forced_dialogue();
     }
 
@@ -590,9 +600,7 @@ impl Game {
         let Some(pid) = self.player_id() else {
             return;
         };
-        let Some(trainer) = state.initiative.iter().copied().find(|id| {
-            self.entities.npc_kind.get(id.0 as usize).and_then(|k| k.as_deref()) == Some("trainer")
-        }) else {
+        let EncounterOutcomePolicy::TrainingSpar { trainer } = state.profile.outcome_policy else {
             return;
         };
         if trainer == pid {
@@ -687,6 +695,147 @@ impl Game {
         modes::exploration::handle(self, ev);
     }
 
+    fn relation_to_player(&self, target: EntityId) -> Relation {
+        services::relation::relation_to_player(self, target)
+    }
+
+    fn action_target_pos(&self, command: services::actions::ActionCommand) -> Option<GridPos> {
+        match command {
+            services::actions::ActionCommand::Talk { target }
+            | services::actions::ActionCommand::OpenContainer { target }
+            | services::actions::ActionCommand::EngageCombat { target, .. }
+            | services::actions::ActionCommand::Attack { target } => self.entities.pos(target),
+            services::actions::ActionCommand::MoveTo { target } => Some(target),
+        }
+    }
+
+    fn action_requirements_met(
+        &self,
+        actor: EntityId,
+        command: services::actions::ActionCommand,
+    ) -> bool {
+        let req = services::actions::requirements_for(command);
+        if !matches!(req.target, services::actions::TargetRequirement::None) {
+            match command {
+                services::actions::ActionCommand::Talk { target }
+                | services::actions::ActionCommand::OpenContainer { target }
+                | services::actions::ActionCommand::EngageCombat { target, .. }
+                | services::actions::ActionCommand::Attack { target } => match req.target {
+                    services::actions::TargetRequirement::EntityAlive => {
+                        if !self.entities.is_alive(target) {
+                            return false;
+                        }
+                    }
+                    services::actions::TargetRequirement::Container => {
+                        if !self
+                            .entities
+                            .is_container
+                            .get(target.0 as usize)
+                            .copied()
+                            .unwrap_or(false)
+                        {
+                            return false;
+                        }
+                    }
+                    services::actions::TargetRequirement::HostileToPlayer => {
+                        if !services::relation::is_hostile_to_player(self, target) {
+                            return false;
+                        }
+                    }
+                    services::actions::TargetRequirement::None => {}
+                },
+                services::actions::ActionCommand::MoveTo { .. } => {}
+            }
+        }
+        let Some(actor_pos) = self.entities.pos(actor) else {
+            return false;
+        };
+        match req.range {
+            services::actions::RangeRequirement::Adjacent => self
+                .action_target_pos(command)
+                .is_some_and(|target| services::hover::chebyshev(actor_pos, target) <= 1),
+            services::actions::RangeRequirement::TalkRadius => self
+                .action_target_pos(command)
+                .is_some_and(|target| {
+                    services::hover::manhattan(actor_pos, target) <= services::hover::TALK_RANGE_MANHATTAN
+                }),
+            services::actions::RangeRequirement::OccupyTile => self
+                .action_target_pos(command)
+                .is_some_and(|target| actor_pos == target),
+        }
+    }
+
+    fn execute_player_action_immediate(
+        &mut self,
+        actor: EntityId,
+        command: services::actions::ActionCommand,
+    ) -> bool {
+        if !self.action_requirements_met(actor, command) {
+            return false;
+        }
+        match command {
+            services::actions::ActionCommand::Talk { target } => {
+                self.start_dialogue(target);
+                true
+            }
+            services::actions::ActionCommand::OpenContainer { target } => {
+                self.start_item_transfer(target);
+                true
+            }
+            services::actions::ActionCommand::EngageCombat { target, profile } => {
+                self.start_combat_encounter(
+                    vec![actor, target],
+                    profile,
+                    "Combat started. x attack, WASD move, Tab pass, f flee.",
+                );
+                true
+            }
+            services::actions::ActionCommand::MoveTo { target } => {
+                self.try_set_player_walk_goal(target);
+                true
+            }
+            services::actions::ActionCommand::Attack { .. } => false,
+        }
+    }
+
+    fn queue_or_execute_player_action(
+        &mut self,
+        request: services::actions::ActionRequest,
+    ) -> services::actions::ActionStopReason {
+        if self.execute_player_action_immediate(request.actor, request.command) {
+            self.pending_player_action = None;
+            return services::actions::ActionStopReason::ReachedRange;
+        }
+        let Some(goal) = self.action_target_pos(request.command) else {
+            return services::actions::ActionStopReason::Interrupted;
+        };
+        self.try_set_player_walk_goal(goal);
+        if self.player_walk_path.is_empty() {
+            return services::actions::ActionStopReason::NoPath;
+        }
+        self.pending_player_action = Some(PendingPlayerAction {
+            command: request.command,
+        });
+        services::actions::ActionStopReason::Blocked
+    }
+
+    fn pump_pending_player_action(&mut self) {
+        if !matches!(self.modes.current(), Some(GameMode::Exploration)) {
+            self.pending_player_action = None;
+            return;
+        }
+        let Some(pending) = self.pending_player_action else {
+            return;
+        };
+        let Some(pid) = self.player_id() else {
+            self.pending_player_action = None;
+            return;
+        };
+        if self.execute_player_action_immediate(pid, pending.command) {
+            self.pending_player_action = None;
+        }
+    }
+
     pub(crate) fn try_interact(&mut self) {
         let Some(pid) = self.player_id() else {
             return;
@@ -695,9 +844,19 @@ impl Game {
             return;
         };
         match services::interaction::probe_interaction(&self.entities, p, &self.content) {
-            services::interaction::InteractionOutcome::Dialogue(occ) => self.start_dialogue(occ),
+            services::interaction::InteractionOutcome::Dialogue(occ) => {
+                let _ = self.queue_or_execute_player_action(services::actions::ActionRequest {
+                    initiator: services::actions::ActionInitiator::Player,
+                    actor: pid,
+                    command: services::actions::ActionCommand::Talk { target: occ },
+                });
+            }
             services::interaction::InteractionOutcome::Container(chest) => {
-                self.start_item_transfer(chest);
+                let _ = self.queue_or_execute_player_action(services::actions::ActionRequest {
+                    initiator: services::actions::ActionInitiator::Player,
+                    actor: pid,
+                    command: services::actions::ActionCommand::OpenContainer { target: chest },
+                });
             }
             services::interaction::InteractionOutcome::None => {
                 self.log.push("Nothing to interact with nearby.".into());
@@ -715,18 +874,17 @@ impl Game {
         let Some(pid) = self.player_id() else {
             return;
         };
-        let Some(pp) = self.entities.pos(pid) else {
-            return;
-        };
 
         for &eid in &self.entities.occupants_at(wp.x, wp.y) {
             if eid == pid {
                 continue;
             }
             if self.entities.is_container[eid.0 as usize] {
-                if services::hover::chebyshev(pp, wp) <= 1 {
-                    self.start_item_transfer(eid);
-                }
+                let _ = self.queue_or_execute_player_action(services::actions::ActionRequest {
+                    initiator: services::actions::ActionInitiator::Player,
+                    actor: pid,
+                    command: services::actions::ActionCommand::OpenContainer { target: eid },
+                });
                 return;
             }
         }
@@ -743,21 +901,34 @@ impl Game {
         let Some(bp) = self.content.blueprint(kind) else {
             return;
         };
-        if bp.hostile {
-            if services::hover::chebyshev(pp, wp) <= 1 {
-                self.start_combat_encounter(
-                    vec![pid, target],
-                    false,
-                    "Combat started. x attack, WASD move, Tab pass, f flee.",
-                );
-            }
+        if matches!(self.relation_to_player(target), Relation::Hostile) {
+            let _ = self.queue_or_execute_player_action(services::actions::ActionRequest {
+                initiator: services::actions::ActionInitiator::Player,
+                actor: pid,
+                command: services::actions::ActionCommand::EngageCombat {
+                    target,
+                    profile: EncounterProfile {
+                        ruleset: CombatRuleset::Lethal,
+                        outcome_policy: EncounterOutcomePolicy::None,
+                    },
+                },
+            });
             return;
         }
-        if bp.dialogue_id.is_some()
-            && services::hover::manhattan(pp, wp) <= services::hover::TALK_RANGE_MANHATTAN
-        {
-            self.start_dialogue(target);
+        if bp.dialogue_id.is_some() {
+            let _ = self.queue_or_execute_player_action(services::actions::ActionRequest {
+                initiator: services::actions::ActionInitiator::Player,
+                actor: pid,
+                command: services::actions::ActionCommand::Talk { target },
+            });
+            return;
         }
+
+        let _ = self.queue_or_execute_player_action(services::actions::ActionRequest {
+            initiator: services::actions::ActionInitiator::Player,
+            actor: pid,
+            command: services::actions::ActionCommand::MoveTo { target: wp },
+        });
     }
 
     pub(crate) fn try_start_combat(&mut self) {
@@ -781,14 +952,10 @@ impl Game {
                 if occ == pid {
                     continue;
                 }
-                let Some(kind) = self.entities.npc_kind[occ.0 as usize].as_deref() else {
+                if self.entities.npc_kind[occ.0 as usize].is_none() {
                     continue;
-                };
-                if self
-                    .content
-                    .blueprint(kind)
-                    .is_some_and(|b| b.hostile)
-                {
+                }
+                if matches!(self.relation_to_player(occ), Relation::Hostile) {
                     target = Some(occ);
                     break;
                 }
@@ -798,25 +965,33 @@ impl Game {
             }
         }
         let Some(t) = target else {
-            self.log
-                .push("No hostile target adjacent. (Friendly NPCs want dialogue.)".into());
+            self.log.push("No hostile target nearby.".into());
             return;
         };
-        self.start_combat_encounter(
-            vec![pid, t],
-            false,
-            "Combat started. x attack, WASD move, Tab pass, f flee.",
-        );
+        let _ = self.queue_or_execute_player_action(services::actions::ActionRequest {
+            initiator: services::actions::ActionInitiator::Player,
+            actor: pid,
+            command: services::actions::ActionCommand::EngageCombat {
+                target: t,
+                profile: EncounterProfile {
+                    ruleset: CombatRuleset::Lethal,
+                    outcome_policy: EncounterOutcomePolicy::None,
+                },
+            },
+        });
     }
 
-    fn start_friendly_training_combat(&mut self, trainer: EntityId) {
+    fn start_training_spar(&mut self, trainer: EntityId) {
         let Some(pid) = self.player_id() else {
             return;
         };
         let participants = vec![pid, trainer];
         self.start_combat_encounter(
             participants,
-            true,
+            EncounterProfile {
+                ruleset: CombatRuleset::NonLethalSpar,
+                outcome_policy: EncounterOutcomePolicy::TrainingSpar { trainer },
+            },
             "Training spar started. Non-lethal rules are active.",
         );
     }
@@ -824,7 +999,7 @@ impl Game {
     fn start_combat_encounter(
         &mut self,
         participants: Vec<EntityId>,
-        friendly: bool,
+        profile: EncounterProfile,
         message: &str,
     ) {
         if participants.len() < 2 {
@@ -838,7 +1013,7 @@ impl Game {
             self.map.width,
             self.map.height,
             &mut self.rng_seed,
-            friendly,
+            profile,
         );
         self.modes.push(GameMode::Combat(state));
         self.log.push(message.into());
@@ -926,13 +1101,13 @@ impl Game {
         }
         let trigger_training_spar = matches!(
             choice.action,
-            Some(DialogueAction::StartFriendlyTrainingCombat)
+            Some(DialogueAction::StartTrainingSpar)
         );
         let next = choice.next;
         if next == exit_sentinel {
             let _ = self.modes.pop();
             if trigger_training_spar {
-                self.start_friendly_training_combat(npc_entity);
+                self.start_training_spar(npc_entity);
             }
             return;
         }
@@ -948,7 +1123,7 @@ impl Game {
         self.apply_dialogue_node_effects(tree, next);
         if trigger_training_spar {
             let _ = self.modes.pop();
-            self.start_friendly_training_combat(npc_entity);
+            self.start_training_spar(npc_entity);
         }
     }
 
@@ -1052,6 +1227,25 @@ impl Game {
         self.apply_combat_report(state, report);
     }
 
+    fn execute_combat_action_command(
+        &mut self,
+        state: &mut CombatState,
+        command: services::actions::ActionCommand,
+    ) {
+        match command {
+            services::actions::ActionCommand::Attack { target } => {
+                self.combat_try_attack_target(state, target);
+            }
+            services::actions::ActionCommand::MoveTo { target } => {
+                let Some(pid) = self.player_id() else {
+                    return;
+                };
+                let _ = self.combat_march_toward(state, pid, target, None, 64);
+            }
+            _ => {}
+        }
+    }
+
     /// March the current player toward `goal`, optionally stopping when Chebyshev-adjacent to
     /// `stop_when_adjacent_to`. Returns `true` if combat ended mid-march.
     fn combat_march_toward(
@@ -1120,16 +1314,6 @@ impl Game {
         false
     }
 
-    fn find_trainer_in_combat(&self, state: &CombatState) -> Option<EntityId> {
-        state.initiative.iter().copied().find(|id| {
-            self.entities
-                .npc_kind
-                .get(id.0 as usize)
-                .and_then(|k| k.as_deref())
-                == Some("trainer")
-        })
-    }
-
     pub(crate) fn combat_rmb_march_toward(&mut self, state: &mut CombatState, cell: MouseCell) {
         let Some(pid) = self.player_id() else {
             return;
@@ -1140,7 +1324,10 @@ impl Game {
         let Some(goal) = self.screen_cell_to_world(cell) else {
             return;
         };
-        let _ = self.combat_march_toward(state, pid, goal, None, 64);
+        self.execute_combat_action_command(
+            state,
+            services::actions::ActionCommand::MoveTo { target: goal },
+        );
     }
 
     pub(crate) fn combat_try_primary_click(&mut self, state: &mut CombatState, cell: MouseCell) {
@@ -1154,14 +1341,11 @@ impl Game {
             return;
         };
 
-        if state.friendly {
-            let Some(tid) = self.find_trainer_in_combat(state) else {
+        if let EncounterOutcomePolicy::TrainingSpar { trainer: tid } = state.profile.outcome_policy {
+            let Some(trainer_pos) = self.entities.pos(tid) else {
                 return;
             };
-            let Some(goal) = self.entities.pos(tid) else {
-                return;
-            };
-            if self.combat_march_toward(state, pid, goal, Some(tid), 64) {
+            if self.combat_march_toward(state, pid, trainer_pos, Some(tid), 64) {
                 return;
             }
             if !matches!(self.modes.current(), Some(GameMode::Combat(_))) {
@@ -1179,7 +1363,10 @@ impl Game {
             if services::hover::chebyshev(pp, tp) <= 1
                 && state.current_ap_units().unwrap_or(0) >= ATTACK_COST_UNITS
             {
-                self.combat_try_attack_target(state, tid);
+                self.execute_combat_action_command(
+                    state,
+                    services::actions::ActionCommand::Attack { target: tid },
+                );
             }
             return;
         }
@@ -1188,15 +1375,7 @@ impl Game {
             if eid == pid || !state.contains_actor(eid) {
                 continue;
             }
-            let Some(kind) = self.entities.npc_kind.get(eid.0 as usize).and_then(|k| k.as_deref())
-            else {
-                continue;
-            };
-            if !self
-                .content
-                .blueprint(kind)
-                .is_some_and(|b| b.hostile)
-            {
+            if !self.entities.is_alive(eid) {
                 continue;
             }
             let Some(epos) = self.entities.pos(eid) else {
@@ -1220,12 +1399,18 @@ impl Game {
             if services::hover::chebyshev(pp, ep) <= 1
                 && state.current_ap_units().unwrap_or(0) >= ATTACK_COST_UNITS
             {
-                self.combat_try_attack_target(state, eid);
+                self.execute_combat_action_command(
+                    state,
+                    services::actions::ActionCommand::Attack { target: eid },
+                );
             }
             return;
         }
 
-        let _ = self.combat_march_toward(state, pid, wp, None, 64);
+        self.execute_combat_action_command(
+            state,
+            services::actions::ActionCommand::MoveTo { target: wp },
+        );
     }
 
     fn apply_combat_report(
@@ -1244,7 +1429,10 @@ impl Game {
     fn finish_combat(&mut self, state: &CombatState) {
         self.npc_combat_ai_tick_cooldown = 0;
         self.combat_hover_cell = None;
-        if state.friendly {
+        if matches!(
+            state.profile.ruleset,
+            CombatRuleset::NonLethalSpar | CombatRuleset::NonLethalBrawl
+        ) {
             self.schedule_training_spar_epilogue(state);
             for id in &state.initiative {
                 if let Some(stats) = self.entities.stats_mut(*id) {
@@ -1642,7 +1830,7 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::{Game, GameMode};
-    use crate::combat::CombatState;
+    use crate::combat::{CombatRuleset, CombatState, EncounterOutcomePolicy, EncounterProfile};
     use crate::entity::GridPos;
     use crate::input::{InputBatch, InputEvent, Key, KeyChord};
 
@@ -1680,7 +1868,7 @@ mod tests {
     }
 
     #[test]
-    fn trainer_dialogue_can_start_friendly_combat() {
+    fn trainer_dialogue_can_start_training_spar() {
         let mut game = Game::new_bootstrapped(80, 30);
         game.modes.stack = vec![GameMode::Exploration];
         let trainer = game
@@ -1707,11 +1895,11 @@ mod tests {
         let Some(GameMode::Combat(cs)) = game.modes.current().cloned() else {
             panic!("trainer spar should enter combat mode");
         };
-        assert!(cs.friendly);
+        assert!(matches!(cs.profile.ruleset, CombatRuleset::NonLethalSpar));
     }
 
     #[test]
-    fn friendly_combat_restores_hp_on_end() {
+    fn training_spar_restores_hp_on_end() {
         let mut game = Game::new_bootstrapped(80, 30);
         game.modes.stack = vec![GameMode::Exploration];
         let trainer = game
@@ -1722,7 +1910,7 @@ mod tests {
             .find(|(_, kind)| kind.as_deref() == Some("trainer"))
             .map(|(idx, _)| crate::entity::EntityId(idx as u32))
             .expect("trainer entity should exist in demo level");
-        game.start_friendly_training_combat(trainer);
+        game.start_training_spar(trainer);
         let Some(GameMode::Combat(cs)) = game.modes.current().cloned() else {
             panic!("combat mode expected");
         };
@@ -1778,7 +1966,10 @@ mod tests {
             game.map.width,
             game.map.height,
             &mut rng,
-            false,
+            EncounterProfile {
+                ruleset: CombatRuleset::Lethal,
+                outcome_policy: EncounterOutcomePolicy::None,
+            },
         );
         cs.turn_index = cs
             .initiative
@@ -1816,7 +2007,10 @@ mod tests {
             game.map.width,
             game.map.height,
             &mut rng,
-            false,
+            EncounterProfile {
+                ruleset: CombatRuleset::Lethal,
+                outcome_policy: EncounterOutcomePolicy::None,
+            },
         );
         let trainer_turn = cs
             .initiative
@@ -1864,7 +2058,10 @@ mod tests {
             game.map.width,
             game.map.height,
             &mut rng,
-            false,
+            EncounterProfile {
+                ruleset: CombatRuleset::Lethal,
+                outcome_policy: EncounterOutcomePolicy::None,
+            },
         );
         cs.turn_index = cs
             .initiative

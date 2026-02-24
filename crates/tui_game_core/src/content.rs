@@ -82,7 +82,23 @@ pub enum Effect {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DialogueAction {
-    StartFriendlyTrainingCombat,
+    StartTrainingSpar,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Disposition {
+    Friendly,
+    #[default]
+    Neutral,
+    Hostile,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Relation {
+    Allied,
+    Friendly,
+    Neutral,
+    Hostile,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -144,12 +160,14 @@ pub struct EntityBlueprint {
     pub world_item: Option<&'static str>,
     /// Entity opens `ItemTransfer` when interacted adjacent.
     pub is_container: bool,
+    /// Static social grouping; runtime systems can override relation dynamically.
+    pub faction_id: &'static str,
+    /// Default relation toward the player before quest/zone modifiers.
+    pub disposition_to_player: Disposition,
     pub base_max_hp: u16,
     pub base_strength: u16,
     pub base_agility: u16,
     pub base_speed: u16,
-    /// When true, primary click / combat key resolve to a fight instead of dialogue.
-    pub hostile: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -383,8 +401,8 @@ mod validate_tests {
     use std::collections::HashMap;
 
     use super::{
-        Condition, ContentPack, DialogueChoice, DialogueNode, DialogueTree, Effect, EntityBlueprint,
-        QuestDef,
+        Condition, ContentPack, Disposition, DialogueChoice, DialogueNode, DialogueTree, Effect,
+        EntityBlueprint, QuestDef,
     };
     use crate::item::{ItemCategory, ItemDef};
 
@@ -439,11 +457,12 @@ mod validate_tests {
             dialogue_id: None,
             world_item: Some("nope"),
             is_container: false,
+            faction_id: "test",
+            disposition_to_player: Disposition::Neutral,
             base_max_hp: 1,
             base_strength: 1,
             base_agility: 1,
             base_speed: 1,
-            hostile: false,
         }];
         static IDS: [ItemDef; 1] = [ItemDef {
             id: "a",

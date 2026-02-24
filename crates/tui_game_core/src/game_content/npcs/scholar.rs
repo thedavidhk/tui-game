@@ -1,4 +1,4 @@
-use crate::content::{Condition, Effect, EntityBlueprint, QuestJournalStatus};
+use crate::content::{Condition, Disposition, Effect, EntityBlueprint, QuestJournalStatus};
 use crate::game_content::{dialogue_tree, effects, quests, requires};
 use crate::narrative::{NarrativeApplyError, NarrativeState};
 
@@ -11,11 +11,12 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     dialogue_id: Some("scholar"),
     world_item: None,
     is_container: false,
+    faction_id: "town",
+    disposition_to_player: Disposition::Neutral,
     base_max_hp: 14,
     base_strength: 4,
     base_agility: 6,
     base_speed: 5,
-    hostile: false,
 };
 
 pub fn on_item_picked(

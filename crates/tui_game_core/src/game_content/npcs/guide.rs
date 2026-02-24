@@ -1,4 +1,6 @@
-use crate::content::{Condition, DemoQuestPhase, Effect, EntityBlueprint, QuestJournalStatus};
+use crate::content::{
+    Condition, DemoQuestPhase, Disposition, Effect, EntityBlueprint, QuestJournalStatus,
+};
 use crate::game_content::{dialogue_tree, effects, quests, requires};
 
 pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
@@ -10,11 +12,12 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     dialogue_id: Some("guide"),
     world_item: None,
     is_container: false,
+    faction_id: "town",
+    disposition_to_player: Disposition::Friendly,
     base_max_hp: 16,
     base_strength: 5,
     base_agility: 5,
     base_speed: 5,
-    hostile: false,
 };
 
 dialogue_tree! {

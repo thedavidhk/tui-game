@@ -1,4 +1,4 @@
-use crate::content::EntityBlueprint;
+use crate::content::{Disposition, EntityBlueprint};
 
 pub const BLUEPRINT_PROP: EntityBlueprint = EntityBlueprint {
     kind: "prop",
@@ -9,11 +9,12 @@ pub const BLUEPRINT_PROP: EntityBlueprint = EntityBlueprint {
     dialogue_id: None,
     world_item: None,
     is_container: false,
+    faction_id: "world",
+    disposition_to_player: Disposition::Neutral,
     base_max_hp: 1,
     base_strength: 1,
     base_agility: 1,
     base_speed: 1,
-    hostile: false,
 };
 
 pub const BLUEPRINT_HEALTH_TONIC_DROP: EntityBlueprint = EntityBlueprint {
@@ -25,11 +26,12 @@ pub const BLUEPRINT_HEALTH_TONIC_DROP: EntityBlueprint = EntityBlueprint {
     dialogue_id: None,
     world_item: Some("health_tonic"),
     is_container: false,
+    faction_id: "world",
+    disposition_to_player: Disposition::Neutral,
     base_max_hp: 1,
     base_strength: 1,
     base_agility: 1,
     base_speed: 1,
-    hostile: false,
 };
 
 pub const BLUEPRINT_BRASS_RING_DROP: EntityBlueprint = EntityBlueprint {
@@ -41,11 +43,12 @@ pub const BLUEPRINT_BRASS_RING_DROP: EntityBlueprint = EntityBlueprint {
     dialogue_id: None,
     world_item: Some("brass_ring"),
     is_container: false,
+    faction_id: "world",
+    disposition_to_player: Disposition::Neutral,
     base_max_hp: 1,
     base_strength: 1,
     base_agility: 1,
     base_speed: 1,
-    hostile: false,
 };
 
 pub const BLUEPRINT_WOODEN_CHEST: EntityBlueprint = EntityBlueprint {
@@ -57,11 +60,12 @@ pub const BLUEPRINT_WOODEN_CHEST: EntityBlueprint = EntityBlueprint {
     dialogue_id: None,
     world_item: None,
     is_container: true,
+    faction_id: "world",
+    disposition_to_player: Disposition::Neutral,
     base_max_hp: 20,
     base_strength: 1,
     base_agility: 1,
     base_speed: 1,
-    hostile: false,
 };
 
 pub static ENTITY_BLUEPRINTS: &[EntityBlueprint] = &[

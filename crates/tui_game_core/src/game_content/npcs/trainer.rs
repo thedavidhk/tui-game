@@ -1,4 +1,4 @@
-use crate::content::{DialogueAction, EntityBlueprint};
+use crate::content::{DialogueAction, Disposition, EntityBlueprint};
 use crate::game_content::{dialogue_tree, effects, requires};
 
 pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
@@ -10,11 +10,12 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     dialogue_id: Some("trainer"),
     world_item: None,
     is_container: false,
+    faction_id: "town",
+    disposition_to_player: Disposition::Friendly,
     base_max_hp: 22,
     base_strength: 7,
     base_agility: 6,
     base_speed: 7,
-    hostile: false,
 };
 
 dialogue_tree! {
@@ -45,7 +46,7 @@ dialogue_tree! {
                 {
                     label: "Let's spar.",
                     next: EXIT,
-                    action: DialogueAction::StartFriendlyTrainingCombat,
+                    action: DialogueAction::StartTrainingSpar,
                     requires: requires![],
                     effects: effects![],
                 },
