@@ -2,6 +2,7 @@ use crate::content::{
     Condition, DemoQuestPhase, Disposition, Effect, EntityBlueprint, QuestJournalStatus,
 };
 use crate::game_content::{dialogue_tree, effects, quests, requires};
+use crate::narrative::{NarrativeApplyError, NarrativeState};
 
 pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "guide",
@@ -19,6 +20,23 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     base_agility: 5,
     base_speed: 5,
 };
+
+pub fn on_item_picked(
+    item_id: &str,
+    narrative: &mut NarrativeState,
+    _log: &mut Vec<String>,
+) -> Result<(), NarrativeApplyError> {
+    if item_id != "cellar_key" {
+        return Ok(());
+    }
+    match narrative.quests {
+        DemoQuestPhase::ReturnedKey | DemoQuestPhase::Done => Ok(()),
+        _ => {
+            narrative.quests = DemoQuestPhase::HasCellarKey;
+            Ok(())
+        }
+    }
+}
 
 dialogue_tree! {
     TREE_GUIDE, "guide", {

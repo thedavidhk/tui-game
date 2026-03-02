@@ -1,8 +1,8 @@
 //! Static narrative and entity definitions for this game.
 //! Keep [`crate::content`] free of game-specific tables so validation and pack shape stay reusable.
 
-use crate::content::{ContentPack, DialogueNode};
-use crate::narrative::{NarrativeApplyError, NarrativeState};
+use crate::content::{ContentPack, ContentRuntimeHooks, DialogueNode, DialogueTree};
+use crate::narrative::NarrativeState;
 
 mod blueprints;
 mod items;
@@ -22,10 +22,51 @@ pub fn embedded_demo_level() -> crate::level::LevelFile {
         .expect("embedded demo_level.ron must parse; fix the RON or schema")
 }
 
-#[must_use]
-pub fn resolve_dialogue_text(node: &DialogueNode, narrative: &NarrativeState) -> String {
-    node.text_fn.map_or_else(|| node.text.to_string(), |f| f(narrative))
+#[derive(Debug)]
+struct GameContentRuntimeHooks;
+
+impl ContentRuntimeHooks for GameContentRuntimeHooks {
+    fn resolve_dialogue_text(&self, node: &DialogueNode, narrative: &NarrativeState) -> String {
+        node.text_fn.map_or_else(|| node.text.to_string(), |f| f(narrative))
+    }
+
+    fn dialogue_start_node(
+        &self,
+        dialogue_id: &str,
+        tree: &'static DialogueTree,
+        narrative: &NarrativeState,
+    ) -> usize {
+        npcs::dialogue_start_node(dialogue_id, tree, narrative)
+    }
+
+    fn hud_quest_status_lines(&self, narrative: &NarrativeState) -> Vec<String> {
+        npcs::hud_quest_status_lines(narrative)
+    }
+
+    fn training_spar_epilogue_node(&self, player_hp: u16, trainer_hp: u16) -> &'static str {
+        npcs::training_spar_epilogue_node(player_hp, trainer_hp)
+    }
+
+    fn on_item_picked(
+        &self,
+        item_id: &str,
+        narrative: &mut NarrativeState,
+        log: &mut Vec<String>,
+    ) -> Result<(), crate::narrative::NarrativeApplyError> {
+        npcs::on_item_picked(item_id, narrative, log)
+    }
+
+    fn on_region_enter(
+        &self,
+        region_id: &str,
+        narrative: &mut NarrativeState,
+        log: &mut Vec<String>,
+    ) -> Result<(), crate::narrative::NarrativeApplyError> {
+        npcs::on_region_enter(region_id, narrative, log)
+    }
 }
+
+static GAME_CONTENT_RUNTIME_HOOKS: GameContentRuntimeHooks = GameContentRuntimeHooks;
 
 /// The default [`ContentPack`] for this workspace (game + level editor).
 #[must_use]
@@ -44,27 +85,12 @@ pub fn content_pack() -> ContentPack {
     let dialogues = npcs::dialogue_map();
     ContentPack {
         dialogues,
-        guide_dialogue: npcs::guide_dialogue(),
+        default_dialogue: npcs::default_dialogue(),
+        runtime_hooks: &GAME_CONTENT_RUNTIME_HOOKS,
         quest_defs: quests::QUEST_DEFS,
         entity_blueprints: entity_blueprints(),
         item_defs: items::ITEM_DEFS,
     }
-}
-
-pub fn on_item_picked(
-    item_id: &str,
-    narrative: &mut NarrativeState,
-    log: &mut Vec<String>,
-) -> Result<(), NarrativeApplyError> {
-    npcs::on_item_picked(item_id, narrative, log)
-}
-
-pub fn on_region_enter(
-    region_id: &str,
-    narrative: &mut NarrativeState,
-    log: &mut Vec<String>,
-) -> Result<(), NarrativeApplyError> {
-    npcs::on_region_enter(region_id, narrative, log)
 }
 
 #[cfg(test)]

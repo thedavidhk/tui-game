@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::entity::ActorStats;
 use crate::item::{ItemCatalog, ItemDef};
 use crate::level::LevelFile;
+use crate::narrative::{NarrativeApplyError, NarrativeState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NpcId(pub &'static str);
@@ -141,6 +142,54 @@ impl DialogueTree {
     }
 }
 
+pub trait ContentRuntimeHooks: Send + Sync + std::fmt::Debug {
+    fn resolve_dialogue_text(&self, node: &DialogueNode, narrative: &NarrativeState) -> String {
+        node.text_fn.map_or_else(|| node.text.to_string(), |f| f(narrative))
+    }
+
+    fn dialogue_start_node(
+        &self,
+        _dialogue_id: &str,
+        _tree: &'static DialogueTree,
+        _narrative: &NarrativeState,
+    ) -> usize {
+        0
+    }
+
+    fn hud_quest_status_lines(&self, _narrative: &NarrativeState) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn training_spar_epilogue_node(&self, _player_hp: u16, _trainer_hp: u16) -> &'static str {
+        "post_spar_even"
+    }
+
+    fn on_item_picked(
+        &self,
+        _item_id: &str,
+        _narrative: &mut NarrativeState,
+        _log: &mut Vec<String>,
+    ) -> Result<(), NarrativeApplyError> {
+        Ok(())
+    }
+
+    fn on_region_enter(
+        &self,
+        _region_id: &str,
+        _narrative: &mut NarrativeState,
+        _log: &mut Vec<String>,
+    ) -> Result<(), NarrativeApplyError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct NoopContentRuntimeHooks;
+
+impl ContentRuntimeHooks for NoopContentRuntimeHooks {}
+
+pub static NOOP_CONTENT_RUNTIME_HOOKS: NoopContentRuntimeHooks = NoopContentRuntimeHooks;
+
 /// Static definition for an entity type that may appear in [`LevelFile`](crate::level::LevelFile)
 /// spawns. Gameplay (dialogue graphs, quests) stays in Rust; levels store `kind` plus optional
 /// per-instance `glyph` / `name` overrides.
@@ -173,7 +222,8 @@ pub struct EntityBlueprint {
 #[derive(Clone, Debug)]
 pub struct ContentPack {
     pub dialogues: HashMap<&'static str, &'static DialogueTree>,
-    pub guide_dialogue: &'static DialogueTree,
+    pub default_dialogue: &'static DialogueTree,
+    pub runtime_hooks: &'static dyn ContentRuntimeHooks,
     pub quest_defs: &'static [QuestDef],
     pub entity_blueprints: &'static [EntityBlueprint],
     pub item_defs: &'static [ItemDef],
@@ -402,7 +452,7 @@ mod validate_tests {
 
     use super::{
         Condition, ContentPack, Disposition, DialogueChoice, DialogueNode, DialogueTree, Effect,
-        EntityBlueprint, QuestDef,
+        EntityBlueprint, NOOP_CONTENT_RUNTIME_HOOKS, QuestDef,
     };
     use crate::item::{ItemCategory, ItemDef};
 
@@ -435,7 +485,8 @@ mod validate_tests {
         dialogues.insert("bad", &BAD_TREE);
         let pack = ContentPack {
             dialogues,
-            guide_dialogue: &BAD_TREE,
+            default_dialogue: &BAD_TREE,
+            runtime_hooks: &NOOP_CONTENT_RUNTIME_HOOKS,
             quest_defs: &[],
             entity_blueprints: &[],
             item_defs: &[],
@@ -473,7 +524,8 @@ mod validate_tests {
         }];
         let pack = ContentPack {
             dialogues,
-            guide_dialogue: &BAD_TREE,
+            default_dialogue: &BAD_TREE,
+            runtime_hooks: &NOOP_CONTENT_RUNTIME_HOOKS,
             quest_defs: &[],
             entity_blueprints: &BP,
             item_defs: &IDS,
@@ -514,7 +566,8 @@ mod validate_tests {
         }];
         let pack = ContentPack {
             dialogues,
-            guide_dialogue: &T,
+            default_dialogue: &T,
+            runtime_hooks: &NOOP_CONTENT_RUNTIME_HOOKS,
             quest_defs: QUESTS,
             entity_blueprints: &[],
             item_defs: &[],
@@ -564,7 +617,8 @@ mod validate_tests {
         }];
         let pack = ContentPack {
             dialogues,
-            guide_dialogue: &GOOD_TREE,
+            default_dialogue: &GOOD_TREE,
+            runtime_hooks: &NOOP_CONTENT_RUNTIME_HOOKS,
             quest_defs: QUESTS,
             entity_blueprints: &[],
             item_defs: &IDS,

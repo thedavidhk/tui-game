@@ -65,3 +65,14 @@ pub const NPC_TRAINER: super::NpcSpec = super::NpcSpec {
     blueprint: BLUEPRINT,
     dialogue: &TREE_TRAINER,
 };
+
+#[must_use]
+pub fn spar_epilogue_node(player_hp: u16, trainer_hp: u16) -> &'static str {
+    if trainer_hp < player_hp {
+        "post_spar_yield"
+    } else if player_hp < trainer_hp {
+        "post_spar_help_up"
+    } else {
+        "post_spar_even"
+    }
+}

@@ -1,5 +1,4 @@
 use crate::game::{Game, GameMode};
-use crate::game_content;
 use crate::rect::Rect;
 use crate::render::FrameBuffer;
 use crate::ui::layout::FloatingPanelLayout;
@@ -21,7 +20,7 @@ pub(crate) fn compose(
         hud_rect.h.saturating_sub(2),
     );
     let mut lines = vec![format!("Mode: {}", game.mode_label())];
-    lines.extend(Game::quest_status_lines(&game.narrative));
+    lines.extend(game.content.runtime_hooks.hud_quest_status_lines(&game.narrative));
     lines.push(format!("Demo quest line: {:?}", game.narrative.quests));
     match game.modes.current() {
         Some(GameMode::Exploration) => {
@@ -84,11 +83,14 @@ pub(crate) fn compose(
             .dialogues
             .get(dialogue_id.as_str())
             .copied()
-            .unwrap_or(game.content.guide_dialogue);
+            .unwrap_or(game.content.default_dialogue);
         if let Some(node) = tree.nodes.get(node_index) {
             let visible = game.dialogue_visible_choice_indices(node);
             let visible_labels: Vec<&'static str> = visible.iter().map(|i| node.choices[*i].label).collect();
-            let node_text = game_content::resolve_dialogue_text(node, &game.narrative);
+            let node_text = game
+                .content
+                .runtime_hooks
+                .resolve_dialogue_text(node, &game.narrative);
             let speaker_name = game
                 .entities
                 .name

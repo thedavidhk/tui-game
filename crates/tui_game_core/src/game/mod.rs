@@ -14,7 +14,7 @@ use crate::combat::{
     CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy, EncounterProfile,
     ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
 };
-use crate::content::{ContentPack, DemoQuestPhase, DialogueAction, QuestJournalStatus, Relation};
+use crate::content::{ContentPack, DialogueAction, QuestJournalStatus, Relation};
 use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, MouseCell};
@@ -328,9 +328,11 @@ impl Game {
         self.entities.set_pos(pid, GridPos { x: nx, y: ny });
         self.try_pickup_ground_items(pid);
         if let Some(region_id) = self.maybe_region_id_for_pos(nx, ny) {
-            if let Err(e) =
-                game_content::on_region_enter(region_id, &mut self.narrative, &mut self.log)
-            {
+            if let Err(e) = self.content.runtime_hooks.on_region_enter(
+                region_id,
+                &mut self.narrative,
+                &mut self.log,
+            ) {
                 self.log.push(format!("Region hook failed: {e:?}"));
             }
         }
@@ -486,15 +488,11 @@ impl Game {
                 continue;
             };
             self.narrative.inventory.add(stack.id.clone(), stack.count);
-            if stack.id == "cellar_key" {
-                match self.narrative.quests {
-                    DemoQuestPhase::ReturnedKey | DemoQuestPhase::Done => {}
-                    _ => self.narrative.quests = DemoQuestPhase::HasCellarKey,
-                }
-            }
-            if let Err(e) =
-                game_content::on_item_picked(stack.id.as_str(), &mut self.narrative, &mut self.log)
-            {
+            if let Err(e) = self.content.runtime_hooks.on_item_picked(
+                stack.id.as_str(),
+                &mut self.narrative,
+                &mut self.log,
+            ) {
                 self.log.push(format!("Pickup hook failed: {e:?}"));
             }
             self.log
@@ -512,20 +510,11 @@ impl Game {
             .dialogues
             .get(kind.as_str())
             .copied()
-            .unwrap_or(self.content.guide_dialogue);
-        let start_node = if kind == "guide" && self.narrative.quests != DemoQuestPhase::NotStarted {
-            tree.node_index("hub").unwrap_or(0)
-        } else if self.narrative.has_seen_dialogue_intro(kind.as_str()) {
-            if kind == "guide" {
-                tree.node_index("welcome")
-                    .or_else(|| tree.node_index("hub"))
-                    .unwrap_or(0)
-            } else {
-                tree.node_index("hub").unwrap_or(0)
-            }
-        } else {
-            0
-        };
+            .unwrap_or(self.content.default_dialogue);
+        let start_node = self
+            .content
+            .runtime_hooks
+            .dialogue_start_node(kind.as_str(), tree, &self.narrative);
         self.push_dialogue_mode(npc, kind, start_node, tree);
     }
 
@@ -538,7 +527,7 @@ impl Game {
             .dialogues
             .get(kind.as_str())
             .copied()
-            .unwrap_or(self.content.guide_dialogue);
+            .unwrap_or(self.content.default_dialogue);
         let start_node = tree
             .node_index(node_id)
             .or_else(|| tree.node_index("hub"))
@@ -612,13 +601,10 @@ impl Game {
         let Some(ts) = self.entities.stats(trainer) else {
             return;
         };
-        let node_id = if ts.hp < ps.hp {
-            "post_spar_yield"
-        } else if ps.hp < ts.hp {
-            "post_spar_help_up"
-        } else {
-            "post_spar_even"
-        };
+        let node_id = self
+            .content
+            .runtime_hooks
+            .training_spar_epilogue_node(ps.hp, ts.hp);
         self.pending_forced_dialogue = Some(PendingForcedDialogue {
             npc: trainer,
             node_id: node_id.into(),
@@ -1450,35 +1436,6 @@ impl Game {
     pub(crate) fn finish_combat_player_quit(&mut self, state: &CombatState) {
         self.log.push("You leave the fight.".into());
         self.finish_combat(state);
-    }
-
-    fn quest_status_lines(narrative: &NarrativeState) -> Vec<String> {
-        fn qstage(map: &std::collections::HashMap<String, u32>, key: &str) -> u32 {
-            *map.get(key).unwrap_or(&0)
-        }
-        let gf = qstage(&narrative.quest_stages, "guide_fetch");
-        let guide = match gf {
-            0 => "Guide fetch: —",
-            1 => "Guide fetch: listened",
-            2 => "Guide fetch: hold key",
-            3 => "Guide fetch: returned ✓",
-            _ => "Guide fetch: ?",
-        };
-        let hd = qstage(&narrative.quest_stages, "healer_delivery");
-        let healer = match hd {
-            0 => "Healer tonic: —",
-            1 => "Healer tonic: pledged",
-            n if n >= 2 => "Healer tonic: delivered ✓",
-            _ => "Healer tonic: ?",
-        };
-        let sr = qstage(&narrative.quest_stages, "scholar_ring");
-        let scholar = match sr {
-            0 => "Scholar ring: —",
-            1 => "Scholar ring: clue heard",
-            n if n >= 3 => "Scholar ring: donated ✓",
-            _ => "Scholar ring: ?",
-        };
-        vec![guide.into(), healer.into(), scholar.into()]
     }
 
     pub fn compose(

@@ -16,7 +16,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
         .dialogues
         .get(dialogue_id.as_str())
         .copied()
-        .unwrap_or(game.content.guide_dialogue);
+        .unwrap_or(game.content.default_dialogue);
     let Some(node) = tree.nodes.get(node_index) else {
         let _ = game.modes.pop();
         return;
