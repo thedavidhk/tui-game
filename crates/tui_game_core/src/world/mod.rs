@@ -6,6 +6,6 @@ mod tiles;
 pub use fow::{compute_visible, merge_explored};
 pub use map::{MapGrid, TileTable};
 pub use path::{
-    plan_path, plan_path_player_fow, PathError, PathPlan,
+    first_step_on_line, plan_path, plan_path_player_fow, PathError, PathPlan,
 };
 pub use tiles::{TileDef, TileId};

@@ -58,6 +58,11 @@ pub fn plan_path_player_fow(
     )
 }
 
+#[must_use]
+pub fn first_step_on_line(from: GridPos, to: GridPos) -> Option<GridPos> {
+    bresenham_line(from, to).get(1).copied()
+}
+
 fn find_path(
     map: &MapGrid,
     entities: &EntityArena,
@@ -98,8 +103,10 @@ fn find_path(
 
     while let Some(node) = open.pop() {
         if node.pos == (goal.x, goal.y) {
+            let raw_path = reconstruct_path(start, goal, &came_from);
+            let path = smooth_path(map, entities, mover, raw_path, &mut treat_as_passable);
             return Ok(PathPlan {
-                path: reconstruct_path(start, goal, &came_from),
+                path,
                 reached_goal: true,
             });
         }
@@ -168,15 +175,17 @@ fn find_path(
     if !allow_partial || best == start_key {
         return Err(PathError::Unreachable);
     }
+    let raw_path = reconstruct_path(
+        start,
+        GridPos {
+            x: best.0,
+            y: best.1,
+        },
+        &came_from,
+    );
+    let path = smooth_path(map, entities, mover, raw_path, &mut treat_as_passable);
     Ok(PathPlan {
-        path: reconstruct_path(
-            start,
-            GridPos {
-                x: best.0,
-                y: best.1,
-            },
-            &came_from,
-        ),
+        path,
         reached_goal: best == (goal.x, goal.y),
     })
 }
@@ -209,6 +218,106 @@ fn is_walkable(
         map.blocks_movement(x, y)
     };
     entities.can_move_to(blocked, GridPos { x, y }, mover)
+}
+
+fn smooth_path(
+    map: &MapGrid,
+    entities: &EntityArena,
+    mover: Option<EntityId>,
+    path: Vec<GridPos>,
+    treat_as_passable: &mut impl FnMut(i32, i32) -> bool,
+) -> Vec<GridPos> {
+    if path.len() <= 2 {
+        return path;
+    }
+    let mut out = Vec::with_capacity(path.len());
+    out.push(path[0]);
+    let mut anchor_idx = 0usize;
+    while anchor_idx < path.len() - 1 {
+        let mut furthest = anchor_idx + 1;
+        for candidate in (anchor_idx + 2)..path.len() {
+            if has_line_of_sight(
+                map,
+                entities,
+                mover,
+                path[anchor_idx],
+                path[candidate],
+                treat_as_passable,
+            ) {
+                furthest = candidate;
+            } else {
+                break;
+            }
+        }
+        out.push(path[furthest]);
+        anchor_idx = furthest;
+    }
+    out
+}
+
+fn has_line_of_sight(
+    map: &MapGrid,
+    entities: &EntityArena,
+    mover: Option<EntityId>,
+    from: GridPos,
+    to: GridPos,
+    treat_as_passable: &mut impl FnMut(i32, i32) -> bool,
+) -> bool {
+    let line = bresenham_line(from, to);
+    if line.is_empty() {
+        return false;
+    }
+    for &p in line.iter().skip(1) {
+        if !is_walkable(map, entities, mover, p.x, p.y, treat_as_passable) {
+            return false;
+        }
+    }
+    for pair in line.windows(2) {
+        let a = pair[0];
+        let b = pair[1];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        if dx.abs() > 1 || dy.abs() > 1 || (dx == 0 && dy == 0) {
+            return false;
+        }
+        if dx != 0
+            && dy != 0
+            && (!is_walkable(map, entities, mover, a.x + dx, a.y, treat_as_passable)
+                || !is_walkable(map, entities, mover, a.x, a.y + dy, treat_as_passable))
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn bresenham_line(from: GridPos, to: GridPos) -> Vec<GridPos> {
+    let mut out = Vec::new();
+    let mut x0 = from.x;
+    let mut y0 = from.y;
+    let x1 = to.x;
+    let y1 = to.y;
+    let dx = (x1 - x0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let dy = -(y1 - y0).abs();
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    loop {
+        out.push(GridPos { x: x0, y: y0 });
+        if x0 == x1 && y0 == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x0 += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y0 += sy;
+        }
+    }
+    out
 }
 
 fn neighbors8() -> [(i32, i32, u32); 8] {
@@ -345,5 +454,38 @@ mod tests {
         let plan = plan_path(&map, &arena, start, goal, None, false, u32::MAX)
             .expect("path should exist");
         assert!(plan.path.len() <= 3, "expected diagonal path");
+    }
+
+    #[test]
+    fn smoothing_collapses_to_single_segment_in_open_space() {
+        let map = MapGrid::filled(8, 8, 0, TileTable::default_pack());
+        let arena = EntityArena::new();
+        let start = GridPos { x: 1, y: 1 };
+        let goal = GridPos { x: 6, y: 4 };
+        let plan = plan_path(&map, &arena, start, goal, None, false, u32::MAX)
+            .expect("path should exist");
+        assert_eq!(plan.path.first().copied(), Some(start));
+        assert_eq!(plan.path.last().copied(), Some(goal));
+        assert_eq!(
+            plan.path.len(),
+            2,
+            "open map should smooth to direct segment"
+        );
+    }
+
+    #[test]
+    fn smoothing_respects_corner_blocking() {
+        let mut map = MapGrid::filled(6, 6, 0, TileTable::default_pack());
+        map.set_tile(2, 1, 1);
+        map.set_tile(1, 2, 1);
+        let arena = EntityArena::new();
+        let start = GridPos { x: 1, y: 1 };
+        let goal = GridPos { x: 3, y: 3 };
+        let plan = plan_path(&map, &arena, start, goal, None, true, u32::MAX)
+            .expect("partial route should exist");
+        assert!(
+            plan.path.len() > 2 || !plan.reached_goal,
+            "smoothing must not cut diagonally through blocked corner"
+        );
     }
 }

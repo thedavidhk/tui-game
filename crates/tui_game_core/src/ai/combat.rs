@@ -1,7 +1,7 @@
 use crate::ai::{AiIntent, CombatAiCtx, CombatDecisionPolicy};
 use crate::combat::{move_cost_units, CombatAction, ATTACK_COST_UNITS};
 use crate::entity::EntityId;
-use crate::world::plan_path;
+use crate::world::{first_step_on_line, plan_path};
 
 /// Rudimentary combat AI: attack adjacent target, else move toward nearest one.
 pub struct ChaseNearestPolicy;
@@ -54,7 +54,10 @@ impl CombatDecisionPolicy for ChaseNearestPolicy {
         let Ok(plan) = plan else {
             return AiIntent::Wait;
         };
-        let Some(next) = plan.path.get(1).copied() else {
+        let Some(waypoint) = plan.path.get(1).copied() else {
+            return AiIntent::Wait;
+        };
+        let Some(next) = first_step_on_line(actor_pos, waypoint) else {
             return AiIntent::Wait;
         };
         let Some(step_cost) = move_cost_units(actor_pos, next) else {

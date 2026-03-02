@@ -26,7 +26,7 @@ use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
 use crate::ui::hit::UiHitState;
 use crate::ui::layout::GameShellLayout;
 use crate::world::{
-    compute_visible, merge_explored, plan_path, plan_path_player_fow, MapGrid,
+    compute_visible, first_step_on_line, merge_explored, plan_path, plan_path_player_fow, MapGrid,
 };
 
 const FOW_RADIUS: i32 = 8;
@@ -407,16 +407,25 @@ impl Game {
             self.clear_player_walk();
             return;
         };
-        let next = self.player_walk_path[0];
-        let dx = next.x - current.x;
-        let dy = next.y - current.y;
-        if dx.abs().max(dy.abs()) != 1 || (dx == 0 && dy == 0) {
-            self.replan_walk_goal();
+        let waypoint = self.player_walk_path[0];
+        if waypoint == current {
+            let _ = self.player_walk_path.remove(0);
+            if self.player_walk_path.is_empty() {
+                self.player_walk_goal = None;
+            }
             return;
         }
+        let Some(next) = first_step_on_line(current, waypoint) else {
+            self.replan_walk_goal();
+            return;
+        };
+        let dx = next.x - current.x;
+        let dy = next.y - current.y;
         let moved = self.try_move_player_step(dx, dy);
         if moved {
-            let _ = self.player_walk_path.remove(0);
+            if next == waypoint {
+                let _ = self.player_walk_path.remove(0);
+            }
             self.player_walk_tick_cooldown = self
                 .player_id()
                 .and_then(|id| self.entities.stats(id))
@@ -1278,7 +1287,10 @@ impl Game {
             ) else {
                 break;
             };
-            let Some(next) = plan.path.get(1).copied() else {
+            let Some(waypoint) = plan.path.get(1).copied() else {
+                break;
+            };
+            let Some(next) = first_step_on_line(from, waypoint) else {
                 break;
             };
             let report = state.apply_action(
