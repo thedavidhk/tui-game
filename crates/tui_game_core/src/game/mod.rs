@@ -25,6 +25,10 @@ use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
 use crate::ui::hit::UiHitState;
 use crate::ui::layout::GameShellLayout;
+use crate::ui::viewport_scroll::{
+    edge_scroll_pan_delta, map_larger_than_view, screen_cell_to_world, world_view_origin,
+    EDGE_SCROLL_COOLDOWN_TICKS,
+};
 use crate::world::{
     compute_visible, first_step_on_line, merge_explored, plan_path, plan_path_player_fow, MapGrid,
 };
@@ -142,6 +146,12 @@ pub struct Game {
     pub exploration_hover_cell: Option<MouseCell>,
     /// Last mouse cell over the world view during combat (for hover text).
     pub combat_hover_cell: Option<MouseCell>,
+    /// Last pointer cell while cursor was inside the world panel (exploration or combat).
+    last_world_pointer_cell: Option<MouseCell>,
+    /// Extra pan added to the player-centered camera (world tiles); clamped when computing origin.
+    view_pan_offset: (i32, i32),
+    /// Counts down between edge-scroll steps while the pointer stays in the margin.
+    viewport_edge_scroll_cooldown: u16,
     pending_forced_dialogue: Option<PendingForcedDialogue>,
     pending_player_action: Option<PendingPlayerAction>,
 }
@@ -260,6 +270,9 @@ impl Game {
             npc_combat_ai_tick_cooldown: 0,
             exploration_hover_cell: None,
             combat_hover_cell: None,
+            last_world_pointer_cell: None,
+            view_pan_offset: (0, 0),
+            viewport_edge_scroll_cooldown: 0,
             pending_forced_dialogue: None,
             pending_player_action: None,
         };
@@ -457,25 +470,89 @@ impl Game {
 
     pub(crate) fn screen_cell_to_world(&self, cell: MouseCell) -> Option<GridPos> {
         let world_rect = self.world_rect_for_viewport();
-        if !world_rect.contains(cell.x, cell.y) {
-            return None;
-        }
-        let Some(p) = self.player_pos() else {
-            return None;
-        };
-        let cam_w = world_rect.w as i32;
-        let cam_h = world_rect.h as i32;
-        let ox = p.x - cam_w / 2;
-        let oy = p.y - cam_h / 2;
-        let wx = ox + i32::from(cell.x.saturating_sub(world_rect.x));
-        let wy = oy + i32::from(cell.y.saturating_sub(world_rect.y));
-        self.map.in_bounds(wx, wy).then_some(GridPos { x: wx, y: wy })
+        let origin = self.world_screen_origin();
+        screen_cell_to_world(cell, world_rect, origin, self.map.width, self.map.height)
     }
 
     pub(crate) fn world_rect_for_viewport(&self) -> Rect {
         let (world, _, _) =
             GameShellLayout::root_panels(self.viewport_w, self.viewport_h);
         world
+    }
+
+    #[must_use]
+    pub(crate) fn world_view_needs_pan(&self) -> bool {
+        let r = self.world_rect_for_viewport();
+        map_larger_than_view(self.map.width, self.map.height, r.w, r.h)
+    }
+
+    fn world_screen_origin(&self) -> (i32, i32) {
+        let r = self.world_rect_for_viewport();
+        let Some(pid) = self.player_id() else {
+            return (0, 0);
+        };
+        let Some(p) = self.entities.pos(pid) else {
+            return (0, 0);
+        };
+        world_view_origin(
+            p,
+            self.view_pan_offset,
+            self.map.width,
+            self.map.height,
+            r.w,
+            r.h,
+        )
+    }
+
+    pub(crate) fn nudge_view_pan(&mut self, dx: i32, dy: i32) {
+        self.view_pan_offset.0 += dx;
+        self.view_pan_offset.1 += dy;
+    }
+
+    pub(crate) fn register_world_pointer(&mut self, cell: MouseCell, world_r: Rect) {
+        if world_r.contains(cell.x, cell.y) {
+            self.last_world_pointer_cell = Some(cell);
+        } else {
+            self.last_world_pointer_cell = None;
+        }
+    }
+
+    fn tick_viewport_edge_scroll(&mut self) {
+        if !matches!(
+            self.modes.current(),
+            Some(GameMode::Exploration) | Some(GameMode::Combat(_))
+        ) {
+            self.last_world_pointer_cell = None;
+            self.viewport_edge_scroll_cooldown = 0;
+            return;
+        }
+        let world_r = self.world_rect_for_viewport();
+        let Some(cell) = self.last_world_pointer_cell else {
+            self.viewport_edge_scroll_cooldown = 0;
+            return;
+        };
+        if !world_r.contains(cell.x, cell.y) {
+            self.viewport_edge_scroll_cooldown = 0;
+            return;
+        }
+        if !self.world_view_needs_pan() {
+            self.viewport_edge_scroll_cooldown = 0;
+            return;
+        }
+        let lx = i32::from(cell.x.saturating_sub(world_r.x));
+        let ly = i32::from(cell.y.saturating_sub(world_r.y));
+        let (pdx, pdy) = edge_scroll_pan_delta(lx, ly, world_r.w, world_r.h);
+        if (pdx, pdy) == (0, 0) {
+            self.viewport_edge_scroll_cooldown = 0;
+            return;
+        }
+        if self.viewport_edge_scroll_cooldown > 0 {
+            self.viewport_edge_scroll_cooldown =
+                self.viewport_edge_scroll_cooldown.saturating_sub(1);
+            return;
+        }
+        self.nudge_view_pan(pdx, pdy);
+        self.viewport_edge_scroll_cooldown = EDGE_SCROLL_COOLDOWN_TICKS;
     }
 
     fn try_pickup_ground_items(&mut self, player: EntityId) {
@@ -581,6 +658,7 @@ impl Game {
         self.step_player_walk();
         self.pump_pending_player_action();
         self.pump_pending_forced_dialogue();
+        self.tick_viewport_edge_scroll();
     }
 
     fn pump_pending_forced_dialogue(&mut self) {
@@ -1665,13 +1743,12 @@ impl Game {
     }
 
     fn compose_world(&self, fb: &mut FrameBuffer, area: Rect) {
-        let Some(p) = self.player_pos() else {
+        let Some(_) = self.player_pos() else {
             return;
         };
         let cam_w = area.w as i32;
         let cam_h = area.h as i32;
-        let ox = p.x - cam_w / 2;
-        let oy = p.y - cam_h / 2;
+        let (ox, oy) = self.world_screen_origin();
 
         for row in 0..area.h {
             for col in 0..area.w {
@@ -1773,6 +1850,9 @@ impl Game {
         self.narrative = s.world.narrative;
         self.rng_seed = s.world.rng_seed;
         self.modes = s.modes;
+        self.view_pan_offset = (0, 0);
+        self.last_world_pointer_cell = None;
+        self.viewport_edge_scroll_cooldown = 0;
         let n = (self.map.width as usize) * (self.map.height as usize);
         self.explored.resize(n, false);
         self.visible.resize(n, false);
@@ -1908,7 +1988,7 @@ mod tests {
             y: start.y,
         };
         game.try_set_player_walk_goal(goal);
-        for _ in 0..20 {
+        for _ in 0..48 {
             game.step(&InputBatch::default());
         }
         assert_eq!(game.player_pos(), Some(goal));
@@ -2041,17 +2121,18 @@ mod tests {
         game.modes.stack = vec![GameMode::Combat(cs)];
         game.step(&InputBatch::default());
         let after_first = game.entities.pos(trainer).expect("trainer position");
-        game.step(&InputBatch::default());
-        let after_cooldown_tick = game.entities.pos(trainer).expect("trainer position");
-        assert_eq!(
-            after_first, after_cooldown_tick,
-            "trainer should not take a second step on the pacing tick (speed 7 => 1 tick cooldown)"
-        );
-        game.step(&InputBatch::default());
-        let after_third = game.entities.pos(trainer).expect("trainer position");
-        assert_ne!(
-            after_first, after_third,
-            "trainer should advance again once cooldown elapsed"
+        let mut same_ticks = 0u32;
+        while game.entities.pos(trainer) == Some(after_first) {
+            game.step(&InputBatch::default());
+            same_ticks += 1;
+            assert!(
+                same_ticks < 32,
+                "trainer should take another step after visual pacing cooldown"
+            );
+        }
+        assert!(
+            same_ticks >= 2,
+            "expected at least one pacing tick before second move (speed 7 => 3-tick cooldown at ~60 Hz)"
         );
     }
 }

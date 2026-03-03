@@ -164,6 +164,7 @@ pub fn sync_exploration_hover(game: &mut Game, cell: MouseCell, world_screen: Re
     } else {
         game.exploration_hover_cell = None;
     }
+    game.register_world_pointer(cell, world_screen);
 }
 
 /// Updates hover cell when the cursor is over the world panel during combat.
@@ -177,4 +178,5 @@ pub fn sync_combat_hover(game: &mut Game, cell: MouseCell, world_screen: Rect) {
     } else {
         game.combat_hover_cell = None;
     }
+    game.register_world_pointer(cell, world_screen);
 }

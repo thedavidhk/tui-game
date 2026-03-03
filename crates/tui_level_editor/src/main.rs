@@ -31,11 +31,15 @@ use tui_game_core::render::{
 };
 use tui_game_core::ui::{
     cell_in_axis_rect, cell_in_brush, cell_local_in_rect, centered_rect, draw_bordered_panel,
-    draw_text_block, draw_text_field, for_each_in_brush, for_each_in_rect, map_view_rect,
+    draw_text_block, draw_text_field, for_each_in_brush, for_each_in_rect,
+    viewport_scroll::{edge_scroll_pan_delta, EDGE_SCROLL_COOLDOWN_TICKS},
     TextField, TextFieldOutput, TextFilter, PRESET_COLORS,
 };
 use tui_game_core::world::{TileDef, TileId, TileTable};
 use tui_game_core::EntityBlueprint;
+
+/// Fixed width for the right-hand palette / help column.
+const EDITOR_SIDEBAR_WIDTH: u16 = 28;
 
 struct Editor {
     path: PathBuf,
@@ -61,6 +65,11 @@ struct Editor {
     sidebar_hits: Vec<(SidebarHit, Rect)>,
     /// Map cell under the mouse (level coords), when over the map and no modal dialog.
     hover_map_cell: Option<(i32, i32)>,
+    /// Top-left level coordinate of the visible map window.
+    view_origin_x: i32,
+    view_origin_y: i32,
+    last_mouse_cell: Option<MouseCell>,
+    viewport_edge_scroll_cooldown: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,6 +180,10 @@ impl Editor {
             last_paint_cell: None,
             sidebar_hits: Vec::new(),
             hover_map_cell: None,
+            view_origin_x: 0,
+            view_origin_y: 0,
+            last_mouse_cell: None,
+            viewport_edge_scroll_cooldown: 0,
         }
     }
 
@@ -240,6 +253,99 @@ impl Editor {
             .retain(|s| s.x >= 0 && s.y >= 0 && (s.x as u16) < nw && (s.y as u16) < nh);
         self.cursor_x = self.cursor_x.clamp(0, nw as i32 - 1);
         self.cursor_y = self.cursor_y.clamp(0, nh as i32 - 1);
+        self.clamp_editor_view();
+        self.ensure_cursor_visible();
+    }
+
+    fn sidebar_screen_width(&self) -> u16 {
+        EDITOR_SIDEBAR_WIDTH
+            .min(self.viewport_w.saturating_sub(4))
+            .max(10)
+    }
+
+    fn map_area_rect(&self) -> Rect {
+        let sw = self.sidebar_screen_width();
+        let mw = self.viewport_w.saturating_sub(sw).max(1);
+        Rect::new(0, 0, mw, self.viewport_h)
+    }
+
+    fn sidebar_rect(&self) -> Rect {
+        let map = self.map_area_rect();
+        let sw = self.viewport_w.saturating_sub(map.w).max(1);
+        Rect::new(map.right(), map.y, sw, map.h)
+    }
+
+    fn clamp_editor_view(&mut self) {
+        let map = self.map_area_rect();
+        let vw = map.w as i32;
+        let vh = map.h as i32;
+        let mw = self.level.width as i32;
+        let mh = self.level.height as i32;
+        let max_ox = (mw - vw).max(0);
+        let max_oy = (mh - vh).max(0);
+        self.view_origin_x = self.view_origin_x.clamp(0, max_ox);
+        self.view_origin_y = self.view_origin_y.clamp(0, max_oy);
+    }
+
+    fn editor_map_needs_scroll(&self) -> bool {
+        let map = self.map_area_rect();
+        self.level.width as i32 > map.w as i32 || self.level.height as i32 > map.h as i32
+    }
+
+    fn ensure_cursor_visible(&mut self) {
+        let map = self.map_area_rect();
+        let vw = map.w as i32;
+        let vh = map.h as i32;
+        let cx = self.cursor_x;
+        let cy = self.cursor_y;
+        if cx < self.view_origin_x {
+            self.view_origin_x = cx;
+        }
+        if cy < self.view_origin_y {
+            self.view_origin_y = cy;
+        }
+        if cx >= self.view_origin_x + vw {
+            self.view_origin_x = cx - vw + 1;
+        }
+        if cy >= self.view_origin_y + vh {
+            self.view_origin_y = cy - vh + 1;
+        }
+        self.clamp_editor_view();
+    }
+
+    fn idle_viewport_tick(&mut self) {
+        if self.dialog.is_some() {
+            return;
+        }
+        let map = self.map_area_rect();
+        let Some(cell) = self.last_mouse_cell else {
+            self.viewport_edge_scroll_cooldown = 0;
+            return;
+        };
+        if !map.contains(cell.x, cell.y) {
+            self.viewport_edge_scroll_cooldown = 0;
+            return;
+        }
+        if !self.editor_map_needs_scroll() {
+            self.viewport_edge_scroll_cooldown = 0;
+            return;
+        }
+        let lx = i32::from(cell.x.saturating_sub(map.x));
+        let ly = i32::from(cell.y.saturating_sub(map.y));
+        let (pdx, pdy) = edge_scroll_pan_delta(lx, ly, map.w, map.h);
+        if (pdx, pdy) == (0, 0) {
+            self.viewport_edge_scroll_cooldown = 0;
+            return;
+        }
+        if self.viewport_edge_scroll_cooldown > 0 {
+            self.viewport_edge_scroll_cooldown =
+                self.viewport_edge_scroll_cooldown.saturating_sub(1);
+            return;
+        }
+        self.view_origin_x += pdx;
+        self.view_origin_y += pdy;
+        self.clamp_editor_view();
+        self.viewport_edge_scroll_cooldown = EDGE_SCROLL_COOLDOWN_TICKS;
     }
 
     fn next_tile_id(&self) -> TileId {
@@ -360,6 +466,7 @@ impl Editor {
             "Spawn {} at ({}, {}).",
             bp.kind, self.cursor_x, self.cursor_y
         );
+        self.ensure_cursor_visible();
     }
 
     fn step_main_mouse(&mut self, ev: &InputEvent) {
@@ -374,14 +481,15 @@ impl Editor {
         else {
             return;
         };
-        let map_rect = map_view_rect(
-            self.level.width,
-            self.level.height,
-            self.viewport_w,
-            self.viewport_h,
-        );
+        self.last_mouse_cell = Some(*cell);
+        let map_rect = self.map_area_rect();
 
-        self.hover_map_cell = cell_local_in_rect(*cell, map_rect);
+        self.hover_map_cell = cell_local_in_rect(*cell, map_rect).map(|(lx, ly)| {
+            (
+                self.view_origin_x + lx,
+                self.view_origin_y + ly,
+            )
+        });
 
         if matches!(kind, MouseEventKind::Moved) {
             return;
@@ -422,9 +530,11 @@ impl Editor {
             return;
         }
 
-        let Some((tx, ty)) = cell_local_in_rect(*cell, map_rect) else {
+        let Some((lx, ly)) = cell_local_in_rect(*cell, map_rect) else {
             return;
         };
+        let tx = self.view_origin_x + lx;
+        let ty = self.view_origin_y + ly;
 
         match kind {
             MouseEventKind::Down(MouseButton::Left) => {
@@ -585,7 +695,7 @@ impl Editor {
                 if matches!(chord.key, Key::Enter) && !chord.ctrl {
                     let parse = |t: &TextField| -> Option<u16> {
                         let n: u32 = t.text.trim().parse().ok()?;
-                        if (3..=256).contains(&n) {
+                        if (3..=512).contains(&n) {
                             Some(n as u16)
                         } else {
                             None
@@ -598,7 +708,7 @@ impl Editor {
                             self.dialog = None;
                         }
                         _ => {
-                            self.status = "Width/height must be integers from 3 to 256.".into();
+                            self.status = "Width/height must be integers from 3 to 512.".into();
                         }
                     }
                     return true;
@@ -807,32 +917,100 @@ impl Editor {
                 });
             }
             KeyChord {
-                key: Key::Up | Key::Char('w'),
+                key: Key::Up,
+                ctrl: false,
+                ..
+            } if self.editor_map_needs_scroll() => {
+                self.view_origin_y -= 1;
+                self.clamp_editor_view();
+            }
+            KeyChord {
+                key: Key::Down,
+                ctrl: false,
+                ..
+            } if self.editor_map_needs_scroll() => {
+                self.view_origin_y += 1;
+                self.clamp_editor_view();
+            }
+            KeyChord {
+                key: Key::Left,
+                ctrl: false,
+                ..
+            } if self.editor_map_needs_scroll() => {
+                self.view_origin_x -= 1;
+                self.clamp_editor_view();
+            }
+            KeyChord {
+                key: Key::Right,
+                ctrl: false,
+                ..
+            } if self.editor_map_needs_scroll() => {
+                self.view_origin_x += 1;
+                self.clamp_editor_view();
+            }
+            KeyChord {
+                key: Key::Char('w'),
                 ctrl: false,
                 ..
             } => {
                 self.cursor_y = (self.cursor_y - 1).max(0);
+                self.ensure_cursor_visible();
             }
             KeyChord {
-                key: Key::Down | Key::Char('s'),
+                key: Key::Up,
+                ctrl: false,
+                ..
+            } => {
+                self.cursor_y = (self.cursor_y - 1).max(0);
+                self.ensure_cursor_visible();
+            }
+            KeyChord {
+                key: Key::Char('s'),
                 ctrl: false,
                 ..
             } => {
                 self.cursor_y = (self.cursor_y + 1).min(self.level.height as i32 - 1);
+                self.ensure_cursor_visible();
             }
             KeyChord {
-                key: Key::Left | Key::Char('a'),
+                key: Key::Down,
+                ctrl: false,
+                ..
+            } => {
+                self.cursor_y = (self.cursor_y + 1).min(self.level.height as i32 - 1);
+                self.ensure_cursor_visible();
+            }
+            KeyChord {
+                key: Key::Char('a'),
                 ctrl: false,
                 ..
             } => {
                 self.cursor_x = (self.cursor_x - 1).max(0);
+                self.ensure_cursor_visible();
             }
             KeyChord {
-                key: Key::Right | Key::Char('d'),
+                key: Key::Left,
+                ctrl: false,
+                ..
+            } => {
+                self.cursor_x = (self.cursor_x - 1).max(0);
+                self.ensure_cursor_visible();
+            }
+            KeyChord {
+                key: Key::Char('d'),
                 ctrl: false,
                 ..
             } => {
                 self.cursor_x = (self.cursor_x + 1).min(self.level.width as i32 - 1);
+                self.ensure_cursor_visible();
+            }
+            KeyChord {
+                key: Key::Right,
+                ctrl: false,
+                ..
+            } => {
+                self.cursor_x = (self.cursor_x + 1).min(self.level.width as i32 - 1);
+                self.ensure_cursor_visible();
             }
             KeyChord {
                 key: Key::Char('q'),
@@ -848,6 +1026,7 @@ impl Editor {
     fn compose(&mut self, fb: &mut FrameBuffer) {
         self.viewport_w = fb.width;
         self.viewport_h = fb.height;
+        self.clamp_editor_view();
         self.sidebar_hits.clear();
 
         let fg = Color::rgb(210, 210, 200);
@@ -866,10 +1045,35 @@ impl Editor {
                 );
             }
         }
-        let ox = 0u16;
-        let oy = 0u16;
-        for ty in 0..self.level.height {
-            for tx in 0..self.level.width {
+        let map = self.map_area_rect();
+        let ox = map.x;
+        let oy = map.y;
+        let vw = map.w as usize;
+        let vh = map.h as usize;
+        let vo_x = self.view_origin_x;
+        let vo_y = self.view_origin_y;
+        let lw = self.level.width as i32;
+        let lh = self.level.height as i32;
+
+        for j in 0..vh {
+            for i in 0..vw {
+                let tx = vo_x + i as i32;
+                let ty = vo_y + j as i32;
+                let sx = ox.saturating_add(i as u16);
+                let sy = oy.saturating_add(j as u16);
+                if tx < 0 || ty < 0 || tx >= lw || ty >= lh {
+                    fb.set(
+                        sx,
+                        sy,
+                        Cell {
+                            ch: ' ',
+                            fg,
+                            bg,
+                            style: Style::default(),
+                        },
+                    );
+                    continue;
+                }
                 let tid = self.level.tiles[ty as usize * self.level.width as usize + tx as usize];
                 let def = self.level.tile_defs.iter().find(|d| d.id == tid);
                 let ch = def.map(|d| d.glyph).unwrap_or('?');
@@ -882,8 +1086,8 @@ impl Editor {
                 };
                 if self.dialog.is_none() {
                     if let Some((hx, hy)) = self.hover_map_cell {
-                        let txi = tx as i32;
-                        let tyi = ty as i32;
+                        let txi = tx;
+                        let tyi = ty;
                         let mut lift: u8 = 0;
                         match self.mode {
                             Mode::PaintTiles => {
@@ -925,11 +1129,11 @@ impl Editor {
                         }
                     }
                 }
-                if tx as i32 == self.cursor_x && ty as i32 == self.cursor_y {
+                if tx == self.cursor_x && ty == self.cursor_y {
                     c.style.bold = true;
                     c.fg = Color::rgb(255, 255, 120);
                 }
-                fb.set(ox + tx, oy + ty, c);
+                fb.set(sx, sy, c);
             }
         }
         for s in &self.level.spawns {
@@ -938,6 +1142,13 @@ impl Editor {
                 && (s.x as u16) < self.level.width
                 && (s.y as u16) < self.level.height
             {
+                if s.x < vo_x
+                    || s.y < vo_y
+                    || s.x >= vo_x + vw as i32
+                    || s.y >= vo_y + vh as i32
+                {
+                    continue;
+                }
                 let mut spawn_bg = bg;
                 if self.dialog.is_none() && self.mode == Mode::EraseSpawns {
                     if let Some((hx, hy)) = self.hover_map_cell {
@@ -961,16 +1172,12 @@ impl Editor {
                         underline: false,
                     },
                 };
-                fb.set(ox + s.x as u16, oy + s.y as u16, c);
+                let px = ox.saturating_add((s.x - vo_x) as u16);
+                let py = oy.saturating_add((s.y - vo_y) as u16);
+                fb.set(px, py, c);
             }
         }
-        let help = Rect::new(
-            self.level.width + 1,
-            0,
-            fb.width.saturating_sub(self.level.width + 2),
-            fb.height,
-        );
-        self.compose_sidebar(fb, help);
+        self.compose_sidebar(fb, self.sidebar_rect());
 
         if let Some(ref d) = self.dialog {
             self.draw_dialog_layer(fb, d);
@@ -1001,7 +1208,12 @@ impl Editor {
             &row(&format!("Level: {}", self.level.name)),
         );
         Self::sidebar_plain(fb, inner, &mut y, "");
-        Self::sidebar_plain(fb, inner, &mut y, "WASD move  Tab/m: paint|place|erase");
+        Self::sidebar_plain(
+            fb,
+            inner,
+            &mut y,
+            "WASD cursor  Arrows: pan (large map)  Tab/m: mode",
+        );
         Self::sidebar_plain(fb, inner, &mut y, "Space / mouse L: act  +/- wheel: r");
         Self::sidebar_plain(fb, inner, &mut y, "Shift+L drag: rect (tiles or spawns)");
         Self::sidebar_plain(
@@ -1279,7 +1491,7 @@ impl Editor {
                     hint,
                     &[
                         "Tab: switch field".into(),
-                        "Enter: apply (3..256)".into(),
+                        "Enter: apply (3..512)".into(),
                         "Esc: cancel".into(),
                     ],
                 );
@@ -1412,6 +1624,7 @@ fn main() -> std::io::Result<()> {
     let mut full = true;
 
     while !ed.should_quit() {
+        ed.idle_viewport_tick();
         ed.compose(&mut fb);
         let use_full = full;
         full = false;
@@ -1428,7 +1641,7 @@ fn main() -> std::io::Result<()> {
         stdout.write_all(&buf)?;
         stdout.flush()?;
 
-        if event::poll(Duration::from_millis(50))? {
+        if event::poll(Duration::from_millis(16))? {
             let mut batch = InputBatch::default();
             loop {
                 match event::read()? {

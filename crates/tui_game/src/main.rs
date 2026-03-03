@@ -60,10 +60,11 @@ fn main() -> std::io::Result<()> {
         game.viewport_w = tw;
         game.viewport_h = th;
 
-        let poll_ms = if matches!(game.modes.current(), Some(GameMode::Exploration)) {
-            33
-        } else {
-            250
+        // Exploration and combat run the game `step` at ~60 Hz so input, auto-walk, and
+        // viewport edge-scroll stay responsive. Menus and modal UIs use a slower poll.
+        let poll_ms = match game.modes.current() {
+            Some(GameMode::Exploration) | Some(GameMode::Combat(_)) => 16,
+            _ => 250,
         };
         let mut batch = InputBatch::default();
         let poll_wait = if first_frame {

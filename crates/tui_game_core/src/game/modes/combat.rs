@@ -49,6 +49,21 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
             );
             game.apply_combat_report(&next, report);
         }
+        InputEvent::Key(KeyChord { key: Key::Up, .. }) if game.world_view_needs_pan() => {
+            game.nudge_view_pan(0, -1);
+        }
+        InputEvent::Key(KeyChord { key: Key::Down, .. }) if game.world_view_needs_pan() => {
+            game.nudge_view_pan(0, 1);
+        }
+        InputEvent::Key(KeyChord { key: Key::Left, .. }) if game.world_view_needs_pan() => {
+            game.nudge_view_pan(-1, 0);
+        }
+        InputEvent::Key(KeyChord {
+            key: Key::Right,
+            ..
+        }) if game.world_view_needs_pan() => {
+            game.nudge_view_pan(1, 0);
+        }
         InputEvent::Key(KeyChord {
             key: Key::Char('w'),
             ..
