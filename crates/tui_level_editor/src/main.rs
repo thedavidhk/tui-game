@@ -24,7 +24,9 @@ use tui_game_core::game_content;
 use tui_game_core::input::{
     InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseCell, MouseEventKind,
 };
-use tui_game_core::level::{level_from_ron, level_to_ron, EntitySpawn, LevelFile};
+use tui_game_core::level::{
+    derive_visual_seed, level_from_ron, level_to_ron, EntitySpawn, LevelFile,
+};
 use tui_game_core::rect::Rect;
 use tui_game_core::render::{
     encode_frame_delta, encode_frame_full, Cell, Color, FrameBuffer, Style,
@@ -35,7 +37,9 @@ use tui_game_core::ui::{
     viewport_scroll::{edge_scroll_pan_delta, EDGE_SCROLL_COOLDOWN_TICKS},
     TextField, TextFieldOutput, TextFilter, PRESET_COLORS,
 };
-use tui_game_core::world::{TileDef, TileId, TileTable};
+use tui_game_core::world::{
+    def_is_animated, resolve_animated, TileDef, TileDisplayCell, TileId, TileTable,
+};
 use tui_game_core::EntityBlueprint;
 
 /// Fixed width for the right-hand palette / help column.
@@ -70,6 +74,10 @@ struct Editor {
     view_origin_y: i32,
     last_mouse_cell: Option<MouseCell>,
     viewport_edge_scroll_cooldown: u16,
+    /// Baked static tile visuals (parallel to `level.tiles`).
+    tile_display: Vec<TileDisplayCell>,
+    map_visual_seed: u64,
+    surface_tick: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +142,7 @@ impl Editor {
                 glyph: 'g',
                 name: "Guide".into(),
             }],
+            visual_seed: None,
         }
     }
 
@@ -162,7 +171,10 @@ impl Editor {
             status.push_str(&format!(" | Check: {e}"));
         }
         let spawn_blueprint_idx = 0;
-        Self {
+        let map_visual_seed = level
+            .visual_seed
+            .unwrap_or_else(|| derive_visual_seed(&level));
+        let mut ed = Self {
             path: path.clone(),
             level,
             content,
@@ -184,7 +196,21 @@ impl Editor {
             view_origin_y: 0,
             last_mouse_cell: None,
             viewport_edge_scroll_cooldown: 0,
-        }
+            tile_display: Vec::new(),
+            map_visual_seed,
+            surface_tick: 0,
+        };
+        ed.rebuild_tile_display_full();
+        ed
+    }
+
+    fn rebuild_tile_display_full(&mut self) {
+        let Ok(mut m) = self.level.to_map() else {
+            self.tile_display.clear();
+            return;
+        };
+        m.rebuild_display_cache(self.map_visual_seed);
+        self.tile_display = m.display;
     }
 
     fn save(&mut self) -> Result<(), String> {
@@ -255,6 +281,7 @@ impl Editor {
         self.cursor_y = self.cursor_y.clamp(0, nh as i32 - 1);
         self.clamp_editor_view();
         self.ensure_cursor_visible();
+        self.rebuild_tile_display_full();
     }
 
     fn sidebar_screen_width(&self) -> u16 {
@@ -403,6 +430,7 @@ impl Editor {
         for_each_in_brush(cx, cy, self.brush_radius, |tx, ty| {
             self.set_tile_clamped(tx, ty, t);
         });
+        self.rebuild_tile_display_full();
     }
 
     fn fill_rect_tiles(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
@@ -414,6 +442,7 @@ impl Editor {
             self.set_tile_clamped(tx, ty, t);
         });
         self.status = format!("Filled tiles ({x0},{y0})—({x1},{y1}).");
+        self.rebuild_tile_display_full();
     }
 
     fn cell_has_spawn(&self, tx: i32, ty: i32) -> bool {
@@ -632,10 +661,13 @@ impl Editor {
                     blocks_sight: solid,
                     name: n.clone(),
                     fg,
+                    connect_mask: 0,
+                    surface: None,
                 };
                 self.level.tile_defs.push(def);
                 self.current_tile = id;
                 self.status = format!("Added tile id {id} ({n}).");
+                self.rebuild_tile_display_full();
                 return true;
             }
         }
@@ -1027,6 +1059,7 @@ impl Editor {
         self.viewport_w = fb.width;
         self.viewport_h = fb.height;
         self.clamp_editor_view();
+        self.surface_tick = self.surface_tick.wrapping_add(1);
         self.sidebar_hits.clear();
 
         let fg = Color::rgb(210, 210, 200);
@@ -1074,10 +1107,30 @@ impl Editor {
                     );
                     continue;
                 }
-                let tid = self.level.tiles[ty as usize * self.level.width as usize + tx as usize];
+                let wi = self.level.width as usize;
+                let idx = ty as usize * wi + tx as usize;
+                let tid = self.level.tiles[idx];
                 let def = self.level.tile_defs.iter().find(|d| d.id == tid);
-                let ch = def.map(|d| d.glyph).unwrap_or('?');
-                let tile_fg = def.map(|d| d.fg).unwrap_or(Color::rgb(200, 190, 170));
+                let baked = self.tile_display.get(idx).copied();
+                let (ch, tile_fg) = match def {
+                    Some(d) if def_is_animated(d) => {
+                        let r = resolve_animated(
+                            d,
+                            tx,
+                            ty,
+                            self.surface_tick,
+                            self.map_visual_seed,
+                        );
+                        (r.ch, r.fg)
+                    }
+                    _ => {
+                        let d = baked.unwrap_or(TileDisplayCell {
+                            ch: '?',
+                            fg: Color::rgb(200, 190, 170),
+                        });
+                        (d.ch, d.fg)
+                    }
+                };
                 let mut c = Cell {
                     ch,
                     fg: tile_fg,

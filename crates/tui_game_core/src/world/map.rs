@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::tile_surface::{bake_tile_display, TileBakeView, TileDisplayCell};
 use super::tiles::{TileDef, TileId};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -32,16 +33,70 @@ pub struct MapGrid {
     pub height: u16,
     pub tiles: Vec<TileId>,
     pub table: TileTable,
+    /// Baked glyph/fg per cell (static surfaces). Rebuilt at load and after edits; animated
+    /// tiles still read `tiles` + defs at compose time.
+    #[serde(default)]
+    pub display: Vec<TileDisplayCell>,
 }
 
 impl MapGrid {
     pub fn filled(width: u16, height: u16, tile: TileId, table: TileTable) -> Self {
         let n = (width as usize) * (height as usize);
-        Self {
+        let mut m = Self {
             width,
             height,
             tiles: vec![tile; n],
             table,
+            display: vec![TileDisplayCell::default(); n],
+        };
+        m.rebuild_display_cache(0);
+        m
+    }
+
+    /// Full recompute of [`MapGrid::display`] (e.g. level load, resize, save load).
+    pub fn rebuild_display_cache(&mut self, visual_seed: u64) {
+        let n = (self.width as usize) * (self.height as usize);
+        if self.display.len() != n {
+            self.display.resize(n, TileDisplayCell::default());
+        }
+        let v = TileBakeView {
+            table: &self.table,
+            tiles: &self.tiles,
+            width: self.width,
+            height: self.height,
+        };
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let wx = i32::from(x);
+                let wy = i32::from(y);
+                let i = wy as usize * self.width as usize + wx as usize;
+                self.display[i] = bake_tile_display(v, wx, wy, visual_seed);
+            }
+        }
+    }
+
+    /// After a single-cell edit, refresh this cell and neighbors (connector mask locality).
+    pub fn rebuild_display_local(&mut self, wx: i32, wy: i32, visual_seed: u64) {
+        let v = TileBakeView {
+            table: &self.table,
+            tiles: &self.tiles,
+            width: self.width,
+            height: self.height,
+        };
+        for (x, y) in [
+            (wx, wy),
+            (wx, wy - 1),
+            (wx + 1, wy),
+            (wx, wy + 1),
+            (wx - 1, wy),
+        ] {
+            if !self.in_bounds(x, y) {
+                continue;
+            }
+            let i = y as usize * self.width as usize + x as usize;
+            if i < self.display.len() {
+                self.display[i] = bake_tile_display(v, x, y, visual_seed);
+            }
         }
     }
 
@@ -63,6 +118,15 @@ impl MapGrid {
         }
         let i = y as usize * self.width as usize + x as usize;
         self.tiles[i] = t;
+        true
+    }
+
+    /// Like [`set_tile`] then [`rebuild_display_local`] (pass `visual_seed` from level / editor).
+    pub fn set_tile_with_display(&mut self, x: i32, y: i32, t: TileId, visual_seed: u64) -> bool {
+        if !self.set_tile(x, y, t) {
+            return false;
+        }
+        self.rebuild_display_local(x, y, visual_seed);
         true
     }
 

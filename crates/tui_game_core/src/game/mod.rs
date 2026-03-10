@@ -19,7 +19,7 @@ use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, MouseCell};
 use crate::item::ItemStack;
-use crate::level::LevelFile;
+use crate::level::{derive_visual_seed, derive_visual_seed_from_map, LevelFile};
 use crate::narrative::NarrativeState;
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
@@ -30,10 +30,11 @@ use crate::ui::viewport_scroll::{
     EDGE_SCROLL_COOLDOWN_TICKS,
 };
 use crate::world::{
-    compute_visible, first_step_on_line, merge_explored, plan_path, plan_path_player_fow, MapGrid,
+    compute_visible, def_is_animated, first_step_on_line, merge_explored, plan_path,
+    plan_path_player_fow, resolve_animated, MapGrid, TileDisplayCell,
 };
 
-const FOW_RADIUS: i32 = 8;
+const FOW_RADIUS: i32 = 16;
 
 #[derive(Clone, Debug)]
 struct PendingForcedDialogue {
@@ -137,6 +138,10 @@ pub struct Game {
     /// Last-frame mouse hit targets (menu rows, dialogue choices, …).
     pub ui_hits: UiHitState,
     pub last_perf: Option<FrameSample>,
+    /// Seed for baked static tile variants (grass); stable for the loaded level / save.
+    pub map_visual_seed: u64,
+    /// Increments each [`Game::step`] for animated terrain (water).
+    pub surface_tick: u64,
     player_walk_path: Vec<GridPos>,
     player_walk_goal: Option<GridPos>,
     player_walk_tick_cooldown: u16,
@@ -199,7 +204,11 @@ impl Game {
         let content = game_content::content_pack();
         content.validate().map_err(|e| e.to_string())?;
         content.validate_level(level).map_err(|e| e.to_string())?;
-        let map = level.to_map()?;
+        let map_visual_seed = level
+            .visual_seed
+            .unwrap_or_else(|| derive_visual_seed(level));
+        let mut map = level.to_map()?;
+        map.rebuild_display_cache(map_visual_seed);
         let n = (map.width as usize) * (map.height as usize);
         let mut entities = EntityArena::new();
         for s in &level.spawns {
@@ -264,6 +273,8 @@ impl Game {
             quit_requested: false,
             ui_hits: UiHitState::default(),
             last_perf: None,
+            map_visual_seed,
+            surface_tick: 0,
             player_walk_path: Vec::new(),
             player_walk_goal: None,
             player_walk_tick_cooldown: 0,
@@ -659,6 +670,7 @@ impl Game {
         self.pump_pending_player_action();
         self.pump_pending_forced_dialogue();
         self.tick_viewport_edge_scroll();
+        self.surface_tick = self.surface_tick.wrapping_add(1);
     }
 
     fn pump_pending_forced_dialogue(&mut self) {
@@ -1769,9 +1781,27 @@ impl Game {
                 let tid = self.map.tile_at(wx, wy).unwrap_or(0);
                 let def = self.map.table.def(tid);
                 if seen {
-                    let g = def.map(|d| d.glyph).unwrap_or('?');
+                    let baked = self.map.display.get(idx).copied();
+                    let (g, base_fg) = match def {
+                        Some(d) if def_is_animated(d) => {
+                            let r = resolve_animated(
+                                d,
+                                wx,
+                                wy,
+                                self.surface_tick,
+                                self.map_visual_seed,
+                            );
+                            (r.ch, r.fg)
+                        }
+                        _ => {
+                            let d = baked.unwrap_or(TileDisplayCell {
+                                ch: '?',
+                                fg: Color::rgb(220, 220, 200),
+                            });
+                            (d.ch, d.fg)
+                        }
+                    };
                     cell.ch = g;
-                    let base_fg = def.map(|d| d.fg).unwrap_or(Color::rgb(220, 220, 200));
                     if vis {
                         cell.fg = base_fg;
                         cell.bg = Color::rgb(20, 18, 28);
@@ -1846,6 +1876,8 @@ impl Game {
             return Err(format!("unsupported save version {}", s.schema_version));
         }
         self.map = s.world.map;
+        self.map_visual_seed = derive_visual_seed_from_map(&self.map);
+        self.map.rebuild_display_cache(self.map_visual_seed);
         self.entities = s.world.entities;
         self.narrative = s.world.narrative;
         self.rng_seed = s.world.rng_seed;
