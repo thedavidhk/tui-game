@@ -37,9 +37,7 @@ use tui_game_core::ui::{
     viewport_scroll::{edge_scroll_pan_delta, EDGE_SCROLL_COOLDOWN_TICKS},
     TextField, TextFieldOutput, TextFilter, PRESET_COLORS,
 };
-use tui_game_core::world::{
-    def_is_animated, resolve_animated, TileDef, TileDisplayCell, TileId, TileTable,
-};
+use tui_game_core::world::{def_is_animated, resolve_animated, TileDef, TileDisplayCell, TileId};
 use tui_game_core::EntityBlueprint;
 
 /// Fixed width for the right-hand palette / help column.
@@ -116,17 +114,26 @@ enum Dialog {
 
 impl Editor {
     fn default_level() -> LevelFile {
+        let tile_defs = game_content::embedded_demo_level().tile_defs;
+        let floor_tile = tile_defs
+            .iter()
+            .find(|d| !d.blocks_movement)
+            .map_or(0, |d| d.id);
+        let wall_tile = tile_defs
+            .iter()
+            .find(|d| d.blocks_movement)
+            .map_or(floor_tile, |d| d.id);
         let w = 24u16;
         let h = 16u16;
         let n = (w as usize) * (h as usize);
-        let mut tiles = vec![0u16; n];
+        let mut tiles = vec![floor_tile; n];
         for x in 0..w {
-            tiles[x as usize] = 1;
-            tiles[(h as usize - 1) * w as usize + x as usize] = 1;
+            tiles[x as usize] = wall_tile;
+            tiles[(h as usize - 1) * w as usize + x as usize] = wall_tile;
         }
         for y in 0..h {
-            tiles[y as usize * w as usize] = 1;
-            tiles[y as usize * w as usize + (w as usize - 1)] = 1;
+            tiles[y as usize * w as usize] = wall_tile;
+            tiles[y as usize * w as usize + (w as usize - 1)] = wall_tile;
         }
         LevelFile {
             schema_version: LevelFile::SCHEMA,
@@ -134,7 +141,7 @@ impl Editor {
             width: w,
             height: h,
             tiles,
-            tile_defs: TileTable::default_pack().defs,
+            tile_defs,
             spawns: vec![EntitySpawn {
                 kind: "guide".into(),
                 x: 10,

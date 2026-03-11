@@ -390,7 +390,12 @@ mod tests {
 
     #[test]
     fn shortest_path_finds_route_in_open_grid() {
-        let map = MapGrid::filled(5, 5, 0, TileTable::default_pack());
+        let map = MapGrid::filled(
+            5,
+            5,
+            0,
+            TileTable::default_pack().expect("default terrain pack must load"),
+        );
         let arena = EntityArena::new();
         let start = GridPos { x: 1, y: 1 };
         let goal = GridPos { x: 3, y: 1 };
@@ -403,7 +408,12 @@ mod tests {
 
     #[test]
     fn closest_path_returns_partial_when_goal_blocked() {
-        let mut map = MapGrid::filled(5, 5, 0, TileTable::default_pack());
+        let mut map = MapGrid::filled(
+            5,
+            5,
+            0,
+            TileTable::default_pack().expect("default terrain pack must load"),
+        );
         // Create a wall line at x=3 except one side route blocked by map bounds.
         map.set_tile(3, 0, 1);
         map.set_tile(3, 1, 1);
@@ -421,7 +431,12 @@ mod tests {
 
     #[test]
     fn custom_blocking_policy_can_treat_unknown_as_passable() {
-        let mut map = MapGrid::filled(5, 5, 0, TileTable::default_pack());
+        let mut map = MapGrid::filled(
+            5,
+            5,
+            0,
+            TileTable::default_pack().expect("default terrain pack must load"),
+        );
         map.set_tile(2, 1, 1);
         let explored = vec![
             true, true, false, false, false, true, true, false, false, false, true, true, false,
@@ -447,7 +462,12 @@ mod tests {
 
     #[test]
     fn prefers_diagonal_when_open() {
-        let map = MapGrid::filled(5, 5, 0, TileTable::default_pack());
+        let map = MapGrid::filled(
+            5,
+            5,
+            0,
+            TileTable::default_pack().expect("default terrain pack must load"),
+        );
         let arena = EntityArena::new();
         let start = GridPos { x: 1, y: 1 };
         let goal = GridPos { x: 3, y: 3 };
@@ -458,7 +478,12 @@ mod tests {
 
     #[test]
     fn smoothing_collapses_to_single_segment_in_open_space() {
-        let map = MapGrid::filled(8, 8, 0, TileTable::default_pack());
+        let map = MapGrid::filled(
+            8,
+            8,
+            0,
+            TileTable::default_pack().expect("default terrain pack must load"),
+        );
         let arena = EntityArena::new();
         let start = GridPos { x: 1, y: 1 };
         let goal = GridPos { x: 6, y: 4 };
@@ -475,7 +500,12 @@ mod tests {
 
     #[test]
     fn smoothing_respects_corner_blocking() {
-        let mut map = MapGrid::filled(6, 6, 0, TileTable::default_pack());
+        let mut map = MapGrid::filled(
+            6,
+            6,
+            0,
+            TileTable::default_pack().expect("default terrain pack must load"),
+        );
         map.set_tile(2, 1, 1);
         map.set_tile(1, 2, 1);
         let arena = EntityArena::new();

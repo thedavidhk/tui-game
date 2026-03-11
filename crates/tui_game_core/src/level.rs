@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn derive_visual_seed_is_stable() {
-        let table = TileTable::default_pack();
+        let table = TileTable::default_pack().expect("default terrain pack must load");
         let map = MapGrid::filled(4, 3, 0, table);
         let level = LevelFile::from_map(&map, "test", vec![]);
         let a = super::derive_visual_seed(&level);
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn round_trip_level_ron() {
-        let table = TileTable::default_pack();
+        let table = TileTable::default_pack().expect("default terrain pack must load");
         let mut map = MapGrid::filled(4, 3, 0, table);
         map.set_tile(1, 1, 1);
         let level = LevelFile::from_map(

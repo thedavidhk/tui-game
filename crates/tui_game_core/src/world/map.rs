@@ -9,13 +9,14 @@ pub struct TileTable {
 }
 
 impl TileTable {
-    pub fn default_pack() -> Self {
-        Self {
-            defs: vec![
-                TileDef::floor(0, '.', "floor"),
-                TileDef::wall(1, '#', "wall"),
-            ],
+    pub fn default_pack() -> Result<Self, String> {
+        let level = crate::game_content::embedded_demo_level();
+        if level.tile_defs.is_empty() {
+            return Err("embedded demo level has no tile_defs".into());
         }
+        Ok(Self {
+            defs: level.tile_defs,
+        })
     }
 
     pub fn def(&self, id: TileId) -> Option<&TileDef> {

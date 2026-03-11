@@ -52,7 +52,12 @@ mod tests {
 
     #[test]
     fn round_trip_save() {
-        let map = MapGrid::filled(3, 3, 0, TileTable::default_pack());
+        let map = MapGrid::filled(
+            3,
+            3,
+            0,
+            TileTable::default_pack().expect("default terrain pack must load"),
+        );
         let mut ents = EntityArena::new();
         let p = ents.spawn(
             crate::entity::GridPos { x: 1, y: 1 },
@@ -83,7 +88,12 @@ mod tests {
 
     #[test]
     fn round_trip_save_with_inventory_and_containers() {
-        let map = MapGrid::filled(3, 3, 0, TileTable::default_pack());
+        let map = MapGrid::filled(
+            3,
+            3,
+            0,
+            TileTable::default_pack().expect("default terrain pack must load"),
+        );
         let mut ents = EntityArena::new();
         let p = ents.spawn(
             crate::entity::GridPos { x: 1, y: 1 },

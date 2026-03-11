@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn static_variant_deterministic_per_cell() {
-        let mut table = TileTable::default_pack();
+        let mut table = TileTable::default_pack().expect("default terrain pack must load");
         table.defs.push(TileDef {
             id: 9,
             glyph: ',',
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn connector_mask_center() {
-        let mut table = TileTable::default_pack();
+        let mut table = TileTable::default_pack().expect("default terrain pack must load");
         // id 1 wall with connect 1
         table.defs[1].connect_mask = 1;
         table.defs.push(TileDef {

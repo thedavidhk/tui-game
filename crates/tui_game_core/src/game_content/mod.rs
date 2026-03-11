@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn validate_level_rejects_unknown_spawn_kind() {
         let p = content_pack();
-        let table = TileTable::default_pack();
+        let table = TileTable::default_pack().expect("default terrain pack must load");
         let map = MapGrid::filled(4, 4, 0, table);
         let level = LevelFile::from_map(
             &map,
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn validate_level_rejects_unknown_tile_id() {
         let p = content_pack();
-        let table = TileTable::default_pack();
+        let table = TileTable::default_pack().expect("default terrain pack must load");
         let mut level = LevelFile::from_map(&MapGrid::filled(2, 2, 0, table), "x", vec![]);
         level.tiles[0] = 99;
         let err = p.validate_level(&level).unwrap_err();

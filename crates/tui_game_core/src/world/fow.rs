@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn origin_visible_open_map() {
-        let table = TileTable::default_pack();
+        let table = TileTable::default_pack().expect("default terrain pack must load");
         let map = MapGrid::filled(7, 7, 0, table);
         let mut vis = vec![false; 49];
         compute_visible(&map, 3, 3, 3, &mut vis);
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn wall_blocks_los() {
-        let table = TileTable::default_pack();
+        let table = TileTable::default_pack().expect("default terrain pack must load");
         let mut map = MapGrid::filled(7, 7, 0, table);
         map.set_tile(3, 3, 1);
         let mut vis = vec![false; 49];
