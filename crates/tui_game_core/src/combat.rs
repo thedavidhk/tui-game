@@ -394,8 +394,26 @@ mod tests {
     #[test]
     fn attack_reduces_hp_and_can_end_combat() {
         let mut arena = EntityArena::new();
-        let a = arena.spawn(GridPos { x: 1, y: 1 }, 'a', "A".into(), true, None, None, false);
-        let b = arena.spawn(GridPos { x: 2, y: 1 }, 'b', "B".into(), true, None, None, false);
+        let a = arena.spawn(
+            GridPos { x: 1, y: 1 },
+            'a',
+            crate::render::Color::rgb(220, 160, 120),
+            "A".into(),
+            true,
+            None,
+            None,
+            false,
+        );
+        let b = arena.spawn(
+            GridPos { x: 2, y: 1 },
+            'b',
+            crate::render::Color::rgb(220, 160, 120),
+            "B".into(),
+            true,
+            None,
+            None,
+            false,
+        );
         arena.set_stats(a, ActorStats::from_full(10, 10, 100, 5, 8));
         arena.set_stats(b, ActorStats::from_full(2, 2, 2, 0, 4));
         let mut seed = 7;

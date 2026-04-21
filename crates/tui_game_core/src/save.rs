@@ -62,6 +62,7 @@ mod tests {
         let p = ents.spawn(
             crate::entity::GridPos { x: 1, y: 1 },
             '@',
+            crate::render::Color::rgb(255, 235, 180),
             "Hero".into(),
             false,
             None,
@@ -98,6 +99,7 @@ mod tests {
         let p = ents.spawn(
             crate::entity::GridPos { x: 1, y: 1 },
             '@',
+            crate::render::Color::rgb(255, 235, 180),
             "Hero".into(),
             false,
             None,

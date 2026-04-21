@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::render::Color;
 use crate::world::{mix64, MapGrid, TileDef, TileId, TileTable};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -9,8 +10,12 @@ pub struct EntitySpawn {
     pub kind: String,
     pub x: i32,
     pub y: i32,
-    pub glyph: char,
-    pub name: String,
+    #[serde(default)]
+    pub glyph_override: Option<char>,
+    #[serde(default)]
+    pub name_override: Option<String>,
+    #[serde(default)]
+    pub fg_override: Option<Color>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -202,8 +207,9 @@ mod tests {
                 kind: "guide".into(),
                 x: 2,
                 y: 1,
-                glyph: 'g',
-                name: "Guide".into(),
+                glyph_override: None,
+                name_override: None,
+                fg_override: None,
             }],
         );
         let s = level_to_ron(&level).unwrap();

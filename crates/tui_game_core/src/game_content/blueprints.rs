@@ -1,10 +1,11 @@
-use crate::content::{Disposition, EntityBlueprint};
+use crate::content::{Disposition, EntityBlueprint, Rgb24};
 
 pub const BLUEPRINT_PROP: EntityBlueprint = EntityBlueprint {
     kind: "prop",
     display_name: "Prop",
     description: "Set dressing; no dialogue hook.",
     default_glyph: '*',
+    default_fg: Rgb24::new(185, 170, 140),
     default_label: "Crate",
     dialogue_id: None,
     world_item: None,
@@ -22,6 +23,7 @@ pub const BLUEPRINT_HEALTH_TONIC_DROP: EntityBlueprint = EntityBlueprint {
     display_name: "Health tonic",
     description: "World pickup for healer quest.",
     default_glyph: '!',
+    default_fg: Rgb24::new(235, 120, 120),
     default_label: "Tonic",
     dialogue_id: None,
     world_item: Some("health_tonic"),
@@ -39,6 +41,7 @@ pub const BLUEPRINT_BRASS_RING_DROP: EntityBlueprint = EntityBlueprint {
     display_name: "Brass ring",
     description: "World pickup for scholar quest.",
     default_glyph: '=',
+    default_fg: Rgb24::new(230, 210, 120),
     default_label: "Ring",
     dialogue_id: None,
     world_item: Some("brass_ring"),
@@ -56,6 +59,7 @@ pub const BLUEPRINT_WOODEN_CHEST: EntityBlueprint = EntityBlueprint {
     display_name: "Wooden chest",
     description: "Storage; press E nearby to open transfer.",
     default_glyph: '□',
+    default_fg: Rgb24::new(210, 165, 115),
     default_label: "Chest",
     dialogue_id: None,
     world_item: None,

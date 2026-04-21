@@ -125,8 +125,9 @@ mod tests {
                 kind: "no_such_npc".into(),
                 x: 1,
                 y: 1,
-                glyph: 'x',
-                name: "X".into(),
+                glyph_override: None,
+                name_override: None,
+                fg_override: None,
             }],
         );
         let err = p.validate_level(&level).unwrap_err();

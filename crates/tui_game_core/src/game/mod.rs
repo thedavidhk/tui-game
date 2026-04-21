@@ -229,8 +229,11 @@ impl Game {
             };
             let eid = entities.spawn(
                 GridPos { x: s.x, y: s.y },
-                s.glyph,
-                s.name.clone(),
+                s.glyph_override.unwrap_or(bp.default_glyph),
+                s.fg_override.unwrap_or_else(|| bp.default_fg.to_render_color()),
+                s.name_override
+                    .clone()
+                    .unwrap_or_else(|| bp.default_label.to_string()),
                 blocks_movement,
                 npc,
                 item,
@@ -245,6 +248,7 @@ impl Game {
                 y: (map.height / 2) as i32,
             },
             '@',
+            Color::rgb(255, 235, 180),
             "You".into(),
             false,
             None,
@@ -1841,9 +1845,22 @@ impl Game {
             let screen_x = area.x + sx as u16;
             let screen_y = area.y + sy as u16;
             let g = self.entities.glyph[i];
+            let eid = EntityId(i as u32);
+            let is_npc = self.entities.npc_kind[i].is_some();
+            let base_fg = self.entities.fg[i];
+            let relation_fg = if is_npc {
+                match self.relation_to_player(eid) {
+                    Relation::Hostile => Some(Color::rgb(240, 95, 95)),
+                    // Reserve green for true allies only (party / joins the player in fights).
+                    Relation::Allied => Some(Color::rgb(120, 240, 140)),
+                    Relation::Friendly | Relation::Neutral => Some(base_fg),
+                }
+            } else {
+                None
+            };
             let c = Cell {
                 ch: g,
-                fg: Color::rgb(255, 200, 120),
+                fg: relation_fg.unwrap_or(base_fg),
                 bg: Color::rgb(20, 18, 28),
                 style: Style {
                     bold: true,

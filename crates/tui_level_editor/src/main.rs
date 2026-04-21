@@ -146,8 +146,9 @@ impl Editor {
                 kind: "guide".into(),
                 x: 10,
                 y: 8,
-                glyph: 'g',
-                name: "Guide".into(),
+                glyph_override: None,
+                name_override: None,
+                fg_override: None,
             }],
             visual_seed: None,
         }
@@ -262,6 +263,22 @@ impl Editor {
 
     fn current_spawn_blueprint(&self) -> Option<&'static EntityBlueprint> {
         self.content.entity_blueprints.get(self.spawn_blueprint_idx)
+    }
+
+    fn spawn_glyph(&self, spawn: &EntitySpawn) -> char {
+        spawn.glyph_override.unwrap_or_else(|| {
+            self.content
+                .blueprint(spawn.kind.as_str())
+                .map_or('?', |bp| bp.default_glyph)
+        })
+    }
+
+    fn spawn_fg(&self, spawn: &EntitySpawn) -> Color {
+        spawn.fg_override.unwrap_or_else(|| {
+            self.content
+                .blueprint(spawn.kind.as_str())
+                .map_or(Color::rgb(255, 160, 80), |bp| bp.default_fg.to_render_color())
+        })
     }
 
     fn resize_level(&mut self, nw: u16, nh: u16) {
@@ -495,8 +512,9 @@ impl Editor {
             kind: bp.kind.to_string(),
             x: self.cursor_x,
             y: self.cursor_y,
-            glyph: bp.default_glyph,
-            name: bp.default_label.to_string(),
+            glyph_override: None,
+            name_override: None,
+            fg_override: None,
         });
         self.status = format!(
             "Spawn {} at ({}, {}).",
@@ -878,8 +896,9 @@ impl Editor {
                         kind: bp.kind.to_string(),
                         x: self.cursor_x,
                         y: self.cursor_y,
-                        glyph: bp.default_glyph,
-                        name: bp.default_label.to_string(),
+                        glyph_override: None,
+                        name_override: None,
+                        fg_override: None,
                     });
                     self.status = format!(
                         "Spawn {} at ({}, {}).",
@@ -1223,8 +1242,8 @@ impl Editor {
                     }
                 }
                 let c = Cell {
-                    ch: s.glyph,
-                    fg: Color::rgb(255, 160, 80),
+                    ch: self.spawn_glyph(s),
+                    fg: self.spawn_fg(s),
                     bg: spawn_bg,
                     style: Style {
                         bold: true,

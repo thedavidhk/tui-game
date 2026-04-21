@@ -1,5 +1,5 @@
 use crate::content::{
-    Condition, DemoQuestPhase, Disposition, Effect, EntityBlueprint, QuestJournalStatus,
+    Condition, DemoQuestPhase, Disposition, Effect, EntityBlueprint, QuestJournalStatus, Rgb24,
 };
 use crate::game_content::{dialogue_tree, effects, quests, requires};
 use crate::narrative::{NarrativeApplyError, NarrativeState};
@@ -8,7 +8,8 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "guide",
     display_name: "Guide",
     description: "Demo NPC; dialogue id \"guide\".",
-    default_glyph: 'g',
+    default_glyph: '♟',
+    default_fg: Rgb24::new(240, 233, 220),
     default_label: "Guide",
     dialogue_id: Some("guide"),
     world_item: None,

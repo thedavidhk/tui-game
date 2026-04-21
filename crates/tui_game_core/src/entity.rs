@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::item::ItemStack;
+use crate::render::Color;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EntityId(pub u32);
@@ -47,6 +48,8 @@ pub struct EntityArena {
     pub position: Vec<Option<GridPos>>,
     pub blocks_movement: Vec<bool>,
     pub glyph: Vec<char>,
+    #[serde(default)]
+    pub fg: Vec<Color>,
     pub name: Vec<String>,
     /// If `Some`, entity is interactable as NPC with this content id string.
     pub npc_kind: Vec<Option<String>>,
@@ -69,6 +72,7 @@ impl EntityArena {
         &mut self,
         pos: GridPos,
         glyph: char,
+        fg: Color,
         name: String,
         blocks_movement: bool,
         npc_kind: Option<String>,
@@ -83,6 +87,7 @@ impl EntityArena {
         self.position[i] = Some(pos);
         self.blocks_movement[i] = blocks_movement;
         self.glyph[i] = glyph;
+        self.fg[i] = fg;
         self.name[i] = name;
         self.npc_kind[i] = npc_kind;
         self.item[i] = item;
@@ -96,6 +101,7 @@ impl EntityArena {
             self.position.push(None);
             self.blocks_movement.push(false);
             self.glyph.push('?');
+            self.fg.push(Color::default());
             self.name.push(String::new());
             self.npc_kind.push(None);
             self.item.push(None);
@@ -132,6 +138,7 @@ impl EntityArena {
         self.item[i] = None;
         self.is_container[i] = false;
         self.glyph[i] = '?';
+        self.fg[i] = Color::default();
         self.name[i].clear();
         self.combat_stats[i] = ActorStats::default();
     }

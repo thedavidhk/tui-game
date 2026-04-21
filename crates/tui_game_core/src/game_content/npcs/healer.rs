@@ -1,4 +1,4 @@
-use crate::content::{Condition, Disposition, Effect, EntityBlueprint, QuestJournalStatus};
+use crate::content::{Condition, Disposition, Effect, EntityBlueprint, QuestJournalStatus, Rgb24};
 use crate::game_content::{dialogue_tree, effects, quests, requires};
 use crate::narrative::{NarrativeApplyError, NarrativeState};
 
@@ -6,7 +6,8 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "healer",
     display_name: "Healer",
     description: "Simple tonic fetch quest (dialogue \"healer\").",
-    default_glyph: 'h',
+    default_glyph: '♟',
+    default_fg: Rgb24::new(220, 243, 230),
     default_label: "Healer",
     dialogue_id: Some("healer"),
     world_item: None,

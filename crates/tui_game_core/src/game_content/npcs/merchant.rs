@@ -1,4 +1,4 @@
-use crate::content::{Disposition, Effect, EntityBlueprint, QuestJournalStatus};
+use crate::content::{Disposition, Effect, EntityBlueprint, QuestJournalStatus, Rgb24};
 use crate::game_content::{dialogue_tree, effects, quests, requires};
 use crate::narrative::{NarrativeApplyError, NarrativeState};
 
@@ -8,7 +8,8 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "merchant",
     display_name: "Merchant",
     description: "Flavor NPC (dialogue \"merchant\").",
-    default_glyph: 'm',
+    default_glyph: '♟',
+    default_fg: Rgb24::new(220, 233, 243),
     default_label: "Merchant",
     dialogue_id: Some("merchant"),
     world_item: None,

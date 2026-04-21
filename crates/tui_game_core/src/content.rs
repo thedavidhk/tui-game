@@ -102,6 +102,24 @@ pub enum Relation {
     Hostile,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Rgb24 {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl Rgb24 {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+
+    #[must_use]
+    pub const fn to_render_color(self) -> crate::render::Color {
+        crate::render::Color::rgb(self.r, self.g, self.b)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct DialogueChoice {
     pub label: &'static str,
@@ -202,6 +220,7 @@ pub struct EntityBlueprint {
     /// One-line summary for tooling (editor sidebar, docs).
     pub description: &'static str,
     pub default_glyph: char,
+    pub default_fg: Rgb24,
     pub default_label: &'static str,
     /// When set, must exist in `ContentPack::dialogues` and is used as `npc_kind` for talk hooks.
     pub dialogue_id: Option<&'static str>,
@@ -452,7 +471,7 @@ mod validate_tests {
 
     use super::{
         Condition, ContentPack, Disposition, DialogueChoice, DialogueNode, DialogueTree, Effect,
-        EntityBlueprint, NOOP_CONTENT_RUNTIME_HOOKS, QuestDef,
+        EntityBlueprint, NOOP_CONTENT_RUNTIME_HOOKS, QuestDef, Rgb24,
     };
     use crate::item::{ItemCategory, ItemDef};
 
@@ -504,6 +523,7 @@ mod validate_tests {
             display_name: "X",
             description: "x",
             default_glyph: 'x',
+            default_fg: Rgb24::new(200, 200, 200),
             default_label: "X",
             dialogue_id: None,
             world_item: Some("nope"),

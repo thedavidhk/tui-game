@@ -1,4 +1,4 @@
-use crate::content::{Condition, Disposition, Effect, EntityBlueprint, QuestJournalStatus};
+use crate::content::{Condition, Disposition, Effect, EntityBlueprint, QuestJournalStatus, Rgb24};
 use crate::game_content::{dialogue_tree, effects, quests, requires};
 use crate::narrative::{NarrativeApplyError, NarrativeState};
 
@@ -6,7 +6,8 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "scholar",
     display_name: "Scholar",
     description: "Ring hand-in quest (dialogue \"scholar\").",
-    default_glyph: 's',
+    default_glyph: '♟',
+    default_fg: Rgb24::new(233, 225, 241),
     default_label: "Scholar",
     dialogue_id: Some("scholar"),
     world_item: None,
