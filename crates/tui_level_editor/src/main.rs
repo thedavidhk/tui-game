@@ -1468,7 +1468,7 @@ impl Editor {
         let right = inner.right();
         let bg = Color::rgb(18, 16, 22);
         let meta_fg = Color::rgb(175, 170, 160);
-        let gcol = Color::rgb(255, 160, 80);
+        let gcol = bp.default_fg.to_render_color();
         let mut x = inner.x;
         let mut put = |ch: char, fg: Color| -> bool {
             if x >= right {
