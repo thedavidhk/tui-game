@@ -3,6 +3,7 @@
 pub(super) mod combat;
 pub(super) mod dialogue;
 pub(super) mod exploration;
+pub(super) mod game_over;
 pub(super) mod inventory;
 pub(super) mod journal;
 pub(super) mod menu;
@@ -22,5 +23,6 @@ pub fn route(game: &mut Game, ev: InputEvent) {
         Some(GameMode::Journal { .. }) => game.handle_journal(ev),
         Some(GameMode::ItemTransfer { .. }) => game.handle_item_transfer(ev),
         Some(GameMode::Combat(ref c)) => game.handle_combat(ev, c.clone()),
+        Some(GameMode::GameOver) => game.handle_game_over(ev),
     }
 }

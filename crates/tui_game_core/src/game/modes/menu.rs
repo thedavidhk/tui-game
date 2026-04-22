@@ -37,9 +37,19 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, selected: usize) {
             if matches!(k.key, Key::Enter) {
                 match selected {
                     0 => {
-                        game.modes.stack = vec![GameMode::Exploration];
-                        game.log.push("Entered world.".into());
-                        game.refresh_fow();
+                        let needs_full_reset = game.player_id().map_or(true, |pid| {
+                            !game.entities.is_alive(pid) || game.entities.pos(pid).is_none()
+                        });
+                        if needs_full_reset {
+                            match game.restart_new_game() {
+                                Ok(()) => {}
+                                Err(e) => game.log.push(format!("Could not start new game: {e}")),
+                            }
+                        } else {
+                            game.modes.stack = vec![GameMode::Exploration];
+                            game.log.push("Entered world.".into());
+                            game.refresh_fow();
+                        }
                     }
                     1 => {
                         game.quit_requested = true;

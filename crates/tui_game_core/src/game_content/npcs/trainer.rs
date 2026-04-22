@@ -1,4 +1,4 @@
-use crate::content::{DialogueAction, Disposition, EntityBlueprint, Rgb24};
+use crate::content::{DialogueAction, Disposition, EntityBlueprint, NpcBehaviorDef, Rgb24};
 use crate::game_content::{dialogue_tree, effects, requires};
 
 pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
@@ -8,6 +8,8 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     default_glyph: '♟',
     default_fg: Rgb24::new(240, 227, 227),
     default_label: "Trainer",
+    is_actor: true,
+    behavior: NpcBehaviorDef::idle(),
     dialogue_id: Some("trainer"),
     world_item: None,
     is_container: false,

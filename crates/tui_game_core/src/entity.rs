@@ -12,6 +12,14 @@ pub struct GridPos {
     pub y: i32,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NpcBrainState {
+    pub home: GridPos,
+    pub roam_goal: Option<GridPos>,
+    pub patrol_next_stop: u16,
+    pub patrol_wait_ticks: u16,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActorStats {
     pub hp: u16,
@@ -59,6 +67,8 @@ pub struct EntityArena {
     pub is_container: Vec<bool>,
     #[serde(default)]
     pub combat_stats: Vec<ActorStats>,
+    #[serde(default)]
+    pub npc_brain: Vec<NpcBrainState>,
     /// Player entity always id 0 after bootstrap if used.
     pub player: Option<EntityId>,
 }
@@ -92,6 +102,12 @@ impl EntityArena {
         self.npc_kind[i] = npc_kind;
         self.item[i] = item;
         self.is_container[i] = is_container;
+        self.npc_brain[i] = NpcBrainState {
+            home: pos,
+            roam_goal: None,
+            patrol_next_stop: 0,
+            patrol_wait_ticks: 0,
+        };
         id
     }
 
@@ -107,6 +123,7 @@ impl EntityArena {
             self.item.push(None);
             self.is_container.push(false);
             self.combat_stats.push(ActorStats::default());
+            self.npc_brain.push(NpcBrainState::default());
         }
     }
 
@@ -141,6 +158,7 @@ impl EntityArena {
         self.fg[i] = Color::default();
         self.name[i].clear();
         self.combat_stats[i] = ActorStats::default();
+        self.npc_brain[i] = NpcBrainState::default();
     }
 
     pub fn set_player(&mut self, id: EntityId) {

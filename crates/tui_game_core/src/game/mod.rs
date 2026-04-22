@@ -14,12 +14,14 @@ use crate::combat::{
     CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy, EncounterProfile,
     ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
 };
-use crate::content::{ContentPack, DialogueAction, QuestJournalStatus, Relation};
+use crate::content::{
+    ContentPack, DialogueAction, HostileTriggerDef, NpcRoutineDef, QuestJournalStatus, Relation,
+};
 use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, MouseCell};
 use crate::item::ItemStack;
-use crate::level::{derive_visual_seed, derive_visual_seed_from_map, LevelFile};
+use crate::level::{derive_visual_seed, derive_visual_seed_from_map, level_from_ron, LevelFile};
 use crate::narrative::NarrativeState;
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
@@ -35,6 +37,7 @@ use crate::world::{
 };
 
 const FOW_RADIUS: i32 = 16;
+const NPC_EXPLORATION_AI_COOLDOWN_TICKS: u16 = 6;
 
 #[derive(Clone, Debug)]
 struct PendingForcedDialogue {
@@ -94,6 +97,8 @@ pub enum GameMode {
         cursor_container: usize,
     },
     Combat(CombatState),
+    /// Lethal defeat: world frozen until the player returns to the main menu.
+    GameOver,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +152,8 @@ pub struct Game {
     player_walk_tick_cooldown: u16,
     /// When > 0, NPC combat AI waits (same tick pacing as exploration auto-walk).
     npc_combat_ai_tick_cooldown: u16,
+    /// Shared pacing gate for exploration NPC movement.
+    npc_exploration_ai_tick_cooldown: u16,
     /// Last mouse cell over the world view while exploring (for hover text).
     pub exploration_hover_cell: Option<MouseCell>,
     /// Last mouse cell over the world view during combat (for hover text).
@@ -159,6 +166,8 @@ pub struct Game {
     viewport_edge_scroll_cooldown: u16,
     pending_forced_dialogue: Option<PendingForcedDialogue>,
     pending_player_action: Option<PendingPlayerAction>,
+    /// When set, [`Game::restart_new_game`] reloads this `.ron`; when `None`, uses the embedded demo level.
+    pub restart_level_ron_path: Option<String>,
 }
 
 impl Game {
@@ -218,7 +227,11 @@ impl Game {
                     s.kind
                 )
             })?;
-            let npc = bp.dialogue_id.map(std::string::ToString::to_string);
+            let npc = if bp.is_actor {
+                Some(s.kind.clone())
+            } else {
+                None
+            };
             let item = bp.world_item.map(|id| ItemStack::new(id, 1));
             let blocks_movement = if item.is_some() {
                 false
@@ -283,6 +296,7 @@ impl Game {
             player_walk_goal: None,
             player_walk_tick_cooldown: 0,
             npc_combat_ai_tick_cooldown: 0,
+            npc_exploration_ai_tick_cooldown: 0,
             exploration_hover_cell: None,
             combat_hover_cell: None,
             last_world_pointer_cell: None,
@@ -290,9 +304,34 @@ impl Game {
             viewport_edge_scroll_cooldown: 0,
             pending_forced_dialogue: None,
             pending_player_action: None,
+            restart_level_ron_path: None,
         };
         game.refresh_fow();
         Ok(game)
+    }
+
+    /// Remember a level file path so "Start game" after game over (or similar) reloads the same level.
+    pub fn set_restart_level_ron_path(&mut self, path: Option<String>) {
+        self.restart_level_ron_path = path;
+    }
+
+    /// Full world reset from the embedded demo or [`Self::restart_level_ron_path`], then exploration mode.
+    pub fn restart_new_game(&mut self) -> Result<(), String> {
+        let stored_path = self.restart_level_ron_path.clone();
+        let level = if let Some(ref p) = stored_path {
+            let raw = fs::read_to_string(p).map_err(|e| format!("read {p}: {e}"))?;
+            level_from_ron(&raw).map_err(|e| e.to_string())?
+        } else {
+            game_content::embedded_demo_level()
+        };
+        let vw = self.viewport_w;
+        let vh = self.viewport_h;
+        let mut g = Self::from_level_file(&level, vw, vh)?;
+        g.restart_level_ron_path = stored_path;
+        g.modes.stack = vec![GameMode::Exploration];
+        g.log.push("New game.".into());
+        *self = g;
+        Ok(())
     }
 
     fn player_id(&self) -> Option<EntityId> {
@@ -341,7 +380,16 @@ impl Game {
         }
         if let Some(occ) = self.entities.first_npc_at(nx, ny) {
             if occ != pid {
-                self.start_dialogue(occ);
+                let can_talk = self
+                    .entities
+                    .npc_kind
+                    .get(occ.0 as usize)
+                    .and_then(|k| k.as_deref())
+                    .and_then(|kind| self.content.blueprint(kind))
+                    .is_some_and(|bp| bp.dialogue_id.is_some());
+                if can_talk {
+                    self.start_dialogue(occ);
+                }
                 return false;
             }
         }
@@ -670,6 +718,7 @@ impl Game {
             self.handle_event(ev.clone());
         }
         self.step_npc_combat_ai();
+        self.step_npc_exploration_ai();
         self.step_player_walk();
         self.pump_pending_player_action();
         self.pump_pending_forced_dialogue();
@@ -770,6 +819,128 @@ impl Game {
         if let Some(GameMode::Combat(cs)) = self.modes.current_mut() {
             *cs = next;
         }
+    }
+
+    fn hostile_trigger_met(&self, eid: EntityId, trigger: HostileTriggerDef) -> bool {
+        let Some(pp) = self.player_pos() else {
+            return false;
+        };
+        let Some(ep) = self.entities.pos(eid) else {
+            return false;
+        };
+        match trigger {
+            HostileTriggerDef::PlayerWithinChebyshev { range } => {
+                services::hover::chebyshev(pp, ep) <= i32::from(range)
+            }
+        }
+    }
+
+    fn maybe_start_hostile_encounter(&mut self) -> bool {
+        let Some(pid) = self.player_id() else {
+            return false;
+        };
+        for i in 0..self.entities.alive.len() {
+            if !self.entities.alive[i] {
+                continue;
+            }
+            let eid = EntityId(i as u32);
+            if eid == pid {
+                continue;
+            }
+            let Some(kind) = self.entities.npc_kind.get(i).and_then(|k| k.as_deref()) else {
+                continue;
+            };
+            let Some(bp) = self.content.blueprint(kind) else {
+                continue;
+            };
+            let Some(trigger) = bp.behavior.hostile_trigger else {
+                continue;
+            };
+            if !matches!(self.relation_to_player(eid), Relation::Hostile) {
+                continue;
+            }
+            if !self.hostile_trigger_met(eid, trigger) {
+                continue;
+            }
+            self.start_combat_encounter(
+                vec![pid, eid],
+                EncounterProfile {
+                    ruleset: CombatRuleset::Lethal,
+                    outcome_policy: EncounterOutcomePolicy::None,
+                },
+                "Hostile contact!",
+            );
+            return true;
+        }
+        false
+    }
+
+    fn step_npc_exploration_ai(&mut self) {
+        if !matches!(self.modes.current(), Some(GameMode::Exploration)) {
+            self.npc_exploration_ai_tick_cooldown = 0;
+            return;
+        }
+        if self.maybe_start_hostile_encounter() {
+            self.npc_exploration_ai_tick_cooldown = 0;
+            return;
+        }
+        if self.npc_exploration_ai_tick_cooldown > 0 {
+            self.npc_exploration_ai_tick_cooldown =
+                self.npc_exploration_ai_tick_cooldown.saturating_sub(1);
+            return;
+        }
+
+        let mut moved_any = false;
+        for i in 0..self.entities.alive.len() {
+            if !self.entities.alive[i] {
+                continue;
+            }
+            let eid = EntityId(i as u32);
+            if self.player_id() == Some(eid) {
+                continue;
+            }
+            let Some(kind) = self.entities.npc_kind.get(i).and_then(|k| k.as_deref()) else {
+                continue;
+            };
+            let Some(bp) = self.content.blueprint(kind) else {
+                continue;
+            };
+            let Some(from) = self.entities.pos(eid) else {
+                continue;
+            };
+            let mut brain = self.entities.npc_brain.get(i).copied().unwrap_or_default();
+            let next = match bp.behavior.routine {
+                NpcRoutineDef::Idle => None,
+                routine => crate::ai::exploration::next_exploration_step(
+                    eid,
+                    from,
+                    routine,
+                    &mut brain,
+                    &self.map,
+                    &self.entities,
+                    &mut self.rng_seed,
+                ),
+            };
+            if let Some(slot) = self.entities.npc_brain.get_mut(i) {
+                *slot = brain;
+            }
+            let Some(target) = next else {
+                continue;
+            };
+            if self.entities.can_move_to(
+                self.map.blocks_movement(target.x, target.y),
+                target,
+                Some(eid),
+            ) {
+                self.entities.set_pos(eid, target);
+                moved_any = true;
+            }
+        }
+        self.npc_exploration_ai_tick_cooldown = if moved_any {
+            NPC_EXPLORATION_AI_COOLDOWN_TICKS
+        } else {
+            0
+        };
     }
 
     fn handle_event(&mut self, ev: InputEvent) {
@@ -1516,11 +1687,13 @@ impl Game {
         if report.end_combat {
             self.finish_combat(state);
         }
+        self.refresh_fow();
     }
 
     fn finish_combat(&mut self, state: &CombatState) {
         self.npc_combat_ai_tick_cooldown = 0;
         self.combat_hover_cell = None;
+        self.clear_player_walk();
         if matches!(
             state.profile.ruleset,
             CombatRuleset::NonLethalSpar | CombatRuleset::NonLethalBrawl
@@ -1536,6 +1709,14 @@ impl Game {
         }
         self.log.push("Combat ended.".into());
         let _ = self.modes.pop();
+        if matches!(state.profile.ruleset, CombatRuleset::Lethal)
+            && self
+                .player_id()
+                .is_some_and(|pid| !self.entities.is_alive(pid))
+        {
+            self.modes.stack = vec![GameMode::GameOver];
+            self.log.push("You have fallen.".into());
+        }
     }
 
     /// Leave combat from the UI (Esc); message is logged before combat state is torn down.
@@ -1563,8 +1744,13 @@ impl Game {
             Some(GameMode::Journal { .. }) => "journal",
             Some(GameMode::ItemTransfer { .. }) => "transfer",
             Some(GameMode::Combat(_)) => "combat",
+            Some(GameMode::GameOver) => "game over",
             None => "none",
         }
+    }
+
+    pub(crate) fn handle_game_over(&mut self, ev: InputEvent) {
+        modes::game_over::handle(self, ev);
     }
 
     fn compose_journal_overlay(&self, fb: &mut FrameBuffer, quest_cursor: usize) {
@@ -2025,6 +2211,61 @@ mod tests {
                 .expect("combatant stats must exist");
             assert_eq!(stats.hp, stats.max_hp);
         }
+    }
+
+    #[test]
+    fn start_game_from_menu_after_player_death_restarts_world() {
+        let mut game = Game::new_bootstrapped(80, 30);
+        let player = game.player_id().expect("player must exist");
+        game.entities.despawn(player);
+        game.modes.stack = vec![GameMode::MainMenu { selected: 0 }];
+        game.handle_menu(
+            InputEvent::Key(KeyChord {
+                key: Key::Enter,
+                shift: false,
+                ctrl: false,
+                alt: false,
+            }),
+            0,
+        );
+        assert!(matches!(game.modes.current(), Some(GameMode::Exploration)));
+        assert!(
+            game.player_id().is_some_and(|pid| game.entities.is_alive(pid)),
+            "new game should respawn a living player"
+        );
+    }
+
+    #[test]
+    fn lethal_combat_player_death_enters_game_over() {
+        let mut game = Game::new_bootstrapped(80, 30);
+        let player = game.player_id().expect("player must exist");
+        let trainer = game
+            .entities
+            .npc_kind
+            .iter()
+            .enumerate()
+            .find(|(_, kind)| kind.as_deref() == Some("trainer"))
+            .map(|(idx, _)| crate::entity::EntityId(idx as u32))
+            .expect("trainer entity should exist");
+        game.entities.set_pos(player, GridPos { x: 10, y: 10 });
+        game.entities.set_pos(trainer, GridPos { x: 11, y: 10 });
+        let mut rng = 1;
+        let cs = CombatState::from_participants(
+            vec![trainer, player],
+            &game.entities,
+            game.map.width,
+            game.map.height,
+            &mut rng,
+            EncounterProfile {
+                ruleset: CombatRuleset::Lethal,
+                outcome_policy: EncounterOutcomePolicy::None,
+            },
+        );
+        game.modes.stack = vec![GameMode::Exploration];
+        game.modes.push(GameMode::Combat(cs.clone()));
+        game.entities.despawn(player);
+        game.finish_combat(&cs);
+        assert!(matches!(game.modes.current(), Some(GameMode::GameOver)));
     }
 
     #[test]

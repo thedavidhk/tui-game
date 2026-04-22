@@ -1,4 +1,6 @@
-use crate::content::{Condition, Disposition, Effect, EntityBlueprint, QuestJournalStatus, Rgb24};
+use crate::content::{
+    Condition, Disposition, Effect, EntityBlueprint, NpcBehaviorDef, QuestJournalStatus, Rgb24,
+};
 use crate::game_content::{dialogue_tree, effects, quests, requires};
 use crate::narrative::{NarrativeApplyError, NarrativeState};
 
@@ -9,6 +11,8 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     default_glyph: '♟',
     default_fg: Rgb24::new(220, 243, 230),
     default_label: "Healer",
+    is_actor: true,
+    behavior: NpcBehaviorDef::idle(),
     dialogue_id: Some("healer"),
     world_item: None,
     is_container: false,

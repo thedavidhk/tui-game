@@ -109,6 +109,9 @@ impl FloatingPanelLayout {
     pub const DEBUG_FROM_BOTTOM: u16 = 8;
     pub const DEBUG_HEIGHT: u16 = 6;
 
+    pub const GAME_OVER_W: u16 = 38;
+    pub const GAME_OVER_H: u16 = 8;
+
     #[must_use]
     pub fn main_menu() -> Rect {
         Rect::new(
@@ -144,6 +147,16 @@ impl FloatingPanelLayout {
             w,
             Self::DEBUG_HEIGHT,
         )
+    }
+
+    /// Centered panel for the game-over overlay.
+    #[must_use]
+    pub fn game_over(fb_w: u16, fb_h: u16) -> Rect {
+        let w = Self::GAME_OVER_W.min(fb_w);
+        let h = Self::GAME_OVER_H.min(fb_h);
+        let x = fb_w.saturating_sub(w) / 2;
+        let y = fb_h.saturating_sub(h) / 2;
+        Rect::new(x, y, w, h)
     }
 }
 

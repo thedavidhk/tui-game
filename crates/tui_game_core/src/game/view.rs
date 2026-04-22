@@ -36,6 +36,9 @@ pub(crate) fn compose(
             lines.push("Combat: WASD / x  Tab pass  Esc quit".into());
             lines.push("LMB act  RMB move (world)".into());
         }
+        Some(GameMode::GameOver) => {
+            lines.push("Enter or Space: main menu".into());
+        }
         _ => {
             lines.push("I: inventory  J: journal  E: talk/chest  C: combat".into());
             lines.push("F1: debug  F5/F9 save/load".into());
@@ -109,6 +112,18 @@ pub(crate) fn compose(
                 &mut game.ui_hits,
             );
         }
+    }
+
+    if matches!(game.modes.current(), Some(GameMode::GameOver)) {
+        let gr = FloatingPanelLayout::game_over(fb.width, fb.height);
+        crate::ui::draw_bordered_panel(fb, gr, "Game over");
+        let inner = crate::ui::layout::panel_inner(gr);
+        let lines = vec![
+            "Your journey ends here.".into(),
+            String::new(),
+            "Enter or Space — main menu".into(),
+        ];
+        crate::ui::draw_text_block(fb, inner, &lines);
     }
 
     if let Some(GameMode::Combat(ref c)) = game.modes.current() {

@@ -47,8 +47,10 @@ fn main() -> std::io::Result<()> {
         let level = tui_game_core::level::level_from_ron(&raw).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, format!("ron: {e}"))
         })?;
-        Game::from_level_file(&level, tw, th)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+        let mut g = Game::from_level_file(&level, tw, th)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        g.set_restart_level_ron_path(Some(path));
+        g
     } else {
         Game::new_bootstrapped(tw, th)
     };

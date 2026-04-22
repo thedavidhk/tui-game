@@ -120,6 +120,46 @@ impl Rgb24 {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PatrolStopDef {
+    pub dx: i16,
+    pub dy: i16,
+    pub wait_ticks: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NpcRoutineDef {
+    Idle,
+    Roam {
+        radius: u16,
+    },
+    Patrol {
+        stops: &'static [PatrolStopDef],
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum HostileTriggerDef {
+    PlayerWithinChebyshev {
+        range: u16,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NpcBehaviorDef {
+    pub routine: NpcRoutineDef,
+    pub hostile_trigger: Option<HostileTriggerDef>,
+}
+
+impl NpcBehaviorDef {
+    pub const fn idle() -> Self {
+        Self {
+            routine: NpcRoutineDef::Idle,
+            hostile_trigger: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct DialogueChoice {
     pub label: &'static str,
@@ -222,6 +262,10 @@ pub struct EntityBlueprint {
     pub default_glyph: char,
     pub default_fg: Rgb24,
     pub default_label: &'static str,
+    /// Actor entities participate in exploration/combat simulation and can block movement.
+    pub is_actor: bool,
+    /// Exploration routine + hostile aggro trigger for actor entities.
+    pub behavior: NpcBehaviorDef,
     /// When set, must exist in `ContentPack::dialogues` and is used as `npc_kind` for talk hooks.
     pub dialogue_id: Option<&'static str>,
     /// When set, spawn carries this world pickup (`ItemDef.id`).
@@ -471,7 +515,7 @@ mod validate_tests {
 
     use super::{
         Condition, ContentPack, Disposition, DialogueChoice, DialogueNode, DialogueTree, Effect,
-        EntityBlueprint, NOOP_CONTENT_RUNTIME_HOOKS, QuestDef, Rgb24,
+        EntityBlueprint, NOOP_CONTENT_RUNTIME_HOOKS, NpcBehaviorDef, QuestDef, Rgb24,
     };
     use crate::item::{ItemCategory, ItemDef};
 
@@ -525,6 +569,8 @@ mod validate_tests {
             default_glyph: 'x',
             default_fg: Rgb24::new(200, 200, 200),
             default_label: "X",
+            is_actor: false,
+            behavior: NpcBehaviorDef::idle(),
             dialogue_id: None,
             world_item: Some("nope"),
             is_container: false,
