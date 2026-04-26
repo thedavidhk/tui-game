@@ -1,10 +1,14 @@
 //! Level editor: `LevelFile` paint/spawns, custom tile defs, resize, named save.
+//!
+//! Hot-reload: if the `.ron` on disk changes, the editor reloads when there are no unsaved edits;
+//! otherwise it prompts (Y discard + reload, N/Esc keep). Reload only applies after RON parse and
+//! `validate_level` succeed; failures keep the previous level and show an error.
 
 use std::env;
 use std::fs;
 use std::io::{stdout, Write};
-use std::path::PathBuf;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crossterm::{
     cursor::{Hide, Show},
@@ -43,6 +47,31 @@ use tui_game_core::EntityBlueprint;
 /// Fixed width for the right-hand palette / help column.
 const EDITOR_SIDEBAR_WIDTH: u16 = 28;
 
+/// `mtime` + `len` so two writes in the same second still register as different when size changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileFingerprint {
+    len: u64,
+    modified_ns: Option<u128>,
+}
+
+impl FileFingerprint {
+    const MISSING: Self = Self {
+        len: 0,
+        modified_ns: None,
+    };
+
+    fn from_path(path: &Path) -> Option<Self> {
+        let m = fs::metadata(path).ok()?;
+        let len = m.len();
+        let modified_ns = m.modified().ok().and_then(|st| {
+            st.duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_nanos())
+        });
+        Some(Self { len, modified_ns })
+    }
+}
+
 struct Editor {
     path: PathBuf,
     level: LevelFile,
@@ -76,6 +105,12 @@ struct Editor {
     tile_display: Vec<TileDisplayCell>,
     map_visual_seed: u64,
     surface_tick: u64,
+    /// True after any edit not yet written with Ctrl+S / save dialog.
+    dirty: bool,
+    /// Last known on-disk fingerprint we treated as "in sync" (load, save, reload, or dismiss prompt).
+    last_disk_fingerprint: FileFingerprint,
+    /// Rate-limit disk reads for hot-reload.
+    last_hot_reload_poll: Instant,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +148,8 @@ enum Dialog {
         color_idx: usize,
         focus: u8,
     },
+    /// External file changed while the in-memory level has unsaved edits.
+    HotReloadUnsaved,
 }
 
 impl Editor {
@@ -186,6 +223,7 @@ impl Editor {
         let map_visual_seed = level
             .visual_seed
             .unwrap_or_else(|| derive_visual_seed(&level));
+        let last_disk_fingerprint = FileFingerprint::from_path(path).unwrap_or(FileFingerprint::MISSING);
         let mut ed = Self {
             path: path.clone(),
             level,
@@ -211,9 +249,99 @@ impl Editor {
             tile_display: Vec::new(),
             map_visual_seed,
             surface_tick: 0,
+            dirty: false,
+            last_disk_fingerprint,
+            last_hot_reload_poll: Instant::now(),
         };
         ed.rebuild_tile_display_full();
         ed
+    }
+
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    fn refresh_disk_fingerprint(&mut self) {
+        self.last_disk_fingerprint = FileFingerprint::from_path(&self.path).unwrap_or(FileFingerprint::MISSING);
+    }
+
+    /// Parse and validate `path` without mutating editor state.
+    fn load_level_from_disk(path: &Path, content: &ContentPack) -> Result<LevelFile, String> {
+        let raw = fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        let level = level_from_ron(&raw).map_err(|e| format!("RON parse: {e}"))?;
+        content
+            .validate_level(&level)
+            .map_err(|e| format!("level check: {e}"))?;
+        Ok(level)
+    }
+
+    fn apply_reloaded_level(&mut self, new_level: LevelFile) {
+        self.level = new_level;
+        self.map_visual_seed = self
+            .level
+            .visual_seed
+            .unwrap_or_else(|| derive_visual_seed(&self.level));
+        self.dirty = false;
+        self.refresh_disk_fingerprint();
+        self.cursor_x = self
+            .cursor_x
+            .clamp(0, self.level.width as i32 - 1);
+        self.cursor_y = self
+            .cursor_y
+            .clamp(0, self.level.height as i32 - 1);
+        if self.level.tile_defs.is_empty() {
+            self.current_tile = 0;
+        } else if !self.level.tile_defs.iter().any(|d| d.id == self.current_tile) {
+            self.current_tile = self.level.tile_defs[0].id;
+        }
+        let n = self.content.entity_blueprints.len();
+        if n > 0 {
+            self.spawn_blueprint_idx = self.spawn_blueprint_idx.min(n - 1);
+        } else {
+            self.spawn_blueprint_idx = 0;
+        }
+        self.clamp_editor_view();
+        self.ensure_cursor_visible();
+        self.rebuild_tile_display_full();
+    }
+
+    fn try_hot_reload_replace(&mut self) -> Result<(), String> {
+        let new_level = Self::load_level_from_disk(&self.path, &self.content)?;
+        self.apply_reloaded_level(new_level);
+        self.status = format!("Hot-reloaded {}", self.path.display());
+        Ok(())
+    }
+
+    /// Called every frame from the main loop. Reloads when the file changes on disk if safe.
+    fn poll_hot_reload(&mut self) {
+        const INTERVAL: Duration = Duration::from_millis(250);
+        if self.last_hot_reload_poll.elapsed() < INTERVAL {
+            return;
+        }
+        self.last_hot_reload_poll = Instant::now();
+        if self.dialog.is_some() {
+            return;
+        }
+        let Some(disk_fp) = FileFingerprint::from_path(&self.path) else {
+            return;
+        };
+        if disk_fp == self.last_disk_fingerprint {
+            return;
+        }
+        if !self.dirty {
+            match self.try_hot_reload_replace() {
+                Ok(()) => {}
+                Err(e) => {
+                    self.status = format!("Hot-reload skipped: {e}");
+                    self.last_disk_fingerprint = disk_fp;
+                }
+            }
+            return;
+        }
+        self.dialog = Some(Dialog::HotReloadUnsaved);
+        self.status =
+            "File changed on disk (unsaved edits). Y: reload & discard   N/Esc: keep editing."
+                .into();
     }
 
     fn rebuild_tile_display_full(&mut self) {
@@ -231,6 +359,8 @@ impl Editor {
             .map_err(|e| e.to_string())?;
         let s = level_to_ron(&self.level).map_err(|e| e.to_string())?;
         fs::write(&self.path, s).map_err(|e| e.to_string())?;
+        self.dirty = false;
+        self.refresh_disk_fingerprint();
         self.status = format!("Saved {}", self.path.display());
         Ok(())
     }
@@ -302,6 +432,7 @@ impl Editor {
         self.level.width = nw;
         self.level.height = nh;
         self.level.tiles = new_tiles;
+        self.mark_dirty();
         self.level
             .spawns
             .retain(|s| s.x >= 0 && s.y >= 0 && (s.x as u16) < nw && (s.y as u16) < nh);
@@ -459,6 +590,7 @@ impl Editor {
         let i = ty as usize * self.level.width as usize + tx as usize;
         if i < self.level.tiles.len() {
             self.level.tiles[i] = tile;
+            self.mark_dirty();
         }
     }
 
@@ -479,6 +611,7 @@ impl Editor {
             self.set_tile_clamped(tx, ty, t);
         });
         self.status = format!("Filled tiles ({x0},{y0})—({x1},{y1}).");
+        self.mark_dirty();
         self.rebuild_tile_display_full();
     }
 
@@ -493,7 +626,11 @@ impl Editor {
         self.level
             .spawns
             .retain(|s| !cell_in_brush(s.x, s.y, cx, cy, r));
-        before.saturating_sub(self.level.spawns.len())
+        let removed = before.saturating_sub(self.level.spawns.len());
+        if removed > 0 {
+            self.mark_dirty();
+        }
+        removed
     }
 
     /// Remove every spawn in the inclusive axis-aligned rectangle.
@@ -502,7 +639,11 @@ impl Editor {
         self.level
             .spawns
             .retain(|s| !cell_in_axis_rect(s.x, s.y, x0, y0, x1, y1));
-        before.saturating_sub(self.level.spawns.len())
+        let removed = before.saturating_sub(self.level.spawns.len());
+        if removed > 0 {
+            self.mark_dirty();
+        }
+        removed
     }
 
     fn cycle_mode(&mut self) {
@@ -523,12 +664,14 @@ impl Editor {
         self.cursor_x = x;
         self.cursor_y = y;
         self.level.player_spawn = Some(PlayerSpawn { x, y });
+        self.mark_dirty();
         self.status = format!("Player spawn set to ({x},{y}).");
         self.ensure_cursor_visible();
     }
 
     fn clear_player_spawn(&mut self) {
         self.level.player_spawn = None;
+        self.mark_dirty();
         self.status = "Player spawn cleared (game will use map center).".into();
     }
 
@@ -547,6 +690,7 @@ impl Editor {
             name_override: None,
             fg_override: None,
         });
+        self.mark_dirty();
         self.status = format!(
             "Spawn {} at ({}, {}).",
             bp.kind, self.cursor_x, self.cursor_y
@@ -697,6 +841,30 @@ impl Editor {
             self.status = "QUIT".into();
             return true;
         }
+        if matches!(&self.dialog, Some(Dialog::HotReloadUnsaved)) {
+            if matches!(chord.key, Key::Char('y') | Key::Char('Y')) {
+                self.dialog = None;
+                match self.try_hot_reload_replace() {
+                    Ok(()) => {}
+                    Err(e) => {
+                        self.status = format!("Hot-reload failed: {e}");
+                        self.mark_dirty();
+                        self.refresh_disk_fingerprint();
+                    }
+                }
+                return true;
+            }
+            if matches!(
+                chord.key,
+                Key::Char('n') | Key::Char('N') | Key::Esc
+            ) {
+                self.dialog = None;
+                self.refresh_disk_fingerprint();
+                self.status = "Kept in-memory edits; ignored this disk revision.".into();
+                return true;
+            }
+            return true;
+        }
         if matches!(chord.key, Key::Enter)
             && !chord.ctrl
             && matches!(&self.dialog, Some(Dialog::NewTerrain { .. }))
@@ -729,6 +897,7 @@ impl Editor {
                 self.level.tile_defs.push(def);
                 self.current_tile = id;
                 self.status = format!("Added tile id {id} ({n}).");
+                self.mark_dirty();
                 self.rebuild_tile_display_full();
                 return true;
             }
@@ -771,6 +940,7 @@ impl Editor {
                         self.level.name = "untitled".into();
                     }
                     self.status = format!("Level name: {}", self.level.name);
+                    self.mark_dirty();
                     self.dialog = None;
                     return true;
                 }
@@ -860,6 +1030,7 @@ impl Editor {
                 }
                 true
             }
+            Dialog::HotReloadUnsaved => true,
         }
     }
 
@@ -945,6 +1116,7 @@ impl Editor {
                         name_override: None,
                         fg_override: None,
                     });
+                    self.mark_dirty();
                     self.status = format!(
                         "Spawn {} at ({}, {}).",
                         bp.kind, self.cursor_x, self.cursor_y
@@ -1396,12 +1568,27 @@ impl Editor {
             &mut y,
             "Sidebar: terrain / entity pick (paint|place)",
         );
-        Self::sidebar_plain(fb, inner, &mut y, "F2-F5 dialogs  C-S save  Esc clear drag");
+        Self::sidebar_plain(
+            fb,
+            inner,
+            &mut y,
+            "F2-F5 dialogs  C-S save  Esc clear drag  ext. edit: hot-reload",
+        );
         Self::sidebar_plain(
             fb,
             inner,
             &mut y,
             &row(&format!("Mode: {:?}  r{}", self.mode, self.brush_radius)),
+        );
+        Self::sidebar_plain(
+            fb,
+            inner,
+            &mut y,
+            &row(if self.dirty {
+                "Edits: unsaved (hot-reload asks before replace)"
+            } else {
+                "Edits: saved / clean (external edits auto-reload)"
+            }),
         );
         Self::sidebar_plain(fb, inner, &mut y, "");
 
@@ -1830,6 +2017,22 @@ impl Editor {
                     ],
                 );
             }
+            Dialog::HotReloadUnsaved => {
+                let r = centered_rect(fb, 72, 10);
+                draw_bordered_panel(fb, r, " File changed on disk ");
+                let body = Rect::new(r.x + 2, r.y + 2, r.w.saturating_sub(4), r.h.saturating_sub(4));
+                draw_text_block(
+                    fb,
+                    body,
+                    &[
+                        "The .ron file was modified outside this editor.".into(),
+                        "You have unsaved changes here.".into(),
+                        String::new(),
+                        "Y — reload from disk (discard local edits)".into(),
+                        "N / Esc — keep editing; ignore this revision".into(),
+                    ],
+                );
+            }
         }
     }
 
@@ -1867,6 +2070,7 @@ fn main() -> std::io::Result<()> {
 
     while !ed.should_quit() {
         ed.idle_viewport_tick();
+        ed.poll_hot_reload();
         ed.compose(&mut fb);
         let use_full = full;
         full = false;
