@@ -350,6 +350,35 @@ impl ContentPack {
                 ));
             }
         }
+        if let Some(p) = &level.player_spawn {
+            if p.x < 0
+                || p.y < 0
+                || p.x >= i32::from(level.width)
+                || p.y >= i32::from(level.height)
+            {
+                return Err(format!(
+                    "player_spawn ({},{}) is outside map bounds {}×{}",
+                    p.x, p.y, level.width, level.height
+                ));
+            }
+            let idx = p.y as usize * level.width as usize + p.x as usize;
+            let tid = level
+                .tiles
+                .get(idx)
+                .copied()
+                .ok_or_else(|| format!("player_spawn tile index {idx} out of range"))?;
+            let blocks = level
+                .tile_defs
+                .iter()
+                .find(|d| d.id == tid)
+                .is_some_and(|d| d.blocks_movement);
+            if blocks {
+                return Err(format!(
+                    "player_spawn ({},{}) is on a blocking tile (tile id {tid})",
+                    p.x, p.y
+                ));
+            }
+        }
         Ok(())
     }
 

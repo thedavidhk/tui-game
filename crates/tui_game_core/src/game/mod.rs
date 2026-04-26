@@ -255,11 +255,24 @@ impl Game {
             let stats = content.blueprint_stats(s.kind.as_str()).unwrap_or_default();
             entities.set_stats(eid, stats);
         }
+        let (px, py) = if let Some(p) = level.player_spawn {
+            (p.x, p.y)
+        } else {
+            ((map.width / 2) as i32, (map.height / 2) as i32)
+        };
+        if !map.in_bounds(px, py) {
+            return Err(format!(
+                "player start ({px},{py}) is outside the map ({}×{})",
+                map.width, map.height
+            ));
+        }
+        if map.blocks_movement(px, py) {
+            return Err(format!(
+                "player start ({px},{py}) must be a walkable tile (not solid)"
+            ));
+        }
         let player = entities.spawn(
-            GridPos {
-                x: (map.width / 2) as i32,
-                y: (map.height / 2) as i32,
-            },
+            GridPos { x: px, y: py },
             '@',
             Color::rgb(255, 235, 180),
             "You".into(),

@@ -16651,5 +16651,9 @@
             fg_override: None,
         ),
     ],
+    player_spawn: Some((
+        x: 79,
+        y: 42,
+    )),
     visual_seed: Some(11400714819323198485),
 )

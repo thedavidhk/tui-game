@@ -5,6 +5,13 @@ use serde::{Deserialize, Serialize};
 use crate::render::Color;
 use crate::world::{mix64, MapGrid, TileDef, TileId, TileTable};
 
+/// Explicit player start cell in a [`LevelFile`]. When absent, the game uses map center.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlayerSpawn {
+    pub x: i32,
+    pub y: i32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EntitySpawn {
     pub kind: String,
@@ -27,6 +34,9 @@ pub struct LevelFile {
     pub tiles: Vec<TileId>,
     pub tile_defs: Vec<TileDef>,
     pub spawns: Vec<EntitySpawn>,
+    /// Player start position. If `None`, the runtime uses the map center (legacy behavior).
+    #[serde(default)]
+    pub player_spawn: Option<PlayerSpawn>,
     /// Stable seed for baked static tile variants (grass). If omitted, derived from level data.
     #[serde(default)]
     pub visual_seed: Option<u64>,
@@ -96,6 +106,7 @@ impl LevelFile {
             tiles: map.tiles.clone(),
             tile_defs: map.table.defs.clone(),
             spawns,
+            player_spawn: None,
             visual_seed: None,
         }
     }

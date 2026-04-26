@@ -25,7 +25,7 @@ use tui_game_core::input::{
     InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseCell, MouseEventKind,
 };
 use tui_game_core::level::{
-    derive_visual_seed, level_from_ron, level_to_ron, EntitySpawn, LevelFile,
+    derive_visual_seed, level_from_ron, level_to_ron, EntitySpawn, LevelFile, PlayerSpawn,
 };
 use tui_game_core::rect::Rect;
 use tui_game_core::render::{
@@ -83,12 +83,15 @@ enum Mode {
     PaintTiles,
     PlaceSpawns,
     EraseSpawns,
+    /// Single-cell marker: where the runtime spawns the player (`LevelFile.player_spawn`).
+    SetPlayerSpawn,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum SidebarHit {
     Terrain(usize),
     Entity(usize),
+    PlayerSpawn,
 }
 
 enum Dialog {
@@ -150,6 +153,7 @@ impl Editor {
                 name_override: None,
                 fg_override: None,
             }],
+            player_spawn: Some(PlayerSpawn { x: 12, y: 8 }),
             visual_seed: None,
         }
     }
@@ -301,6 +305,15 @@ impl Editor {
         self.level
             .spawns
             .retain(|s| s.x >= 0 && s.y >= 0 && (s.x as u16) < nw && (s.y as u16) < nh);
+        if let Some(ps) = self.level.player_spawn {
+            if ps.x < 0
+                || ps.y < 0
+                || (ps.x as u16) >= nw
+                || (ps.y as u16) >= nh
+            {
+                self.level.player_spawn = None;
+            }
+        }
         self.cursor_x = self.cursor_x.clamp(0, nw as i32 - 1);
         self.cursor_y = self.cursor_y.clamp(0, nh as i32 - 1);
         self.clamp_editor_view();
@@ -496,9 +509,27 @@ impl Editor {
         self.mode = match self.mode {
             Mode::PaintTiles => Mode::PlaceSpawns,
             Mode::PlaceSpawns => Mode::EraseSpawns,
-            Mode::EraseSpawns => Mode::PaintTiles,
+            Mode::EraseSpawns => Mode::SetPlayerSpawn,
+            Mode::SetPlayerSpawn => Mode::PaintTiles,
         };
         self.status = format!("Mode: {:?}", self.mode);
+    }
+
+    fn set_player_spawn_at(&mut self, tx: i32, ty: i32) {
+        let w = self.level.width as i32;
+        let h = self.level.height as i32;
+        let x = tx.clamp(0, w - 1);
+        let y = ty.clamp(0, h - 1);
+        self.cursor_x = x;
+        self.cursor_y = y;
+        self.level.player_spawn = Some(PlayerSpawn { x, y });
+        self.status = format!("Player spawn set to ({x},{y}).");
+        self.ensure_cursor_visible();
+    }
+
+    fn clear_player_spawn(&mut self) {
+        self.level.player_spawn = None;
+        self.status = "Player spawn cleared (game will use map center).".into();
     }
 
     fn place_spawn_at(&mut self, tx: i32, ty: i32) {
@@ -579,6 +610,10 @@ impl Editor {
                             self.status = format!("Place: {}", bp.kind);
                         }
                     }
+                    SidebarHit::PlayerSpawn => {
+                        self.mode = Mode::SetPlayerSpawn;
+                        self.status = "Player spawn: click map or Space at cursor.".into();
+                    }
                 }
             }
             return;
@@ -610,6 +645,7 @@ impl Editor {
                                 self.brush_radius
                             );
                         }
+                        Mode::SetPlayerSpawn => self.set_player_spawn_at(tx, ty),
                     }
                     self.last_paint_cell = Some((tx, ty));
                 }
@@ -631,6 +667,7 @@ impl Editor {
                                 self.status = format!("Removed {n} spawn(s) (drag).");
                             }
                         }
+                        Mode::SetPlayerSpawn => self.set_player_spawn_at(tx, ty),
                     }
                     self.last_paint_cell = Some((tx, ty));
                 }
@@ -645,7 +682,7 @@ impl Editor {
                                 "Removed {n} spawn(s) in rectangle ({sx},{sy})—({tx},{ty})."
                             );
                         }
-                        Mode::PlaceSpawns => {}
+                        Mode::PlaceSpawns | Mode::SetPlayerSpawn => {}
                     }
                 }
                 self.last_paint_cell = None;
@@ -876,6 +913,14 @@ impl Editor {
                 self.cycle_mode();
             }
             KeyChord {
+                key: Key::Char('p'),
+                ctrl: false,
+                ..
+            } => {
+                self.mode = Mode::SetPlayerSpawn;
+                self.status = "Player spawn: click map or Space at cursor.".into();
+            }
+            KeyChord {
                 key: Key::Char(' '),
                 ctrl: false,
                 ..
@@ -912,6 +957,16 @@ impl Editor {
                         self.cursor_x, self.cursor_y, self.brush_radius
                     );
                 }
+                Mode::SetPlayerSpawn => {
+                    self.set_player_spawn_at(self.cursor_x, self.cursor_y);
+                }
+            },
+            KeyChord {
+                key: Key::Backspace,
+                ctrl: false,
+                ..
+            } if self.mode == Mode::SetPlayerSpawn => {
+                self.clear_player_spawn();
             },
             KeyChord {
                 key: Key::Char('[') | Key::Char('k'),
@@ -920,7 +975,7 @@ impl Editor {
             } => match self.mode {
                 Mode::PaintTiles => self.cycle_tile_palette(-1),
                 Mode::PlaceSpawns => self.cycle_spawn_blueprint(-1),
-                Mode::EraseSpawns => {}
+                Mode::EraseSpawns | Mode::SetPlayerSpawn => {}
             },
             KeyChord {
                 key: Key::Char(']') | Key::Char('j'),
@@ -929,7 +984,7 @@ impl Editor {
             } => match self.mode {
                 Mode::PaintTiles => self.cycle_tile_palette(1),
                 Mode::PlaceSpawns => self.cycle_spawn_blueprint(1),
-                Mode::EraseSpawns => {}
+                Mode::EraseSpawns | Mode::SetPlayerSpawn => {}
             },
             KeyChord {
                 key: Key::F(2),
@@ -1184,6 +1239,11 @@ impl Editor {
                                     lift = lift.max(14);
                                 }
                             }
+                            Mode::SetPlayerSpawn => {
+                                if txi == hx && tyi == hy {
+                                    lift = lift.max(16);
+                                }
+                            }
                             Mode::EraseSpawns => {
                                 if cell_in_brush(txi, tyi, hx, hy, self.brush_radius) {
                                     let mut l: u8 = 12;
@@ -1256,6 +1316,41 @@ impl Editor {
                 fb.set(px, py, c);
             }
         }
+        if let Some(ps) = self.level.player_spawn {
+            if ps.x >= 0
+                && ps.y >= 0
+                && (ps.x as u16) < self.level.width
+                && (ps.y as u16) < self.level.height
+            {
+                if ps.x >= vo_x
+                    && ps.y >= vo_y
+                    && ps.x < vo_x + vw as i32
+                    && ps.y < vo_y + vh as i32
+                {
+                    let px = ox.saturating_add((ps.x - vo_x) as u16);
+                    let py = oy.saturating_add((ps.y - vo_y) as u16);
+                    let mut spawn_bg = bg;
+                    if self.dialog.is_none() && self.mode == Mode::SetPlayerSpawn {
+                        if let Some((hx, hy)) = self.hover_map_cell {
+                            if ps.x == hx && ps.y == hy {
+                                spawn_bg = spawn_bg.lighten(20);
+                            }
+                        }
+                    }
+                    let c = Cell {
+                        ch: '@',
+                        fg: Color::rgb(120, 220, 255),
+                        bg: spawn_bg,
+                        style: Style {
+                            bold: true,
+                            dim: false,
+                            underline: false,
+                        },
+                    };
+                    fb.set(px, py, c);
+                }
+            }
+        }
         self.compose_sidebar(fb, self.sidebar_rect());
 
         if let Some(ref d) = self.dialog {
@@ -1293,7 +1388,7 @@ impl Editor {
             &mut y,
             "WASD cursor  Arrows: pan (large map)  Tab/m: mode",
         );
-        Self::sidebar_plain(fb, inner, &mut y, "Space / mouse L: act  +/- wheel: r");
+        Self::sidebar_plain(fb, inner, &mut y, "p: player start   Space/L: act  +/- wheel: r");
         Self::sidebar_plain(fb, inner, &mut y, "Shift+L drag: rect (tiles or spawns)");
         Self::sidebar_plain(
             fb,
@@ -1368,6 +1463,74 @@ impl Editor {
                 &row("  Shift+L rect clears spawns in box"),
             );
         }
+        Self::sidebar_plain(fb, inner, &mut y, "");
+        Self::sidebar_plain(fb, inner, &mut y, "-- Player start --");
+        self.sidebar_player_spawn_row(fb, inner, &mut y);
+        if self.mode == Mode::SetPlayerSpawn {
+            Self::sidebar_plain(
+                fb,
+                inner,
+                &mut y,
+                &row("> Click map or Space: set   Backspace: clear"),
+            );
+            if let Some(ps) = self.level.player_spawn {
+                Self::sidebar_plain(
+                    fb,
+                    inner,
+                    &mut y,
+                    &row(&format!("  Saved: ({},{})", ps.x, ps.y)),
+                );
+            } else {
+                Self::sidebar_plain(
+                    fb,
+                    inner,
+                    &mut y,
+                    &row("  (none — game uses map center)"),
+                );
+            }
+        }
+    }
+
+    fn sidebar_player_spawn_row(&mut self, fb: &mut FrameBuffer, inner: Rect, y: &mut u16) {
+        if *y >= inner.bottom() {
+            return;
+        }
+        let row_y = *y;
+        let right = inner.right();
+        let bg = Color::rgb(18, 16, 22);
+        let meta_fg = Color::rgb(175, 170, 160);
+        let mark_fg = Color::rgb(120, 220, 255);
+        let mut x = inner.x;
+        let mut put = |ch: char, fg: Color| -> bool {
+            if x >= right {
+                return false;
+            }
+            fb.set(
+                x,
+                *y,
+                Cell {
+                    ch,
+                    fg,
+                    bg,
+                    style: Style::default(),
+                },
+            );
+            x = x.saturating_add(1);
+            true
+        };
+        let sel = self.mode == Mode::SetPlayerSpawn;
+        let _ = put(if sel { '>' } else { ' ' }, meta_fg);
+        let _ = put('@', mark_fg);
+        let _ = put(' ', meta_fg);
+        for ch in "Player spawn".chars() {
+            let _ = put(ch, meta_fg);
+        }
+        let row_w = inner.w.min(right.saturating_sub(inner.x));
+        self.sidebar_hits.push((
+            SidebarHit::PlayerSpawn,
+            Rect::new(inner.x, row_y, row_w, 1),
+        ));
+        *y = y.saturating_add(1);
     }
 
     fn sidebar_plain(fb: &mut FrameBuffer, inner: Rect, y: &mut u16, text: &str) {
