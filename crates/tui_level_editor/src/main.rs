@@ -29,7 +29,8 @@ use tui_game_core::input::{
     InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseCell, MouseEventKind,
 };
 use tui_game_core::level::{
-    derive_visual_seed, level_from_ron, level_to_ron, EntitySpawn, LevelFile, PlayerSpawn,
+    derive_visual_seed, level_from_ron, level_to_ron, EntitySpawn, GlobalAmbiance, LevelFile,
+    MapTileFog, PlayerSpawn,
 };
 use tui_game_core::rect::Rect;
 use tui_game_core::render::{
@@ -103,6 +104,8 @@ struct Editor {
     viewport_edge_scroll_cooldown: u16,
     /// Baked static tile visuals (parallel to `level.tiles`).
     tile_display: Vec<TileDisplayCell>,
+    /// Brush value for [`Mode::PaintAmbiance`] (`0..=255`).
+    ambiance_brush: u8,
     map_visual_seed: u64,
     surface_tick: u64,
     /// True after any edit not yet written with Ctrl+S / save dialog.
@@ -120,6 +123,8 @@ enum Mode {
     EraseSpawns,
     /// Single-cell marker: where the runtime spawns the player (`LevelFile.player_spawn`).
     SetPlayerSpawn,
+    /// Per-cell weight blending tile `bg` toward `LevelFile.global_ambiance.local_accent` in-game.
+    PaintAmbiance,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -192,6 +197,8 @@ impl Editor {
             }],
             player_spawn: Some(PlayerSpawn { x: 12, y: 8 }),
             visual_seed: None,
+            global_ambiance: GlobalAmbiance::default(),
+            ambiance: Vec::new(),
         }
     }
 
@@ -247,6 +254,7 @@ impl Editor {
             last_mouse_cell: None,
             viewport_edge_scroll_cooldown: 0,
             tile_display: Vec::new(),
+            ambiance_brush: 180,
             map_visual_seed,
             surface_tick: 0,
             dirty: false,
@@ -419,6 +427,7 @@ impl Editor {
         let ow = self.level.width as usize;
         let oh = self.level.height as usize;
         let mut new_tiles = vec![0u16; nw as usize * nh as usize];
+        let mut new_amb = vec![0u8; nw as usize * nh as usize];
         for y in 0..nh as usize {
             for x in 0..nw as usize {
                 let t = if x < ow && y < oh {
@@ -427,11 +436,18 @@ impl Editor {
                     0
                 };
                 new_tiles[y * nw as usize + x] = t;
+                let a = if x < ow && y < oh {
+                    self.level.ambiance.get(y * ow + x).copied().unwrap_or(0)
+                } else {
+                    0
+                };
+                new_amb[y * nw as usize + x] = a;
             }
         }
         self.level.width = nw;
         self.level.height = nh;
         self.level.tiles = new_tiles;
+        self.level.ambiance = new_amb;
         self.mark_dirty();
         self.level
             .spawns
@@ -615,6 +631,124 @@ impl Editor {
         self.rebuild_tile_display_full();
     }
 
+    fn fill_rect_ambiance(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
+        if self.mode != Mode::PaintAmbiance {
+            return;
+        }
+        let v = self.ambiance_brush;
+        for_each_in_rect(x0, y0, x1, y1, |tx, ty| {
+            self.set_ambiance_clamped(tx, ty, v);
+        });
+        self.status = format!("Filled ambiance ({x0},{y0})—({x1},{y1}) value {v}.");
+        self.mark_dirty();
+    }
+
+    fn set_ambiance_clamped(&mut self, tx: i32, ty: i32, v: u8) {
+        let w = self.level.width as i32;
+        let h = self.level.height as i32;
+        if tx < 0 || ty < 0 || tx >= w || ty >= h {
+            return;
+        }
+        let n = self.level.width as usize * self.level.height as usize;
+        if self.level.ambiance.len() != n {
+            self.level.ambiance.resize(n, 0);
+        }
+        let i = ty as usize * self.level.width as usize + tx as usize;
+        if i < self.level.ambiance.len() {
+            self.level.ambiance[i] = v;
+            self.mark_dirty();
+        }
+    }
+
+    fn apply_paint_ambiance(&mut self, cx: i32, cy: i32) {
+        let v = self.ambiance_brush;
+        for_each_in_brush(cx, cy, self.brush_radius, |tx, ty| {
+            self.set_ambiance_clamped(tx, ty, v);
+        });
+    }
+
+    fn erase_paint_ambiance(&mut self, cx: i32, cy: i32) {
+        for_each_in_brush(cx, cy, self.brush_radius, |tx, ty| {
+            self.set_ambiance_clamped(tx, ty, 0);
+        });
+    }
+
+    fn cycle_tile_bg(&mut self, delta: i32) {
+        let nopt = (PRESET_COLORS.len() + 1) as i32;
+        let Some(pos) = self
+            .level
+            .tile_defs
+            .iter()
+            .position(|d| d.id == self.current_tile)
+        else {
+            return;
+        };
+        let def = &self.level.tile_defs[pos];
+        let name = def.name.clone();
+        let idx = def
+            .bg
+            .and_then(|c| {
+                PRESET_COLORS
+                    .iter()
+                    .position(|&p| p == c)
+                    .map(|i| (i + 1) as i32)
+            })
+            .unwrap_or(0);
+        let next = (idx + delta).rem_euclid(nopt) as usize;
+        let new_bg = if next == 0 {
+            None
+        } else {
+            Some(PRESET_COLORS[next - 1])
+        };
+        self.level.tile_defs[pos].bg = new_bg;
+        self.mark_dirty();
+        self.rebuild_tile_display_full();
+        self.status = format!("Terrain {name}: bg {:?}", new_bg);
+    }
+
+    fn cycle_global_ambiance_preset(&mut self) {
+        const PRESETS: &[GlobalAmbiance] = &[
+            GlobalAmbiance {
+                unseen_void: Color::rgb(6, 6, 12),
+                unseen_void_fg: Color::rgb(52, 52, 68),
+                explored_fg: Color::rgb(88, 82, 98),
+                explored_fg_mute_pct: 38,
+                explored_bg: Color::rgb(18, 16, 26),
+                explored_bg_mute_pct: 52,
+                local_accent: Color::rgb(225, 165, 95),
+                visible_boost: 10,
+            },
+            GlobalAmbiance {
+                unseen_void: Color::rgb(4, 4, 10),
+                unseen_void_fg: Color::rgb(55, 55, 72),
+                explored_fg: Color::rgb(70, 68, 85),
+                explored_fg_mute_pct: 48,
+                explored_bg: Color::rgb(12, 11, 18),
+                explored_bg_mute_pct: 65,
+                local_accent: Color::rgb(180, 130, 220),
+                visible_boost: 4,
+            },
+            GlobalAmbiance {
+                unseen_void: Color::rgb(10, 8, 8),
+                unseen_void_fg: Color::rgb(95, 85, 82),
+                explored_fg: Color::rgb(100, 90, 85),
+                explored_fg_mute_pct: 32,
+                explored_bg: Color::rgb(24, 18, 14),
+                explored_bg_mute_pct: 48,
+                local_accent: Color::rgb(250, 200, 110),
+                visible_boost: 14,
+            },
+        ];
+        let cur = PRESETS
+            .iter()
+            .position(|&p| p == self.level.global_ambiance)
+            .unwrap_or(0);
+        let next = (cur + 1) % PRESETS.len();
+        self.level.global_ambiance = PRESETS[next];
+        self.mark_dirty();
+        self.status = format!("Global ambiance preset {}/{}", next + 1, PRESETS.len());
+    }
+
     fn cell_has_spawn(&self, tx: i32, ty: i32) -> bool {
         self.level.spawns.iter().any(|s| s.x == tx && s.y == ty)
     }
@@ -651,7 +785,8 @@ impl Editor {
             Mode::PaintTiles => Mode::PlaceSpawns,
             Mode::PlaceSpawns => Mode::EraseSpawns,
             Mode::EraseSpawns => Mode::SetPlayerSpawn,
-            Mode::SetPlayerSpawn => Mode::PaintTiles,
+            Mode::SetPlayerSpawn => Mode::PaintAmbiance,
+            Mode::PaintAmbiance => Mode::PaintTiles,
         };
         self.status = format!("Mode: {:?}", self.mode);
     }
@@ -790,6 +925,13 @@ impl Editor {
                             );
                         }
                         Mode::SetPlayerSpawn => self.set_player_spawn_at(tx, ty),
+                        Mode::PaintAmbiance => {
+                            self.apply_paint_ambiance(tx, ty);
+                            self.status = format!(
+                                "Ambiance {} at ({tx},{ty}) r{}.",
+                                self.ambiance_brush, self.brush_radius
+                            );
+                        }
                     }
                     self.last_paint_cell = Some((tx, ty));
                 }
@@ -812,7 +954,19 @@ impl Editor {
                             }
                         }
                         Mode::SetPlayerSpawn => self.set_player_spawn_at(tx, ty),
+                        Mode::PaintAmbiance => {
+                            self.apply_paint_ambiance(tx, ty);
+                            self.status = format!("Ambiance drag {} at ({tx},{ty}).", self.ambiance_brush);
+                        }
                     }
+                    self.last_paint_cell = Some((tx, ty));
+                }
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                if self.mode == Mode::PaintAmbiance {
+                    self.rect_drag_start = None;
+                    self.erase_paint_ambiance(tx, ty);
+                    self.status = format!("Erased ambiance at ({tx},{ty}) r{}.", self.brush_radius);
                     self.last_paint_cell = Some((tx, ty));
                 }
             }
@@ -826,6 +980,7 @@ impl Editor {
                                 "Removed {n} spawn(s) in rectangle ({sx},{sy})—({tx},{ty})."
                             );
                         }
+                        Mode::PaintAmbiance => self.fill_rect_ambiance(sx, sy, tx, ty),
                         Mode::PlaceSpawns | Mode::SetPlayerSpawn => {}
                     }
                 }
@@ -891,6 +1046,7 @@ impl Editor {
                     blocks_sight: solid,
                     name: n.clone(),
                     fg,
+                    bg: None,
                     connect_mask: 0,
                     surface: None,
                 };
@@ -1132,6 +1288,16 @@ impl Editor {
                 Mode::SetPlayerSpawn => {
                     self.set_player_spawn_at(self.cursor_x, self.cursor_y);
                 }
+                Mode::PaintAmbiance => {
+                    self.apply_paint_ambiance(self.cursor_x, self.cursor_y);
+                    self.status = format!(
+                        "Ambiance {} at ({},{}) r{}.",
+                        self.ambiance_brush,
+                        self.cursor_x,
+                        self.cursor_y,
+                        self.brush_radius
+                    );
+                }
             },
             KeyChord {
                 key: Key::Backspace,
@@ -1147,6 +1313,10 @@ impl Editor {
             } => match self.mode {
                 Mode::PaintTiles => self.cycle_tile_palette(-1),
                 Mode::PlaceSpawns => self.cycle_spawn_blueprint(-1),
+                Mode::PaintAmbiance => {
+                    self.ambiance_brush = self.ambiance_brush.saturating_sub(16);
+                    self.status = format!("Ambiance brush {}", self.ambiance_brush);
+                }
                 Mode::EraseSpawns | Mode::SetPlayerSpawn => {}
             },
             KeyChord {
@@ -1156,6 +1326,10 @@ impl Editor {
             } => match self.mode {
                 Mode::PaintTiles => self.cycle_tile_palette(1),
                 Mode::PlaceSpawns => self.cycle_spawn_blueprint(1),
+                Mode::PaintAmbiance => {
+                    self.ambiance_brush = (self.ambiance_brush.saturating_add(16)).min(255);
+                    self.status = format!("Ambiance brush {}", self.ambiance_brush);
+                }
                 Mode::EraseSpawns | Mode::SetPlayerSpawn => {}
             },
             KeyChord {
@@ -1200,6 +1374,20 @@ impl Editor {
                     color_idx: 0,
                     focus: 0,
                 });
+            }
+            KeyChord {
+                key: Key::F(10),
+                ctrl: false,
+                ..
+            } => {
+                self.cycle_global_ambiance_preset();
+            }
+            KeyChord {
+                key: Key::Char('b'),
+                ctrl: false,
+                ..
+            } if self.mode == Mode::PaintTiles => {
+                self.cycle_tile_bg(1);
             }
             KeyChord {
                 key: Key::Up,
@@ -1365,7 +1553,7 @@ impl Editor {
                 let tid = self.level.tiles[idx];
                 let def = self.level.tile_defs.iter().find(|d| d.id == tid);
                 let baked = self.tile_display.get(idx).copied();
-                let (ch, tile_fg) = match def {
+                let (ch, tile_fg, base_bg) = match def {
                     Some(d) if def_is_animated(d) => {
                         let r = resolve_animated(
                             d,
@@ -1374,20 +1562,28 @@ impl Editor {
                             self.surface_tick,
                             self.map_visual_seed,
                         );
-                        (r.ch, r.fg)
+                        (r.ch, r.fg, d.terrain_bg())
                     }
                     _ => {
                         let d = baked.unwrap_or(TileDisplayCell {
                             ch: '?',
                             fg: Color::rgb(200, 190, 170),
+                            bg: Color::rgb(28, 24, 32),
                         });
-                        (d.ch, d.fg)
+                        (d.ch, d.fg, d.bg)
                     }
                 };
+                let amb_w = self.level.ambiance.get(idx).copied().unwrap_or(0);
+                let (_, tile_bg) = self.level.global_ambiance.compose_map_tile(
+                    tile_fg,
+                    base_bg,
+                    amb_w,
+                    MapTileFog::Visible,
+                );
                 let mut c = Cell {
                     ch,
                     fg: tile_fg,
-                    bg,
+                    bg: tile_bg,
                     style: Style::default(),
                 };
                 if self.dialog.is_none() {
@@ -1431,6 +1627,16 @@ impl Editor {
                                             l = l.max(26);
                                         }
                                         lift = lift.max(l);
+                                    }
+                                }
+                            }
+                            Mode::PaintAmbiance => {
+                                if cell_in_brush(txi, tyi, hx, hy, self.brush_radius) {
+                                    lift = lift.max(14);
+                                }
+                                if let Some((sx, sy)) = self.rect_drag_start {
+                                    if cell_in_axis_rect(txi, tyi, sx, sy, hx, hy) {
+                                        lift = lift.max(20);
                                     }
                                 }
                             }
@@ -1561,7 +1767,8 @@ impl Editor {
             "WASD cursor  Arrows: pan (large map)  Tab/m: mode",
         );
         Self::sidebar_plain(fb, inner, &mut y, "p: player start   Space/L: act  +/- wheel: r");
-        Self::sidebar_plain(fb, inner, &mut y, "Shift+L drag: rect (tiles or spawns)");
+        Self::sidebar_plain(fb, inner, &mut y, "b: cycle terrain bg (paint)  F10: global ambiance");
+        Self::sidebar_plain(fb, inner, &mut y, "Shift+L drag: rect (tiles, spawns, ambiance)");
         Self::sidebar_plain(
             fb,
             inner,
@@ -1578,7 +1785,10 @@ impl Editor {
             fb,
             inner,
             &mut y,
-            &row(&format!("Mode: {:?}  r{}", self.mode, self.brush_radius)),
+            &row(&format!(
+                "Mode: {:?}  r{}  amb{}",
+                self.mode, self.brush_radius, self.ambiance_brush
+            )),
         );
         Self::sidebar_plain(
             fb,
@@ -1610,6 +1820,20 @@ impl Editor {
                 );
                 Self::sidebar_plain(fb, inner, &mut y, &row(&brush));
             }
+        }
+        if self.mode == Mode::PaintAmbiance {
+            Self::sidebar_plain(
+                fb,
+                inner,
+                &mut y,
+                &row("> Local light weight toward global local_accent"),
+            );
+            Self::sidebar_plain(
+                fb,
+                inner,
+                &mut y,
+                &row("[ / ]: brush  RMB: erase  Shift+L: rect fill"),
+            );
         }
         Self::sidebar_plain(fb, inner, &mut y, "");
 

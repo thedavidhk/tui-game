@@ -135,6 +135,9 @@ pub struct TileDef {
     /// Glyph foreground when the tile is drawn in truecolor terminals.
     #[serde(default)]
     pub fg: Color,
+    /// Tile background when drawn; `None` uses [`Color::terrain_bg_from_fg`] on `fg`.
+    #[serde(default)]
+    pub bg: Option<Color>,
     /// Non-zero masks participate in [`TileSurface::Connector`] neighbor tests: a link exists
     /// when `(self.connect_mask & neighbor.connect_mask) != 0`.
     #[serde(default)]
@@ -145,6 +148,13 @@ pub struct TileDef {
 }
 
 impl TileDef {
+    /// Background for this terrain (explicit or derived from `fg`).
+    #[must_use]
+    pub fn terrain_bg(&self) -> Color {
+        self.bg
+            .unwrap_or_else(|| Color::terrain_bg_from_fg(self.fg))
+    }
+
     pub fn floor(id: TileId, glyph: char, name: impl Into<String>) -> Self {
         Self {
             id,
@@ -153,6 +163,7 @@ impl TileDef {
             blocks_sight: false,
             name: name.into(),
             fg: Color::rgb(190, 188, 175),
+            bg: None,
             connect_mask: 0,
             surface: None,
         }
@@ -166,6 +177,7 @@ impl TileDef {
             blocks_sight: true,
             name: name.into(),
             fg: Color::rgb(140, 135, 125),
+            bg: None,
             connect_mask: 0,
             surface: None,
         }

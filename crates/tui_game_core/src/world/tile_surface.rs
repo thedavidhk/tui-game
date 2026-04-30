@@ -8,13 +8,23 @@ use crate::render::Color;
 use super::map::TileTable;
 use super::tiles::{AnimMode, TileDef, TileId, TileSurface, WeightedGlyph};
 
+#[inline]
+fn cell_from_def(ch: char, fg: Color, def: &TileDef) -> TileDisplayCell {
+    TileDisplayCell {
+        ch,
+        fg,
+        bg: def.terrain_bg(),
+    }
+}
+
 use serde::{Deserialize, Serialize};
 
-/// Resolved glyph + foreground for one map cell (background comes from FoW in `compose_world`).
+/// Resolved glyph + colors for one map cell (terrain `bg` is baked; FoW and ambiance adjust at compose).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct TileDisplayCell {
     pub ch: char,
     pub fg: Color,
+    pub bg: Color,
 }
 
 impl Default for TileDisplayCell {
@@ -22,6 +32,7 @@ impl Default for TileDisplayCell {
         Self {
             ch: '.',
             fg: Color::rgb(180, 180, 170),
+            bg: Color::rgb(14, 14, 20),
         }
     }
 }
@@ -175,40 +186,26 @@ pub fn bake_tile_display(v: TileBakeView<'_>, wx: i32, wy: i32, visual_seed: u64
         return TileDisplayCell {
             ch: '?',
             fg: Color::rgb(200, 100, 100),
+            bg: Color::rgb(40, 10, 12),
         };
     };
     if def_is_animated(def) {
-        return TileDisplayCell {
-            ch: def.glyph,
-            fg: def.fg,
-        };
+        return cell_from_def(def.glyph, def.fg, def);
     }
     match &def.surface {
-        None => TileDisplayCell {
-            ch: def.glyph,
-            fg: def.fg,
-        },
+        None => cell_from_def(def.glyph, def.fg, def),
         Some(TileSurface::StaticVariants { entries }) => {
             let h = hash_cell(visual_seed, wx, wy, tid as u32);
             pick_weighted(entries, h).map_or(
-                TileDisplayCell {
-                    ch: def.glyph,
-                    fg: def.fg,
-                },
-                |(ch, fg)| TileDisplayCell { ch, fg },
+                cell_from_def(def.glyph, def.fg, def),
+                |(ch, fg)| cell_from_def(ch, fg, def),
             )
         }
         Some(TileSurface::Connector { glyphs }) => {
             let mask = neighbor_link_mask(v, wx, wy) as usize;
-            TileDisplayCell {
-                ch: connector_glyph(glyphs, mask, def.glyph),
-                fg: def.fg,
-            }
+            cell_from_def(connector_glyph(glyphs, mask, def.glyph), def.fg, def)
         }
-        Some(TileSurface::Animated { .. }) => TileDisplayCell {
-            ch: def.glyph,
-            fg: def.fg,
-        },
+        Some(TileSurface::Animated { .. }) => cell_from_def(def.glyph, def.fg, def),
     }
 }
 
@@ -229,16 +226,10 @@ pub fn resolve_animated(
         p_step_den,
     }) = &def.surface
     else {
-        return TileDisplayCell {
-            ch: def.glyph,
-            fg: def.fg,
-        };
+        return cell_from_def(def.glyph, def.fg, def);
     };
     if frames.is_empty() {
-        return TileDisplayCell {
-            ch: def.glyph,
-            fg: def.fg,
-        };
+        return cell_from_def(def.glyph, def.fg, def);
     }
     let n = frames.len();
     let phase = hash_cell(visual_seed, wx, wy, def.id as u32) as usize % n;
@@ -259,10 +250,7 @@ pub fn resolve_animated(
         }
     };
     let f = &frames[idx];
-    TileDisplayCell {
-        ch: f.ch,
-        fg: f.fg,
-    }
+    cell_from_def(f.ch, f.fg, def)
 }
 
 #[cfg(test)]
@@ -287,6 +275,7 @@ mod tests {
             blocks_sight: false,
             name: "grass".into(),
             fg: Color::rgb(100, 200, 100),
+            bg: None,
             connect_mask: 0,
             surface: Some(TileSurface::StaticVariants {
                 entries: vec![
@@ -331,6 +320,7 @@ mod tests {
             blocks_sight: true,
             name: "stone".into(),
             fg: Color::rgb(120, 120, 120),
+            bg: None,
             connect_mask: 1,
             surface: Some(TileSurface::Connector {
                 glyphs: (0..16).map(|i| char::from_u32('a' as u32 + i as u32).unwrap()).collect(),
@@ -363,6 +353,7 @@ mod tests {
             blocks_sight: false,
             name: "water".into(),
             fg: Color::rgb(50, 80, 200),
+            bg: None,
             connect_mask: 0,
             surface: Some(TileSurface::Animated {
                 frames: vec![

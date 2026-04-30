@@ -21,7 +21,10 @@ use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, MouseCell};
 use crate::item::ItemStack;
-use crate::level::{derive_visual_seed, derive_visual_seed_from_map, level_from_ron, LevelFile};
+use crate::level::{
+    derive_visual_seed, derive_visual_seed_from_map, level_from_ron, GlobalAmbiance, LevelFile,
+    MapTileFog,
+};
 use crate::narrative::NarrativeState;
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
@@ -32,12 +35,53 @@ use crate::ui::viewport_scroll::{
     EDGE_SCROLL_COOLDOWN_TICKS,
 };
 use crate::world::{
-    compute_visible, def_is_animated, first_step_on_line, merge_explored, plan_path,
+    compute_visible, def_is_animated, first_step_on_line, merge_explored, mix64, plan_path,
     plan_path_player_fow, resolve_animated, MapGrid, TileDisplayCell,
 };
 
 const FOW_RADIUS: i32 = 16;
 const NPC_EXPLORATION_AI_COOLDOWN_TICKS: u16 = 6;
+
+/// `(weight, glyph)`; weights sum to **256** (lighter / speck glyphs more common than heavy blocks).
+const FOG_GLYPH_WEIGHTS: &[(u16, char)] = &[
+    (166, ' '),
+    (39, '·'),
+    (27, '░'),
+    (16, '▒'),
+    (8, '▓'),
+];
+
+#[inline]
+fn weighted_fog_glyph(r: u8) -> char {
+    let x = u16::from(r);
+    let mut hi = 0u16;
+    for &(w, ch) in FOG_GLYPH_WEIGHTS {
+        hi += w;
+        if x < hi {
+            return ch;
+        }
+    }
+    '░'
+}
+
+/// Deterministic mist glyph per world cell: scrambled hash + [`weighted_fog_glyph`].
+#[inline]
+fn unseen_fog_glyph(wx: i32, wy: i32, level_seed: u64) -> char {
+    let a = wx as i64 as u64;
+    let b = wy as i64 as u64;
+    let mut h = a
+        .wrapping_add(b.rotate_left(37))
+        .wrapping_mul(0xD134_2543_DE82_EF97)
+        ^ b.wrapping_add(a.rotate_left(17))
+        ^ level_seed.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    h = mix64(h);
+    h ^= mix64(
+        a.rotate_left(11) ^ b.wrapping_mul(0x85EB_CA6B) ^ level_seed.rotate_left(5),
+    );
+    h = mix64(h);
+    let r = ((h ^ h >> 17 ^ h >> 34 ^ h >> 51) & 0xFF) as u8;
+    weighted_fog_glyph(r)
+}
 
 #[derive(Clone, Debug)]
 struct PendingForcedDialogue {
@@ -48,18 +92,6 @@ struct PendingForcedDialogue {
 #[derive(Clone, Copy, Debug)]
 struct PendingPlayerAction {
     command: services::actions::ActionCommand,
-}
-
-fn explored_muted_fg(base: Color) -> Color {
-    const M: u32 = 38;
-    const T0: u32 = 90;
-    const T1: u32 = 85;
-    const T2: u32 = 100;
-    Color::rgb(
-        (((base.r as u32) * M + T0 * (100 - M)) / 100).min(255) as u8,
-        (((base.g as u32) * M + T1 * (100 - M)) / 100).min(255) as u8,
-        (((base.b as u32) * M + T2 * (100 - M)) / 100).min(255) as u8,
-    )
 }
 
 fn player_default_stats() -> ActorStats {
@@ -168,6 +200,8 @@ pub struct Game {
     pending_player_action: Option<PendingPlayerAction>,
     /// When set, [`Game::restart_new_game`] reloads this `.ron`; when `None`, uses the embedded demo level.
     pub restart_level_ron_path: Option<String>,
+    /// Level-wide FoW tint targets and local-light accent (from [`LevelFile`] or save).
+    pub global_ambiance: GlobalAmbiance,
 }
 
 impl Game {
@@ -318,6 +352,7 @@ impl Game {
             pending_forced_dialogue: None,
             pending_player_action: None,
             restart_level_ron_path: None,
+            global_ambiance: level.global_ambiance,
         };
         game.refresh_fow();
         Ok(game)
@@ -1973,8 +2008,10 @@ impl Game {
                 let screen_y = area.y + row;
                 let mut cell = Cell::default();
                 if !self.map.in_bounds(wx, wy) {
-                    cell.ch = ' ';
-                    cell.bg = Color::rgb(10, 10, 20);
+                    cell.ch = unseen_fog_glyph(wx, wy, self.map_visual_seed);
+                    let oob = self.global_ambiance.unseen_void.lighten(6);
+                    cell.bg = oob;
+                    cell.fg = self.global_ambiance.unseen_void_fg;
                     fb.set(screen_x, screen_y, cell);
                     continue;
                 }
@@ -1983,9 +2020,10 @@ impl Game {
                 let vis = self.visible.get(idx).copied().unwrap_or(false);
                 let tid = self.map.tile_at(wx, wy).unwrap_or(0);
                 let def = self.map.table.def(tid);
+                let local_w = self.map.ambiance.get(idx).copied().unwrap_or(0);
                 if seen {
                     let baked = self.map.display.get(idx).copied();
-                    let (g, base_fg) = match def {
+                    let (g, base_fg, base_bg) = match def {
                         Some(d) if def_is_animated(d) => {
                             let r = resolve_animated(
                                 d,
@@ -1994,28 +2032,38 @@ impl Game {
                                 self.surface_tick,
                                 self.map_visual_seed,
                             );
-                            (r.ch, r.fg)
+                            (r.ch, r.fg, d.terrain_bg())
                         }
                         _ => {
                             let d = baked.unwrap_or(TileDisplayCell {
                                 ch: '?',
                                 fg: Color::rgb(220, 220, 200),
+                                bg: Color::rgb(35, 30, 40),
                             });
-                            (d.ch, d.fg)
+                            (d.ch, d.fg, d.bg)
                         }
                     };
                     cell.ch = g;
-                    if vis {
-                        cell.fg = base_fg;
-                        cell.bg = Color::rgb(20, 18, 28);
+                    let fog = if vis {
+                        MapTileFog::Visible
                     } else {
-                        cell.fg = explored_muted_fg(base_fg);
-                        cell.bg = Color::rgb(12, 12, 18);
-                    }
+                        MapTileFog::Explored
+                    };
+                    let (out_fg, out_bg) = self
+                        .global_ambiance
+                        .compose_map_tile(base_fg, base_bg, local_w, fog);
+                    cell.fg = out_fg;
+                    cell.bg = out_bg;
                 } else {
-                    cell.ch = ' ';
-                    cell.fg = Color::rgb(40, 40, 50);
-                    cell.bg = Color::rgb(5, 5, 8);
+                    let (fg_u, bg_u) = self.global_ambiance.compose_map_tile(
+                        Color::rgb(40, 40, 50),
+                        Color::rgb(10, 10, 14),
+                        local_w,
+                        MapTileFog::Unseen,
+                    );
+                    cell.ch = unseen_fog_glyph(wx, wy, self.map_visual_seed);
+                    cell.fg = fg_u;
+                    cell.bg = bg_u;
                 }
                 fb.set(screen_x, screen_y, cell);
             }
@@ -2057,10 +2105,27 @@ impl Game {
             } else {
                 None
             };
+            let tid_t = self.map.tile_at(wx, wy).unwrap_or(0);
+            let tdef = self.map.table.def(tid_t);
+            let baked_t = self.map.display.get(idx).copied();
+            let base_bg_ent = match tdef {
+                Some(d) if def_is_animated(d) => d.terrain_bg(),
+                _ => baked_t
+                    .map(|c| c.bg)
+                    .unwrap_or_else(|| Color::terrain_bg_from_fg(Color::rgb(180, 175, 165))),
+            };
+            let local_w = self.map.ambiance.get(idx).copied().unwrap_or(0);
+            let ent_fg = relation_fg.unwrap_or(base_fg);
+            let (_, ent_bg) = self.global_ambiance.compose_map_tile(
+                ent_fg,
+                base_bg_ent,
+                local_w,
+                MapTileFog::Visible,
+            );
             let c = Cell {
                 ch: g,
-                fg: relation_fg.unwrap_or(base_fg),
-                bg: Color::rgb(20, 18, 28),
+                fg: ent_fg,
+                bg: ent_bg,
                 style: Style {
                     bold: true,
                     dim: false,
@@ -2077,6 +2142,7 @@ impl Game {
             entities: self.entities.clone(),
             narrative: self.narrative.clone(),
             rng_seed: self.rng_seed,
+            global_ambiance: self.global_ambiance,
         }
     }
 
@@ -2097,6 +2163,7 @@ impl Game {
         self.entities = s.world.entities;
         self.narrative = s.world.narrative;
         self.rng_seed = s.world.rng_seed;
+        self.global_ambiance = s.world.global_ambiance;
         self.modes = s.modes;
         self.view_pan_offset = (0, 0);
         self.last_world_pointer_cell = None;
@@ -2126,10 +2193,41 @@ impl Game {
 
 #[cfg(test)]
 mod tests {
-    use super::{Game, GameMode};
+    use super::{unseen_fog_glyph, Game, GameMode};
     use crate::combat::{CombatRuleset, CombatState, EncounterOutcomePolicy, EncounterProfile};
     use crate::entity::GridPos;
     use crate::input::{InputBatch, InputEvent, Key, KeyChord};
+
+    #[test]
+    fn fog_glyph_weights_sum_to_256() {
+        let s: u16 = super::FOG_GLYPH_WEIGHTS.iter().map(|(w, _)| *w).sum();
+        assert_eq!(s, 256);
+    }
+
+    #[test]
+    fn unseen_fog_glyph_deterministic_from_palette() {
+        let seed = 0xC0FFEE_u64;
+        assert_eq!(
+            unseen_fog_glyph(7, -2, seed),
+            unseen_fog_glyph(7, -2, seed)
+        );
+        let c = unseen_fog_glyph(100, 200, seed);
+        assert!(
+            matches!(c, '░' | '▒' | '▓' | '·' | ':' | ','),
+            "unexpected glyph {c:?}"
+        );
+        let mut seed_changes_glyph = false;
+        for i in 0..40_i32 {
+            if unseen_fog_glyph(i, i.wrapping_mul(7), 1) != unseen_fog_glyph(i, i.wrapping_mul(7), 2) {
+                seed_changes_glyph = true;
+                break;
+            }
+        }
+        assert!(
+            seed_changes_glyph,
+            "map_visual_seed should re-phase the fog texture for some cells"
+        );
+    }
 
     #[test]
     fn dialogue_hides_unmet_required_choices() {

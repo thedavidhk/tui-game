@@ -143,4 +143,14 @@ mod tests {
         let err = p.validate_level(&level).unwrap_err();
         assert!(err.contains("unknown tile id"), "{err}");
     }
+
+    #[test]
+    fn validate_level_rejects_bad_ambiance_len() {
+        let p = content_pack();
+        let table = TileTable::default_pack().expect("default terrain pack must load");
+        let mut level = LevelFile::from_map(&MapGrid::filled(2, 2, 0, table), "x", vec![]);
+        level.ambiance = vec![1, 2];
+        let err = p.validate_level(&level).unwrap_err();
+        assert!(err.contains("ambiance len"), "{err}");
+    }
 }

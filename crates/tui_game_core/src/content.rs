@@ -379,6 +379,13 @@ impl ContentPack {
                 ));
             }
         }
+        let n = (level.width as usize) * (level.height as usize);
+        if !level.ambiance.is_empty() && level.ambiance.len() != n {
+            return Err(format!(
+                "ambiance len {} must be 0 or width*height ({n})",
+                level.ambiance.len()
+            ));
+        }
         Ok(())
     }
 

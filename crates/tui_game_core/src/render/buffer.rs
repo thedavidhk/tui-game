@@ -22,11 +22,65 @@ impl Color {
             b: self.b.saturating_add(delta),
         }
     }
+
+    /// Linear blend toward `other` with `t` in `0..=100` (`0` = self, `100` = other).
+    #[must_use]
+    pub fn mix_towards(self, other: Self, t: u8) -> Self {
+        let t = u32::from(t.min(100));
+        let mix = |a: u8, b: u8| -> u8 {
+            let a = u32::from(a);
+            let b = u32::from(b);
+            (((a * (100 - t)) + (b * t)) / 100).min(255) as u8
+        };
+        Self {
+            r: mix(self.r, other.r),
+            g: mix(self.g, other.g),
+            b: mix(self.b, other.b),
+        }
+    }
+
+    /// Linear blend toward `other` with weight `w` in `0..=255` (`0` = self, `255` = other).
+    #[must_use]
+    pub fn blend_weight(self, other: Self, w: u8) -> Self {
+        let w = u32::from(w);
+        let mix = |a: u8, b: u8| -> u8 {
+            let a = u32::from(a);
+            let b = u32::from(b);
+            (((a * (255 - w)) + (b * w)) / 255).min(255) as u8
+        };
+        Self {
+            r: mix(self.r, other.r),
+            g: mix(self.g, other.g),
+            b: mix(self.b, other.b),
+        }
+    }
+
+    /// Darker, slightly desaturated background derived from a glyph foreground (terrain default).
+    #[must_use]
+    pub fn terrain_bg_from_fg(fg: Self) -> Self {
+        let r = (u32::from(fg.r) * 45 / 100).min(255) as u8;
+        let g = (u32::from(fg.g) * 42 / 100).min(255) as u8;
+        let b = (u32::from(fg.b) * 48 / 100).min(255) as u8;
+        Self { r, g, b }
+    }
 }
 
 impl Default for Color {
     fn default() -> Self {
         Self::rgb(200, 200, 200)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Color;
+
+    #[test]
+    fn blend_weight_endpoints() {
+        let a = Color::rgb(100, 0, 200);
+        let b = Color::rgb(0, 200, 100);
+        assert_eq!(a.blend_weight(b, 0), a);
+        assert_eq!(a.blend_weight(b, 255), b);
     }
 }
 

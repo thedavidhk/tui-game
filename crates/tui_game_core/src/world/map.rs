@@ -38,6 +38,9 @@ pub struct MapGrid {
     /// tiles still read `tiles` + defs at compose time.
     #[serde(default)]
     pub display: Vec<TileDisplayCell>,
+    /// Per-cell ambiance weight `0..=255`, same length as `tiles` when present (filled with `0` on load).
+    #[serde(default)]
+    pub ambiance: Vec<u8>,
 }
 
 impl MapGrid {
@@ -49,6 +52,7 @@ impl MapGrid {
             tiles: vec![tile; n],
             table,
             display: vec![TileDisplayCell::default(); n],
+            ambiance: vec![0u8; n],
         };
         m.rebuild_display_cache(0);
         m
