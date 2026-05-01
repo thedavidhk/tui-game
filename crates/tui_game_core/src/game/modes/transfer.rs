@@ -4,11 +4,11 @@ use crate::item::Inventory;
 
 pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
     match ev {
-        InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
+        InputEvent::Key(KeyChord { key: Key::Char('q'), .. }) => {
             let _ = game.modes.pop();
         }
         InputEvent::Key(KeyChord {
-            key: Key::Tab | Key::Char('h') | Key::Char('l'),
+            key: Key::Tab,
             ..
         }) => {
             if let Some(GameMode::ItemTransfer { focus, .. }) = game.modes.current_mut() {
@@ -19,7 +19,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
             }
         }
         InputEvent::Key(KeyChord {
-            key: Key::Up | Key::Char('k'),
+            key: Key::Up,
             ..
         }) => {
             if let Some(GameMode::ItemTransfer {
@@ -49,7 +49,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
             }
         }
         InputEvent::Key(KeyChord {
-            key: Key::Down | Key::Char('j'),
+            key: Key::Down,
             ..
         }) => {
             if let Some(GameMode::ItemTransfer {

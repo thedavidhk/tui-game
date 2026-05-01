@@ -5,7 +5,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
     let InputEvent::Key(KeyChord { key, .. }) = ev else {
         return;
     };
-    if matches!(key, Key::Enter | Key::Char(' ')) {
+    if matches!(key, Key::Enter) {
         game.modes.stack = vec![GameMode::MainMenu { selected: 0 }];
         game.log.push("Main menu.".into());
     }

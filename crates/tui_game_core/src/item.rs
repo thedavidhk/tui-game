@@ -2,10 +2,27 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Stub equipment slot for UI and persistence; gameplay hooks later.
+/// Equipment slots for UI, persistence, and combat resolution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EquipSlot {
     Ring,
+    /// Primary weapon (sword, bow, …).
+    MainHand,
+}
+
+/// Weapon behavior when equipped in [`EquipSlot::MainHand`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WeaponKind {
+    Melee {
+        to_hit: i8,
+        damage_bonus: i8,
+    },
+    RangedBow {
+        to_hit: i8,
+        damage_bonus: i8,
+        /// Maximum Chebyshev distance for a shot.
+        range: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -13,6 +30,8 @@ pub enum ItemCategory {
     Mundane,
     Consumable,
     Equippable(EquipSlot),
+    /// Ammunition (arrows); press **e** in inventory to load the quiver (`NarrativeState::equipped_ammo`).
+    Ammo,
 }
 
 /// Read-only view of static item definitions for UI and validation.
@@ -50,6 +69,7 @@ impl ItemCatalog {
             ItemCategory::Equippable(slot) => {
                 format!("Equippable ({slot:?})")
             }
+            ItemCategory::Ammo => "Ammo (e: load quiver)".into(),
         }
     }
 }
@@ -61,6 +81,8 @@ pub struct ItemDef {
     pub description: &'static str,
     pub glyph: char,
     pub category: ItemCategory,
+    /// When `Some`, this item is a weapon for [`EquipSlot::MainHand`].
+    pub weapon: Option<WeaponKind>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,6 +208,7 @@ mod tests {
             description: "d",
             glyph: 'a',
             category: ItemCategory::Mundane,
+            weapon: None,
         }];
         let c = ItemCatalog::new(DEFS);
         assert_eq!(c.display_name("a"), "Apple");

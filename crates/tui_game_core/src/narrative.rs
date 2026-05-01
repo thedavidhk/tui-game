@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::content::{Condition, DemoQuestPhase, Effect, QuestJournalStatus};
-use crate::item::{EquipSlot, Inventory, InventoryError};
+use crate::item::{EquipSlot, Inventory, InventoryError, ItemStack};
 
 /// One timestamped line under a quest in the journal (ordering uses `seq`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +42,9 @@ pub struct NarrativeState {
     pub inventory: Inventory,
     pub container_inventories: HashMap<u32, Inventory>,
     pub equipment: HashMap<EquipSlot, String>,
+    /// Arrows (or other ammo) committed for ranged attacks; press **e** on ammo in inventory to load.
+    #[serde(default)]
+    pub equipped_ammo: Option<ItemStack>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::ai::combat::ChaseNearestPolicy;
 use crate::ai::{AiIntent, CombatAiCtx, CombatDecisionPolicy};
 use crate::combat::{
-    CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy, EncounterProfile,
+    AttackStyle, CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy, EncounterProfile,
     ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
 };
 use crate::content::{
@@ -20,7 +20,7 @@ use crate::content::{
 use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, MouseCell};
-use crate::item::ItemStack;
+use crate::item::{EquipSlot, Inventory, ItemStack, WeaponKind};
 use crate::level::{
     derive_visual_seed, derive_visual_seed_from_map, level_from_ron, GlobalAmbiance, LevelFile,
     MapTileFog,
@@ -235,7 +235,8 @@ impl Game {
             stack: vec![GameMode::MainMenu { selected: 0 }],
         };
         game.rng_seed = 1;
-        game.log = vec!["Welcome. WASD move, E interact, I inventory, J journal, F1 debug.".into()];
+        game.log = vec!["Welcome. LMB on entities, WASD/arrows move, I inventory, J journal, F1 debug."
+            .into()];
         game
     }
 
@@ -354,6 +355,7 @@ impl Game {
             restart_level_ron_path: None,
             global_ambiance: level.global_ambiance,
         };
+        game.seed_demo_weapon_chest();
         game.refresh_fow();
         Ok(game)
     }
@@ -761,6 +763,20 @@ impl Game {
         });
     }
 
+    /// Demo wooden chest at (89, 31): weapons and arrows for playtesting ranged combat.
+    fn seed_demo_weapon_chest(&mut self) {
+        const WX: i32 = 89;
+        const WY: i32 = 31;
+        let Some(cid) = self.entities.first_container_at(WX, WY) else {
+            return;
+        };
+        let mut inv = Inventory::default();
+        inv.add("iron_sword", 1);
+        inv.add("hunting_bow", 1);
+        inv.add("arrow", 24);
+        self.narrative.container_inventories.insert(cid.0, inv);
+    }
+
     pub fn step(&mut self, input: &InputBatch) {
         for ev in &input.events {
             self.handle_event(ev.clone());
@@ -844,15 +860,22 @@ impl Game {
         );
         let report = match intent {
             AiIntent::Combat(action) => {
-                next.apply_action(action, &mut self.entities, &mut self.rng_seed, |x, y| {
-                    self.map.blocks_movement(x, y)
-                })
+                next.apply_action(
+                    action,
+                    &mut self.entities,
+                    &mut self.rng_seed,
+                    |x, y| self.map.blocks_movement(x, y),
+                    Some(&self.map),
+                    None,
+                )
             }
             AiIntent::Wait => next.apply_action(
                 CombatAction::Pass,
                 &mut self.entities,
                 &mut self.rng_seed,
                 |_x, _y| false,
+                None,
+                None,
             ),
         };
         if report.applied && pace_after_success {
@@ -1094,7 +1117,7 @@ impl Game {
                 self.start_combat_encounter(
                     vec![actor, target],
                     profile,
-                    "Combat started. x attack, WASD move, Tab pass, f flee.",
+                    "Combat started. LMB attack/move, RMB march, Enter pass, f flee, Esc quit.",
                 );
                 true
             }
@@ -1141,34 +1164,6 @@ impl Game {
         };
         if self.execute_player_action_immediate(pid, pending.command) {
             self.pending_player_action = None;
-        }
-    }
-
-    pub(crate) fn try_interact(&mut self) {
-        let Some(pid) = self.player_id() else {
-            return;
-        };
-        let Some(p) = self.entities.pos(pid) else {
-            return;
-        };
-        match services::interaction::probe_interaction(&self.entities, p, &self.content) {
-            services::interaction::InteractionOutcome::Dialogue(occ) => {
-                let _ = self.queue_or_execute_player_action(services::actions::ActionRequest {
-                    initiator: services::actions::ActionInitiator::Player,
-                    actor: pid,
-                    command: services::actions::ActionCommand::Talk { target: occ },
-                });
-            }
-            services::interaction::InteractionOutcome::Container(chest) => {
-                let _ = self.queue_or_execute_player_action(services::actions::ActionRequest {
-                    initiator: services::actions::ActionInitiator::Player,
-                    actor: pid,
-                    command: services::actions::ActionCommand::OpenContainer { target: chest },
-                });
-            }
-            services::interaction::InteractionOutcome::None => {
-                self.log.push("Nothing to interact with nearby.".into());
-            }
         }
     }
 
@@ -1236,56 +1231,6 @@ impl Game {
             initiator: services::actions::ActionInitiator::Player,
             actor: pid,
             command: services::actions::ActionCommand::MoveTo { target: wp },
-        });
-    }
-
-    pub(crate) fn try_start_combat(&mut self) {
-        let Some(pid) = self.player_id() else {
-            return;
-        };
-        let Some(p) = self.entities.pos(pid) else {
-            return;
-        };
-        let mut target: Option<EntityId> = None;
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-                let nx = p.x + dx;
-                let ny = p.y + dy;
-                let Some(occ) = self.entities.first_npc_at(nx, ny) else {
-                    continue;
-                };
-                if occ == pid {
-                    continue;
-                }
-                if self.entities.npc_kind[occ.0 as usize].is_none() {
-                    continue;
-                }
-                if matches!(self.relation_to_player(occ), Relation::Hostile) {
-                    target = Some(occ);
-                    break;
-                }
-            }
-            if target.is_some() {
-                break;
-            }
-        }
-        let Some(t) = target else {
-            self.log.push("No hostile target nearby.".into());
-            return;
-        };
-        let _ = self.queue_or_execute_player_action(services::actions::ActionRequest {
-            initiator: services::actions::ActionInitiator::Player,
-            actor: pid,
-            command: services::actions::ActionCommand::EngageCombat {
-                target: t,
-                profile: EncounterProfile {
-                    ruleset: CombatRuleset::Lethal,
-                    outcome_policy: EncounterOutcomePolicy::None,
-                },
-            },
         });
     }
 
@@ -1467,6 +1412,97 @@ impl Game {
         modes::combat::handle(self, ev, state);
     }
 
+    fn attack_style_for_entity(&self, actor: EntityId) -> AttackStyle {
+        if self.player_id() != Some(actor) {
+            return AttackStyle::Unarmed;
+        }
+        let Some(id) = self
+            .narrative
+            .equipment
+            .get(&EquipSlot::MainHand)
+            .cloned()
+        else {
+            return AttackStyle::Unarmed;
+        };
+        let Some(def) = self.content.item_catalog().get(id.as_str()) else {
+            return AttackStyle::Unarmed;
+        };
+        match def.weapon {
+            None => AttackStyle::Unarmed,
+            Some(WeaponKind::Melee {
+                to_hit,
+                damage_bonus,
+            }) => AttackStyle::Melee {
+                to_hit,
+                damage_bonus,
+            },
+            Some(WeaponKind::RangedBow {
+                to_hit,
+                damage_bonus,
+                range,
+            }) => {
+                let has_arrows = self
+                    .narrative
+                    .equipped_ammo
+                    .as_ref()
+                    .is_some_and(|s| s.id == "arrow" && s.count > 0);
+                if has_arrows {
+                    AttackStyle::Bow {
+                        to_hit,
+                        damage_bonus,
+                        range,
+                    }
+                } else {
+                    AttackStyle::Unarmed
+                }
+            }
+        }
+    }
+
+    fn combat_apply_attack(&mut self, state: &mut CombatState, target: EntityId) {
+        let Some(actor) = state.current_actor() else {
+            return;
+        };
+        let style = self.attack_style_for_entity(actor);
+        let map_blocks = |x: i32, y: i32| self.map.blocks_movement(x, y);
+        let narrative = if self.player_id() == Some(actor) {
+            Some(&mut self.narrative)
+        } else {
+            None
+        };
+        let report = state.apply_action(
+            CombatAction::Attack { target, style },
+            &mut self.entities,
+            &mut self.rng_seed,
+            map_blocks,
+            Some(&self.map),
+            narrative,
+        );
+        self.apply_combat_report(state, report);
+    }
+
+    fn combat_player_can_basic_attack_target(
+        &self,
+        state: &CombatState,
+        player: EntityId,
+        target: EntityId,
+    ) -> bool {
+        if !state.contains_actor(target) {
+            return false;
+        }
+        let Some(pp) = self.entities.pos(player) else {
+            return false;
+        };
+        let Some(tp) = self.entities.pos(target) else {
+            return false;
+        };
+        let d = services::hover::chebyshev(pp, tp);
+        match self.attack_style_for_entity(player) {
+            AttackStyle::Bow { range, .. } => d >= 1 && d <= i32::from(range),
+            AttackStyle::Unarmed | AttackStyle::Melee { .. } => d == 1,
+        }
+    }
+
     pub(crate) fn combat_try_move(&mut self, state: &mut CombatState, dx: i32, dy: i32) {
         let Some(actor) = state.current_actor() else {
             return;
@@ -1484,29 +1520,8 @@ impl Game {
             &mut self.entities,
             &mut self.rng_seed,
             map_blocks,
-        );
-        self.apply_combat_report(state, report);
-    }
-
-    pub(crate) fn combat_try_attack(&mut self, state: &mut CombatState) {
-        let Some(actor) = state.current_actor() else {
-            return;
-        };
-        let Some(p) = self.entities.pos(actor) else {
-            return;
-        };
-        let target = match services::combat::find_adjacent_target(&self.entities, state, actor, p) {
-            services::combat::AttackTargetOutcome::Target(target) => target,
-            services::combat::AttackTargetOutcome::NoAdjacentTarget => {
-                self.log.push("No adjacent combat target.".into());
-                return;
-            }
-        };
-        let report = state.apply_action(
-            CombatAction::Attack { target },
-            &mut self.entities,
-            &mut self.rng_seed,
-            |_x, _y| false,
+            Some(&self.map),
+            None,
         );
         self.apply_combat_report(state, report);
     }
@@ -1521,18 +1536,16 @@ impl Game {
         let Some(tp) = self.entities.pos(target) else {
             return;
         };
-        let dx = (p.x - tp.x).abs();
-        let dy = (p.y - tp.y).abs();
-        if dx.max(dy) != 1 {
+        let style = self.attack_style_for_entity(actor);
+        let dist = services::hover::chebyshev(p, tp);
+        let in_range = match style {
+            AttackStyle::Unarmed | AttackStyle::Melee { .. } => dist == 1,
+            AttackStyle::Bow { range, .. } => dist >= 1 && dist <= i32::from(range),
+        };
+        if !in_range {
             return;
         }
-        let report = state.apply_action(
-            CombatAction::Attack { target },
-            &mut self.entities,
-            &mut self.rng_seed,
-            |_x, _y| false,
-        );
-        self.apply_combat_report(state, report);
+        self.combat_apply_attack(state, target);
     }
 
     fn execute_combat_action_command(
@@ -1554,14 +1567,14 @@ impl Game {
         }
     }
 
-    /// March the current player toward `goal`, optionally stopping when Chebyshev-adjacent to
-    /// `stop_when_adjacent_to`. Returns `true` if combat ended mid-march.
+    /// March the current player toward `goal`, optionally stopping when within `max_chebyshev`
+    /// tiles (Chebyshev) of `stop_near_entity`. Returns `true` if combat ended mid-march.
     fn combat_march_toward(
         &mut self,
         state: &mut CombatState,
         player: EntityId,
         goal: GridPos,
-        stop_when_adjacent_to: Option<EntityId>,
+        stop_near_entity: Option<(EntityId, i32)>,
         max_steps: u32,
     ) -> bool {
         for _ in 0..max_steps {
@@ -1577,9 +1590,9 @@ impl Game {
             let Some(from) = self.entities.pos(player) else {
                 return false;
             };
-            if let Some(finish_id) = stop_when_adjacent_to {
+            if let Some((finish_id, max_d)) = stop_near_entity {
                 if let Some(tp) = self.entities.pos(finish_id) {
-                    if services::hover::chebyshev(from, tp) <= 1 {
+                    if services::hover::chebyshev(from, tp) <= max_d {
                         return false;
                     }
                 }
@@ -1611,6 +1624,8 @@ impl Game {
                 &mut self.entities,
                 &mut self.rng_seed,
                 |x, y| self.map.blocks_movement(x, y),
+                Some(&self.map),
+                None,
             );
             let applied = report.applied;
             let ended = report.end_combat;
@@ -1656,7 +1671,11 @@ impl Game {
             let Some(trainer_pos) = self.entities.pos(tid) else {
                 return;
             };
-            if self.combat_march_toward(state, pid, trainer_pos, Some(tid), 64) {
+            let stop_dist = match self.attack_style_for_entity(pid) {
+                AttackStyle::Bow { range, .. } => i32::from(range),
+                _ => 1,
+            };
+            if self.combat_march_toward(state, pid, trainer_pos, Some((tid, stop_dist)), 64) {
                 return;
             }
             if !matches!(self.modes.current(), Some(GameMode::Combat(_))) {
@@ -1665,13 +1684,7 @@ impl Game {
             if state.current_actor() != Some(pid) {
                 return;
             }
-            let Some(pp) = self.entities.pos(pid) else {
-                return;
-            };
-            let Some(tp) = self.entities.pos(tid) else {
-                return;
-            };
-            if services::hover::chebyshev(pp, tp) <= 1
+            if self.combat_player_can_basic_attack_target(state, pid, tid)
                 && state.current_ap_units().unwrap_or(0) >= ATTACK_COST_UNITS
             {
                 self.execute_combat_action_command(
@@ -1692,7 +1705,11 @@ impl Game {
             let Some(epos) = self.entities.pos(eid) else {
                 continue;
             };
-            if self.combat_march_toward(state, pid, epos, Some(eid), 64) {
+            let stop_dist = match self.attack_style_for_entity(pid) {
+                AttackStyle::Bow { range, .. } => i32::from(range),
+                _ => 1,
+            };
+            if self.combat_march_toward(state, pid, epos, Some((eid, stop_dist)), 64) {
                 return;
             }
             if !matches!(self.modes.current(), Some(GameMode::Combat(_))) {
@@ -1701,13 +1718,7 @@ impl Game {
             if state.current_actor() != Some(pid) {
                 return;
             }
-            let Some(pp) = self.entities.pos(pid) else {
-                return;
-            };
-            let Some(ep) = self.entities.pos(eid) else {
-                return;
-            };
-            if services::hover::chebyshev(pp, ep) <= 1
+            if self.combat_player_can_basic_attack_target(state, pid, eid)
                 && state.current_ap_units().unwrap_or(0) >= ATTACK_COST_UNITS
             {
                 self.execute_combat_action_command(
@@ -1833,7 +1844,7 @@ impl Game {
             }
         }
         rows.push("---".into());
-        rows.push("j/k move  Esc close".into());
+        rows.push("Up/Down move  Esc close".into());
         crate::ui::draw_text_block(fb, inner_l, &rows);
 
         crate::ui::draw_bordered_panel(fb, right, "Entries");
@@ -1982,9 +1993,9 @@ impl Game {
             cr.push("(empty)".into());
         }
         pr.push("---".into());
-        pr.push("Tab/hl: side  Enter: move".into());
+        pr.push("Tab: side  Enter: move stack".into());
         cr.push("---".into());
-        cr.push("Tab/hl: side  Enter: move".into());
+        cr.push("Tab: side  Enter: move stack".into());
 
         let li = crate::ui::layout::panel_inner(left);
         let ri = crate::ui::layout::panel_inner(right);
@@ -2213,7 +2224,7 @@ mod tests {
         );
         let c = unseen_fog_glyph(100, 200, seed);
         assert!(
-            matches!(c, '░' | '▒' | '▓' | '·' | ':' | ','),
+            matches!(c, ' ' | '░' | '▒' | '▓' | '·' | ':' | ','),
             "unexpected glyph {c:?}"
         );
         let mut seed_changes_glyph = false;

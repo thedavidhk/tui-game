@@ -182,7 +182,7 @@ pub struct DialogueNode {
     pub text: &'static str,
     pub text_fn: Option<DialogueTextFn>,
     pub effects: &'static [Effect],
-    /// When [`choices`](Self::choices) is empty, proceed to this node on continue (Enter / Space / E).
+    /// When [`choices`](Self::choices) is empty, proceed to this node on continue (Enter or click).
     pub auto_next: Option<usize>,
     pub choices: &'static [DialogueChoice],
 }
@@ -270,7 +270,7 @@ pub struct EntityBlueprint {
     pub dialogue_id: Option<&'static str>,
     /// When set, spawn carries this world pickup (`ItemDef.id`).
     pub world_item: Option<&'static str>,
-    /// Entity opens `ItemTransfer` when interacted adjacent.
+    /// Entity opens `ItemTransfer` when the player uses an adjacent tile interaction (e.g. exploration LMB).
     pub is_container: bool,
     /// Static social grouping; runtime systems can override relation dynamically.
     pub faction_id: &'static str,
@@ -623,6 +623,7 @@ mod validate_tests {
             description: "d",
             glyph: 'a',
             category: ItemCategory::Mundane,
+            weapon: None,
         }];
         let pack = ContentPack {
             dialogues,
@@ -716,6 +717,7 @@ mod validate_tests {
             description: "d",
             glyph: 'a',
             category: ItemCategory::Mundane,
+            weapon: None,
         }];
         let pack = ContentPack {
             dialogues,

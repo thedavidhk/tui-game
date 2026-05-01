@@ -33,14 +33,13 @@ pub(crate) fn compose(
     }
     match game.modes.current() {
         Some(GameMode::Combat(_)) => {
-            lines.push("Combat: WASD / x  Tab pass  Esc quit".into());
-            lines.push("LMB act  RMB move (world)".into());
+            lines.push("Combat: LMB act  RMB march  Enter pass  f flee  Esc quit".into());
         }
         Some(GameMode::GameOver) => {
-            lines.push("Enter or Space: main menu".into());
+            lines.push("Enter: main menu".into());
         }
         _ => {
-            lines.push("I: inventory  J: journal  E: talk/chest  C: combat".into());
+            lines.push("LMB: talk / chest / fight  RMB: walk  I/J: inventory & journal".into());
             lines.push("F1: debug  F5/F9 save/load".into());
         }
     }
@@ -121,7 +120,7 @@ pub(crate) fn compose(
         let lines = vec![
             "Your journey ends here.".into(),
             String::new(),
-            "Enter or Space — main menu".into(),
+            "Enter — main menu".into(),
         ];
         crate::ui::draw_text_block(fb, inner, &lines);
     }
@@ -147,7 +146,7 @@ pub(crate) fn compose(
             },
             format!("Turn: {}", who),
             hp_line,
-            "Move WASD, x attack, Tab pass, f flee".into(),
+            "LMB attack/move  RMB march  Enter pass  f flee".into(),
         ];
         crate::ui::draw_bordered_panel(fb, cr, "Combat");
         let inner = Rect::new(cr.x + 1, cr.y + 1, cr.w.saturating_sub(2), cr.h.saturating_sub(2));

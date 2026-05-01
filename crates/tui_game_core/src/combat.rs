@@ -1,8 +1,10 @@
-//! Turn-based combat core (initiative, AP economy, movement, melee attacks).
+//! Turn-based combat core (initiative, AP economy, movement, melee and ranged attacks).
 
 use serde::{Deserialize, Serialize};
 
 use crate::entity::{EntityArena, EntityId, GridPos};
+use crate::narrative::NarrativeState;
+use crate::world::{MapGrid, projectile_sight_clear};
 
 pub const ACTION_UNIT: u16 = 10;
 pub const MOVE_ORTHOGONAL_COST_UNITS: u16 = 10;
@@ -35,10 +37,28 @@ pub struct EncounterProfile {
     pub outcome_policy: EncounterOutcomePolicy,
 }
 
+/// Resolved weapon profile for an [`CombatAction::Attack`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttackStyle {
+    Unarmed,
+    Melee {
+        to_hit: i8,
+        damage_bonus: i8,
+    },
+    Bow {
+        to_hit: i8,
+        damage_bonus: i8,
+        range: u8,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CombatAction {
     Move { target: GridPos },
-    Attack { target: EntityId },
+    Attack {
+        target: EntityId,
+        style: AttackStyle,
+    },
     Pass,
     Flee,
 }
@@ -128,7 +148,9 @@ impl CombatState {
         action: CombatAction,
         arena: &mut EntityArena,
         rng_seed: &mut u64,
-        map_blocks: impl Fn(i32, i32) -> bool,
+        map_blocks_move: impl Fn(i32, i32) -> bool,
+        map: Option<&MapGrid>,
+        narrative: Option<&mut NarrativeState>,
     ) -> CombatActionReport {
         let Some(actor) = self.current_actor() else {
             return CombatActionReport {
@@ -179,7 +201,7 @@ impl CombatState {
                         message: Some("Movement target is out of bounds.".into()),
                     };
                 }
-                let blocked = map_blocks(target.x, target.y);
+                let blocked = map_blocks_move(target.x, target.y);
                 if !arena.can_move_to(blocked, target, Some(actor)) {
                     return CombatActionReport {
                         applied: false,
@@ -196,7 +218,7 @@ impl CombatState {
                     message: None,
                 }
             }
-            CombatAction::Attack { target } => {
+            CombatAction::Attack { target, style } => {
                 if self.current_ap_units().unwrap_or(0) < ATTACK_COST_UNITS {
                     return CombatActionReport {
                         applied: false,
@@ -225,14 +247,47 @@ impl CombatState {
                         message: Some("Target has no position.".into()),
                     };
                 };
-                let dx = (attacker_pos.x - target_pos.x).abs();
-                let dy = (attacker_pos.y - target_pos.y).abs();
-                if dx.max(dy) != 1 {
+                let dist = chebyshev(attacker_pos, target_pos);
+                let range_ok = match style {
+                    AttackStyle::Unarmed | AttackStyle::Melee { .. } => dist == 1,
+                    AttackStyle::Bow { range, .. } => {
+                        let r = i32::from(range);
+                        dist >= 1 && dist <= r
+                    }
+                };
+                if !range_ok {
                     return CombatActionReport {
                         applied: false,
                         end_combat: false,
-                        message: Some("Target must be adjacent for melee attack.".into()),
+                        message: Some("Target is out of weapon range.".into()),
                     };
+                }
+                if matches!(style, AttackStyle::Bow { .. }) {
+                    let Some(m) = map else {
+                        return CombatActionReport {
+                            applied: false,
+                            end_combat: false,
+                            message: Some("Ranged attacks require map context.".into()),
+                        };
+                    };
+                    if !projectile_sight_clear(m, attacker_pos, target_pos) {
+                        return CombatActionReport {
+                            applied: false,
+                            end_combat: false,
+                            message: Some("Shot is blocked.".into()),
+                        };
+                    }
+                    let has_arrow = narrative
+                        .as_ref()
+                        .and_then(|n| n.equipped_ammo.as_ref())
+                        .is_some_and(|s| s.id == "arrow" && s.count > 0);
+                    if !has_arrow {
+                        return CombatActionReport {
+                            applied: false,
+                            end_combat: false,
+                            message: Some("Bow needs arrows in the quiver (e on arrows in inventory).".into()),
+                        };
+                    }
                 }
                 let Some(attacker_stats) = arena.stats(actor) else {
                     return CombatActionReport {
@@ -248,20 +303,41 @@ impl CombatState {
                         message: Some("Target stats missing.".into()),
                     };
                 };
-                let attack_roll = i32::from(roll_d20(rng_seed)) + i32::from(strength_modifier(attacker_stats.strength));
+                let to_hit = match style {
+                    AttackStyle::Unarmed => 0,
+                    AttackStyle::Melee { to_hit, .. } | AttackStyle::Bow { to_hit, .. } => i32::from(to_hit),
+                };
+                let attack_roll = i32::from(roll_d20(rng_seed))
+                    + i32::from(strength_modifier(attacker_stats.strength))
+                    + to_hit;
                 let armor_class = i32::from(armor_class(target_stats.agility));
                 let mut message = String::from("Attack misses.");
                 if attack_roll >= armor_class {
-                    let damage = damage_on_hit(attacker_stats.strength);
+                    let dmg_bonus = match style {
+                        AttackStyle::Unarmed => 0,
+                        AttackStyle::Melee { damage_bonus, .. }
+                        | AttackStyle::Bow { damage_bonus, .. } => i32::from(damage_bonus),
+                    };
+                    let damage = (i32::from(damage_on_hit(attacker_stats.strength)) + dmg_bonus).max(1) as u16;
                     if let Some(target_mut) = arena.stats_mut(target) {
                         target_mut.hp = target_mut.hp.saturating_sub(damage);
                     }
                     if let Some(updated) = arena.stats(target) {
-                        message = format!("Attack hits for {damage} damage ({} HP left).", updated.hp);
+                        let verb = if matches!(style, AttackStyle::Bow { .. }) {
+                            "Shot hits"
+                        } else {
+                            "Attack hits"
+                        };
+                        message = format!("{verb} for {damage} damage ({} HP left).", updated.hp);
                         if updated.hp == 0 && self.profile.ruleset.is_lethal() {
                             arena.despawn(target);
                             message = "Attack defeats the target.".into();
                         }
+                    }
+                }
+                if matches!(style, AttackStyle::Bow { .. }) {
+                    if let Some(n) = narrative {
+                        consume_one_arrow(n);
                     }
                 }
                 self.consume_current_ap_units(ATTACK_COST_UNITS);
@@ -314,6 +390,23 @@ impl CombatState {
             .filter(|id| actor_can_act(arena, *id))
             .count()
             <= 1
+    }
+}
+
+fn chebyshev(a: GridPos, b: GridPos) -> i32 {
+    (a.x - b.x).abs().max((a.y - b.y).abs())
+}
+
+fn consume_one_arrow(n: &mut NarrativeState) {
+    let Some(am) = n.equipped_ammo.as_mut() else {
+        return;
+    };
+    if am.id != "arrow" {
+        return;
+    }
+    am.count = am.count.saturating_sub(1);
+    if am.count == 0 {
+        n.equipped_ammo = None;
     }
 }
 
@@ -372,8 +465,8 @@ pub fn damage_on_hit(strength: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ap_from_speed, armor_class, CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy,
-        EncounterProfile,
+        ap_from_speed, armor_class, AttackStyle, CombatAction, CombatRuleset, CombatState,
+        EncounterOutcomePolicy, EncounterProfile,
     };
     use crate::entity::{ActorStats, EntityArena, GridPos};
 
@@ -436,10 +529,15 @@ mod tests {
         let target = b;
         state.ap_remaining[state.turn_index] = 100;
         let report = state.apply_action(
-            CombatAction::Attack { target },
+            CombatAction::Attack {
+                target,
+                style: AttackStyle::Unarmed,
+            },
             &mut arena,
             &mut seed,
             |_x, _y| false,
+            None,
+            None,
         );
         assert!(report.applied);
         assert!(

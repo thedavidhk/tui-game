@@ -26,7 +26,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
             }
         }
         InputEvent::Key(KeyChord {
-            key: Key::Tab | Key::Char(' '),
+            key: Key::Enter,
             ..
         }) => {
             let report = next.apply_action(
@@ -34,6 +34,8 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
                 &mut game.entities,
                 &mut game.rng_seed,
                 |_x, _y| false,
+                None,
+                None,
             );
             game.apply_combat_report(&next, report);
         }
@@ -46,6 +48,8 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
                 &mut game.entities,
                 &mut game.rng_seed,
                 |_x, _y| false,
+                None,
+                None,
             );
             game.apply_combat_report(&next, report);
         }
@@ -94,30 +98,6 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
             ..
         }) => {
             game.combat_try_move(&mut next, 1, 0);
-        }
-        InputEvent::Key(KeyChord { key: Key::Home, .. }) => {
-            game.combat_try_move(&mut next, -1, -1);
-        }
-        InputEvent::Key(KeyChord {
-            key: Key::PageUp,
-            ..
-        }) => {
-            game.combat_try_move(&mut next, 1, -1);
-        }
-        InputEvent::Key(KeyChord { key: Key::End, .. }) => {
-            game.combat_try_move(&mut next, -1, 1);
-        }
-        InputEvent::Key(KeyChord {
-            key: Key::PageDown,
-            ..
-        }) => {
-            game.combat_try_move(&mut next, 1, 1);
-        }
-        InputEvent::Key(KeyChord {
-            key: Key::Char('x'),
-            ..
-        }) => {
-            game.combat_try_attack(&mut next);
         }
         InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
             game.finish_combat_player_quit(&next);

@@ -9,7 +9,7 @@ use crate::input::MouseCell;
 use crate::rect::Rect;
 use crate::world::MapGrid;
 
-/// Max Manhattan distance from the player for starting dialogue (click or `E`).
+/// Max Manhattan distance from the player for starting dialogue (after walking into range).
 pub const TALK_RANGE_MANHATTAN: i32 = 4;
 
 #[must_use]

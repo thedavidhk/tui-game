@@ -35,11 +35,11 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
                         game.apply_dialogue_continue(tree, exit_sentinel);
                     }
                 }
-                InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
+                InputEvent::Key(KeyChord { key: Key::Char('q'), .. }) => {
                     let _ = game.modes.pop();
                 }
                 InputEvent::Key(KeyChord {
-                    key: Key::Enter | Key::Char(' ') | Key::Char('e'),
+                    key: Key::Enter,
                     ..
                 }) => {
                     game.apply_dialogue_continue(tree, exit_sentinel);
@@ -74,11 +74,11 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
                 game.apply_dialogue_choice(tree, exit_sentinel);
             }
         }
-        InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
+        InputEvent::Key(KeyChord { key: Key::Char('q'), .. }) => {
             let _ = game.modes.pop();
         }
         InputEvent::Key(KeyChord {
-            key: Key::Up | Key::Char('k'),
+            key: Key::Up,
             ..
         }) => {
             if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut() {
@@ -86,7 +86,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
             }
         }
         InputEvent::Key(KeyChord {
-            key: Key::Down | Key::Char('j'),
+            key: Key::Down,
             ..
         }) => {
             if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut() {
@@ -95,21 +95,10 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
             }
         }
         InputEvent::Key(KeyChord {
-            key: Key::Enter | Key::Char(' '),
+            key: Key::Enter,
             ..
         }) => {
             game.apply_dialogue_choice(tree, exit_sentinel);
-        }
-        InputEvent::Key(KeyChord {
-            key: Key::Char(c), ..
-        }) if c.is_ascii_digit() => {
-            let d = (c as u8).saturating_sub(b'1') as usize;
-            if d < visible.len() {
-                if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut() {
-                    *c = d;
-                }
-                game.apply_dialogue_choice(tree, exit_sentinel);
-            }
         }
         _ => {}
     }

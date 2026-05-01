@@ -4,11 +4,11 @@ use crate::input::{InputEvent, Key, KeyChord};
 pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
     let n = game.narrative.quest_journal.len();
     match ev {
-        InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
+        InputEvent::Key(KeyChord { key: Key::Char('q'), .. }) => {
             let _ = game.modes.pop();
         }
         InputEvent::Key(KeyChord {
-            key: Key::Up | Key::Char('k'),
+            key: Key::Up,
             ..
         }) => {
             if let Some(GameMode::Journal { quest_cursor }) = game.modes.current_mut() {
@@ -16,7 +16,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
             }
         }
         InputEvent::Key(KeyChord {
-            key: Key::Down | Key::Char('j'),
+            key: Key::Down,
             ..
         }) => {
             if let Some(GameMode::Journal { quest_cursor }) = game.modes.current_mut() {

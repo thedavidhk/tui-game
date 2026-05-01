@@ -17,9 +17,12 @@ pub mod save;
 pub mod ui;
 pub mod world;
 
+pub use combat::AttackStyle;
 pub use content::{EntityBlueprint, QuestJournalStatus};
 pub use game::Game;
-pub use item::{EquipSlot, Inventory, ItemCatalog, ItemCategory, ItemDef, ItemStack};
+pub use item::{
+    EquipSlot, Inventory, ItemCatalog, ItemCategory, ItemDef, ItemStack, WeaponKind,
+};
 pub use narrative::{JournalEntry, JournalQuestRecord, NarrativeState};
 
 #[cfg(test)]

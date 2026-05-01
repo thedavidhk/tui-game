@@ -18,16 +18,13 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, selected: usize) {
             }
         }
         InputEvent::Key(k) => {
-            if k.key == Key::Char('q') || k.key == Key::Esc {
-                // stay on menu; quit only via selection
-            }
-            if matches!(k.key, Key::Up | Key::Char('k')) {
+            if matches!(k.key, Key::Up) {
                 let sel = selected.saturating_sub(1);
                 if let Some(GameMode::MainMenu { selected: s }) = game.modes.current_mut() {
                     *s = sel;
                 }
             }
-            if matches!(k.key, Key::Down | Key::Char('j')) {
+            if matches!(k.key, Key::Down) {
                 let n = game.menu_items.len();
                 let sel = (selected + 1).min(n.saturating_sub(1));
                 if let Some(GameMode::MainMenu { selected: s }) = game.modes.current_mut() {

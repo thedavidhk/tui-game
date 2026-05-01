@@ -291,6 +291,28 @@ fn has_line_of_sight(
     true
 }
 
+/// Bresenham tile ray from `from` through `to` (inclusive).
+#[must_use]
+pub fn bresenham_tile_line(from: GridPos, to: GridPos) -> Vec<GridPos> {
+    bresenham_line(from, to)
+}
+
+/// True if every cell **strictly between** `from` and `to` does not block sight.
+/// Adjacent endpoints (`line` length 2) have no interior tiles to check.
+#[must_use]
+pub fn projectile_sight_clear(map: &MapGrid, from: GridPos, to: GridPos) -> bool {
+    let cells = bresenham_line(from, to);
+    if cells.len() < 2 {
+        return false;
+    }
+    for p in cells.iter().skip(1).take(cells.len().saturating_sub(2)) {
+        if map.blocks_sight(p.x, p.y) {
+            return false;
+        }
+    }
+    true
+}
+
 fn bresenham_line(from: GridPos, to: GridPos) -> Vec<GridPos> {
     let mut out = Vec::new();
     let mut x0 = from.x;

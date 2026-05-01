@@ -63,7 +63,7 @@ pub struct EntityArena {
     pub npc_kind: Vec<Option<String>>,
     /// Ground pickup when `npc_kind` is `None` (world item entity).
     pub item: Vec<Option<ItemStack>>,
-    /// Opens `ItemTransfer` when adjacent interact in exploration.
+    /// Opens `ItemTransfer` when the player interacts from an adjacent tile (e.g. LMB in exploration).
     pub is_container: Vec<bool>,
     #[serde(default)]
     pub combat_stats: Vec<ActorStats>,

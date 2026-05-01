@@ -28,17 +28,6 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
         }) => {
             game.modes.push(GameMode::Journal { quest_cursor: 0 });
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Char('e'),
-            ..
-        })
-        | InputEvent::Key(KeyChord {
-            key: Key::Enter, ..
-        }) => game.try_interact(),
-        InputEvent::Key(KeyChord {
-            key: Key::Char('c'),
-            ..
-        }) => game.try_start_combat(),
         InputEvent::Key(KeyChord { key: Key::Up, .. }) if game.world_view_needs_pan() => {
             game.nudge_view_pan(0, -1);
         }
@@ -77,16 +66,6 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
             key: Key::Right,
             ..
         }) => game.try_move_player(1, 0),
-        InputEvent::Key(KeyChord { key: Key::Home, .. }) => game.try_move_player(-1, -1),
-        InputEvent::Key(KeyChord {
-            key: Key::PageUp,
-            ..
-        }) => game.try_move_player(1, -1),
-        InputEvent::Key(KeyChord { key: Key::End, .. }) => game.try_move_player(-1, 1),
-        InputEvent::Key(KeyChord {
-            key: Key::PageDown,
-            ..
-        }) => game.try_move_player(1, 1),
         InputEvent::Mouse {
             kind,
             cell,
