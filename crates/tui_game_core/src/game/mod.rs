@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 use crate::ai::combat::ChaseNearestPolicy;
 use crate::ai::{AiIntent, CombatAiCtx, CombatDecisionPolicy};
 use crate::combat::{
-    AttackStyle, CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy, EncounterProfile,
-    ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
+    AttackStyle, CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy,
+    EncounterProfile, ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
 };
 use crate::content::{
     ContentPack, DialogueAction, HostileTriggerDef, NpcRoutineDef, QuestJournalStatus, Relation,
@@ -49,13 +49,7 @@ const FOW_RADIUS: i32 = 16;
 const NPC_EXPLORATION_AI_COOLDOWN_TICKS: u16 = 6;
 
 /// `(weight, glyph)`; weights sum to **256** (lighter / speck glyphs more common than heavy blocks).
-const FOG_GLYPH_WEIGHTS: &[(u16, char)] = &[
-    (166, ' '),
-    (39, '·'),
-    (27, '░'),
-    (16, '▒'),
-    (8, '▓'),
-];
+const FOG_GLYPH_WEIGHTS: &[(u16, char)] = &[(166, ' '), (39, '·'), (27, '░'), (16, '▒'), (8, '▓')];
 
 #[inline]
 fn weighted_fog_glyph(r: u8) -> char {
@@ -81,9 +75,7 @@ fn unseen_fog_glyph(wx: i32, wy: i32, level_seed: u64) -> char {
         ^ b.wrapping_add(a.rotate_left(17))
         ^ level_seed.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
     h = mix64(h);
-    h ^= mix64(
-        a.rotate_left(11) ^ b.wrapping_mul(0x85EB_CA6B) ^ level_seed.rotate_left(5),
-    );
+    h ^= mix64(a.rotate_left(11) ^ b.wrapping_mul(0x85EB_CA6B) ^ level_seed.rotate_left(5));
     h = mix64(h);
     let r = ((h ^ h >> 17 ^ h >> 34 ^ h >> 51) & 0xFF) as u8;
     weighted_fog_glyph(r)
@@ -295,7 +287,8 @@ impl Game {
             let eid = entities.spawn(
                 GridPos { x: s.x, y: s.y },
                 s.glyph_override.unwrap_or(bp.default_glyph),
-                s.fg_override.unwrap_or_else(|| bp.default_fg.to_render_color()),
+                s.fg_override
+                    .unwrap_or_else(|| bp.default_fg.to_render_color()),
                 s.name_override
                     .clone()
                     .unwrap_or_else(|| bp.default_label.to_string()),
@@ -606,8 +599,7 @@ impl Game {
     }
 
     pub(crate) fn world_rect_for_viewport(&self) -> Rect {
-        let (world, _, _) =
-            GameShellLayout::root_panels(self.viewport_w, self.viewport_h);
+        let (world, _, _) = GameShellLayout::root_panels(self.viewport_w, self.viewport_h);
         world
     }
 
@@ -728,10 +720,10 @@ impl Game {
             .get(kind.as_str())
             .copied()
             .unwrap_or(self.content.default_dialogue);
-        let start_node = self
-            .content
-            .runtime_hooks
-            .dialogue_start_node(kind.as_str(), tree, &self.narrative);
+        let start_node =
+            self.content
+                .runtime_hooks
+                .dialogue_start_node(kind.as_str(), tree, &self.narrative);
         self.push_dialogue_mode(npc, kind, start_node, tree);
     }
 
@@ -860,8 +852,7 @@ impl Game {
             return;
         }
         if self.npc_combat_ai_tick_cooldown > 0 {
-            self.npc_combat_ai_tick_cooldown =
-                self.npc_combat_ai_tick_cooldown.saturating_sub(1);
+            self.npc_combat_ai_tick_cooldown = self.npc_combat_ai_tick_cooldown.saturating_sub(1);
             return;
         }
         let mut next = state;
@@ -879,16 +870,14 @@ impl Game {
             AiIntent::Combat(CombatAction::Move { .. } | CombatAction::Attack { .. })
         );
         let report = match intent {
-            AiIntent::Combat(action) => {
-                next.apply_action(
-                    action,
-                    &mut self.entities,
-                    &mut self.rng_seed,
-                    |x, y| self.map.blocks_movement(x, y),
-                    Some(&self.map),
-                    None,
-                )
-            }
+            AiIntent::Combat(action) => next.apply_action(
+                action,
+                &mut self.entities,
+                &mut self.rng_seed,
+                |x, y| self.map.blocks_movement(x, y),
+                Some(&self.map),
+                None,
+            ),
             AiIntent::Wait => next.apply_action(
                 CombatAction::Pass,
                 &mut self.entities,
@@ -899,10 +888,7 @@ impl Game {
             ),
         };
         if report.applied && pace_after_success {
-            let speed = self
-                .entities
-                .stats(actor)
-                .map_or(1, |stats| stats.speed);
+            let speed = self.entities.stats(actor).map_or(1, |stats| stats.speed);
             self.npc_combat_ai_tick_cooldown =
                 services::pacing::visual_step_cooldown_ticks_from_speed(speed);
         }
@@ -1112,11 +1098,12 @@ impl Game {
             services::actions::RangeRequirement::Adjacent => self
                 .action_target_pos(command)
                 .is_some_and(|target| services::hover::chebyshev(actor_pos, target) <= 1),
-            services::actions::RangeRequirement::TalkRadius => self
-                .action_target_pos(command)
-                .is_some_and(|target| {
-                    services::hover::manhattan(actor_pos, target) <= services::hover::TALK_RANGE_MANHATTAN
-                }),
+            services::actions::RangeRequirement::TalkRadius => {
+                self.action_target_pos(command).is_some_and(|target| {
+                    services::hover::manhattan(actor_pos, target)
+                        <= services::hover::TALK_RANGE_MANHATTAN
+                })
+            }
             services::actions::RangeRequirement::OccupyTile => self
                 .action_target_pos(command)
                 .is_some_and(|target| actor_pos == target),
@@ -1379,10 +1366,8 @@ impl Game {
                 return;
             }
         }
-        let trigger_training_spar = matches!(
-            choice.action,
-            Some(DialogueAction::StartTrainingSpar)
-        );
+        let trigger_training_spar =
+            matches!(choice.action, Some(DialogueAction::StartTrainingSpar));
         let next = choice.next;
         if next == exit_sentinel {
             let _ = self.modes.pop();
@@ -1443,12 +1428,7 @@ impl Game {
         if self.player_id() != Some(actor) {
             return AttackStyle::Unarmed;
         }
-        let Some(id) = self
-            .narrative
-            .equipment
-            .get(&EquipSlot::MainHand)
-            .cloned()
-        else {
+        let Some(id) = self.narrative.equipment.get(&EquipSlot::MainHand).cloned() else {
             return AttackStyle::Unarmed;
         };
         let Some(def) = self.content.item_catalog().get(id.as_str()) else {
@@ -1694,7 +1674,8 @@ impl Game {
             return;
         };
 
-        if let EncounterOutcomePolicy::TrainingSpar { trainer: tid } = state.profile.outcome_policy {
+        if let EncounterOutcomePolicy::TrainingSpar { trainer: tid } = state.profile.outcome_policy
+        {
             let Some(trainer_pos) = self.entities.pos(tid) else {
                 return;
             };
@@ -1923,11 +1904,8 @@ impl Game {
 
         crate::ui::draw_bordered_panel(fb, equipment, "Equipped");
         let mut eq_lines: Vec<String> = Vec::new();
-        for slot in [EquipSlot::MainHand, EquipSlot::Ring] {
-            let title = match slot {
-                EquipSlot::MainHand => "Main hand",
-                EquipSlot::Ring => "Ring",
-            };
+        for slot in EquipSlot::VARIANTS {
+            let title = slot.to_string();
             let line = match self.narrative.equipment.get(&slot) {
                 None => format!("{title}: —"),
                 Some(id) => format!("{title}: {}", cat.display_name(id.as_str())),
@@ -2263,10 +2241,7 @@ mod tests {
     #[test]
     fn unseen_fog_glyph_deterministic_from_palette() {
         let seed = 0xC0FFEE_u64;
-        assert_eq!(
-            unseen_fog_glyph(7, -2, seed),
-            unseen_fog_glyph(7, -2, seed)
-        );
+        assert_eq!(unseen_fog_glyph(7, -2, seed), unseen_fog_glyph(7, -2, seed));
         let c = unseen_fog_glyph(100, 200, seed);
         assert!(
             matches!(c, ' ' | '░' | '▒' | '▓' | '·' | ':' | ','),
@@ -2274,7 +2249,9 @@ mod tests {
         );
         let mut seed_changes_glyph = false;
         for i in 0..40_i32 {
-            if unseen_fog_glyph(i, i.wrapping_mul(7), 1) != unseen_fog_glyph(i, i.wrapping_mul(7), 2) {
+            if unseen_fog_glyph(i, i.wrapping_mul(7), 1)
+                != unseen_fog_glyph(i, i.wrapping_mul(7), 2)
+            {
                 seed_changes_glyph = true;
                 break;
             }
@@ -2379,7 +2356,8 @@ mod tests {
         game.handle_menu(GameInput::Command(GameCommand::Confirm), 0);
         assert!(matches!(game.modes.current(), Some(GameMode::Exploration)));
         assert!(
-            game.player_id().is_some_and(|pid| game.entities.is_alive(pid)),
+            game.player_id()
+                .is_some_and(|pid| game.entities.is_alive(pid)),
             "new game should respawn a living player"
         );
     }

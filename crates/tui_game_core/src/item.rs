@@ -1,13 +1,44 @@
 //! Item definitions, stacks, and player-style inventories.
 
+use std::fmt::Display;
+
 use serde::{Deserialize, Serialize};
 
 /// Equipment slots for UI, persistence, and combat resolution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EquipSlot {
-    Ring,
     /// Primary weapon (sword, bow, …).
     MainHand,
+    OffHand,
+    Armor,
+    Amulet,
+    Ring,
+}
+
+impl EquipSlot {
+    pub const VARIANTS: [EquipSlot; 5] = [
+        EquipSlot::MainHand,
+        EquipSlot::OffHand,
+        EquipSlot::Armor,
+        EquipSlot::Amulet,
+        EquipSlot::Ring,
+    ];
+}
+
+impl Display for EquipSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                EquipSlot::MainHand => "Main hand",
+                EquipSlot::OffHand => "Off hand",
+                EquipSlot::Armor => "Armor",
+                EquipSlot::Amulet => "Amulet",
+                EquipSlot::Ring => "Ring",
+            }
+        )
+    }
 }
 
 /// Weapon behavior when equipped in [`EquipSlot::MainHand`].
