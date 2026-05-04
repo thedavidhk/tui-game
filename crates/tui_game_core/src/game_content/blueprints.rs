@@ -92,7 +92,10 @@ pub const BLUEPRINT_WOLF: EntityBlueprint = EntityBlueprint {
     default_label: "Wolf",
     is_actor: true,
     behavior: NpcBehaviorDef {
-        routine: NpcRoutineDef::Roam { radius: 5 },
+        routine: NpcRoutineDef::Roam {
+            radius: 5,
+            wait_ticks: 15,
+        },
         hostile_trigger: Some(HostileTriggerDef::PlayerWithinChebyshev { range: 4 }),
     },
     dialogue_id: None,

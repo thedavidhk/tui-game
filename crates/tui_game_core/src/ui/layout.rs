@@ -2,7 +2,7 @@
 //!
 //! ## Where to tune layout
 //! - **Explorer shell** (world + HUD + log): [`GameShellLayout`]
-//! - **Full-screen two-column overlays** (inventory, journal, transfer): [`OverlaySplitConfig`]
+//! - **Multi-column full-screen bands**: [`split_horizontal_columns`] (callers choose margins and column count)
 //! - **Floating panels** (main menu, dialogue strip, combat HUD, debug): [`FloatingPanelLayout`]
 
 use crate::rect::Rect;
@@ -40,47 +40,6 @@ impl GameShellLayout {
         let hud = Rect::new(world.w, 0, hud_w, viewport_h.saturating_sub(log_h));
         let log = Rect::new(0, world.h, viewport_w, log_h);
         (world, hud, log)
-    }
-}
-
-/// Margins passed to [`split_horizontal_outer`] for inventory, journal, and chest UIs.
-pub struct OverlaySplitConfig;
-
-impl OverlaySplitConfig {
-    pub const MARGIN_X: u16 = 2;
-    pub const MID_GAP: u16 = 2;
-    pub const MIN_COL_WIDTH: u16 = 18;
-    pub const BOTTOM_MARGIN: u16 = 3;
-
-    /// Top margin for journal and inventory overlays.
-    pub const JOURNAL_INVENTORY_TOP: u16 = 3;
-    /// Top margin for the item-transfer overlay (slightly tighter).
-    pub const TRANSFER_TOP: u16 = 2;
-
-    #[must_use]
-    pub fn journal_or_inventory(fb_w: u16, fb_h: u16) -> (Rect, Rect) {
-        split_horizontal_outer(
-            fb_w,
-            fb_h,
-            Self::MARGIN_X,
-            Self::JOURNAL_INVENTORY_TOP,
-            Self::BOTTOM_MARGIN,
-            Self::MID_GAP,
-            Self::MIN_COL_WIDTH,
-        )
-    }
-
-    #[must_use]
-    pub fn item_transfer(fb_w: u16, fb_h: u16) -> (Rect, Rect) {
-        split_horizontal_outer(
-            fb_w,
-            fb_h,
-            Self::MARGIN_X,
-            Self::TRANSFER_TOP,
-            Self::BOTTOM_MARGIN,
-            Self::MID_GAP,
-            Self::MIN_COL_WIDTH,
-        )
     }
 }
 
@@ -173,47 +132,62 @@ pub fn panel_inner(panel: Rect) -> Rect {
     )
 }
 
-/// Two equal-ish columns for full-screen overlays (inventory, transfer).
+/// Divides a horizontal band (full framebuffer width by `full_h`) into `column_count` columns.
+///
+/// Margins shrink the band; `column_gap` is applied between adjacent columns. Column widths are
+/// equal with remainder pixels assigned from the left. `column_count` must be ≥ 1 (panics in
+/// debug if zero).
 #[must_use]
-pub fn split_horizontal_outer(
+pub fn split_horizontal_columns(
     full_w: u16,
     full_h: u16,
     margin_x: u16,
     margin_top: u16,
     margin_bottom: u16,
-    mid_gap: u16,
-    min_col_w: u16,
-) -> (Rect, Rect) {
-    let inner_w = full_w.saturating_sub(margin_x * 2);
-    let cols_w = inner_w.saturating_sub(mid_gap);
-    let mut left_w = cols_w / 2;
-    let mut right_w = cols_w.saturating_sub(left_w);
-    if cols_w >= min_col_w.saturating_mul(2) {
-        left_w = left_w.max(min_col_w);
-        right_w = cols_w.saturating_sub(left_w);
+    column_gap: u16,
+    column_count: u16,
+) -> Vec<Rect> {
+    debug_assert!(column_count >= 1, "column_count must be at least 1");
+    let column_count = column_count.max(1);
+    let inner_w = full_w.saturating_sub(margin_x.saturating_mul(2));
+    let gaps_total = column_gap.saturating_mul(column_count.saturating_sub(1));
+    let cols_w = inner_w.saturating_sub(gaps_total);
+    let h = full_h.saturating_sub(margin_top.saturating_add(margin_bottom)).max(8);
+
+    let base = cols_w / column_count;
+    let rem = cols_w % column_count;
+    let mut x = margin_x;
+    let mut out = Vec::with_capacity(column_count as usize);
+    for i in 0..column_count {
+        let wcol = base + u16::from(i < rem);
+        out.push(Rect::new(x, margin_top, wcol, h));
+        x = x.saturating_add(wcol).saturating_add(column_gap);
     }
-    let h = full_h.saturating_sub(margin_top + margin_bottom).max(8);
-    let left = Rect::new(margin_x, margin_top, left_w, h);
-    let right = Rect::new(
-        margin_x.saturating_add(left_w).saturating_add(mid_gap),
-        margin_top,
-        right_w,
-        h,
-    );
-    (left, right)
+    out
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{split_horizontal_outer, GameShellLayout, Rect};
+    use super::{split_horizontal_columns, GameShellLayout, Rect};
 
     #[test]
-    fn split_horizontal_outer_uses_available_width() {
-        let (left, right) = split_horizontal_outer(80, 30, 2, 3, 3, 2, 18);
-        assert_eq!(left.w, 37);
-        assert_eq!(right.w, 37);
-        assert_eq!(left.x, 2);
-        assert_eq!(right.x, 41);
+    fn split_horizontal_columns_two_matches_legacy_outer_split() {
+        let v = split_horizontal_columns(80, 30, 2, 3, 3, 2, 2);
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0], Rect::new(2, 3, 37, 24));
+        assert_eq!(v[1], Rect::new(41, 3, 37, 24));
+    }
+
+    #[test]
+    fn split_horizontal_columns_three_distributes_width() {
+        let v = split_horizontal_columns(80, 30, 2, 3, 3, 2, 3);
+        assert_eq!(v.len(), 3);
+        let sum_w: u32 = v.iter().map(|r| u32::from(r.w)).sum();
+        // inner 76 - 2 gaps of 2 => 72 for columns
+        assert_eq!(sum_w, 72);
+        assert_eq!(v[0].x, 2);
+        assert!(v[1].x > v[0].x);
+        assert!(v[2].x > v[1].x);
     }
 
     #[test]

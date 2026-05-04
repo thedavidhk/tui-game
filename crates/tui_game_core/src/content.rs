@@ -132,6 +132,7 @@ pub enum NpcRoutineDef {
     Idle,
     Roam {
         radius: u16,
+        wait_ticks: u16,
     },
     Patrol {
         stops: &'static [PatrolStopDef],

@@ -2,6 +2,7 @@
 
 mod key_commands;
 mod modes;
+mod overlay_layout;
 pub(crate) mod services;
 mod view;
 
@@ -1847,10 +1848,7 @@ impl Game {
             }
         }
 
-        let (left, right) = crate::ui::layout::OverlaySplitConfig::journal_or_inventory(
-            fb.width,
-            fb.height,
-        );
+        let (left, right) = overlay_layout::two_column_relaxed(fb.width, fb.height);
         crate::ui::draw_bordered_panel(fb, left, "Quests");
         let inner_l = crate::ui::layout::panel_inner(left);
         let journals = &self.narrative.quest_journal;
@@ -1900,14 +1898,12 @@ impl Game {
     }
 
     fn compose_inventory_overlay(&self, fb: &mut FrameBuffer, cursor: usize) {
-        let (left, right) = crate::ui::layout::OverlaySplitConfig::journal_or_inventory(
-            fb.width,
-            fb.height,
-        );
-        crate::ui::draw_bordered_panel(fb, left, "Inventory");
+        let (bags, equipment, detail) = overlay_layout::three_column_relaxed(fb.width, fb.height);
         let cat = self.content.item_catalog();
         let stacks = &self.narrative.inventory.stacks;
         let n = stacks.len();
+
+        crate::ui::draw_bordered_panel(fb, bags, "Inventory");
         let mut rows: Vec<String> = Vec::new();
         for (i, s) in stacks.iter().enumerate() {
             let mark = if n > 0 && i == cursor.min(n.saturating_sub(1)) {
@@ -1923,26 +1919,50 @@ impl Game {
         }
         rows.push("---".into());
         rows.push("u use · e equip · Esc or q back".into());
-        let inner = crate::ui::layout::panel_inner(left);
-        crate::ui::draw_text_block(fb, inner, &rows);
+        crate::ui::draw_text_block(fb, crate::ui::layout::panel_inner(bags), &rows);
 
-        crate::ui::draw_bordered_panel(fb, right, "Detail");
-        let line_w = right.w.saturating_sub(2) as usize;
-        let mut detail: Vec<String> = Vec::new();
+        crate::ui::draw_bordered_panel(fb, equipment, "Equipped");
+        let mut eq_lines: Vec<String> = Vec::new();
+        for slot in [EquipSlot::MainHand, EquipSlot::Ring] {
+            let title = match slot {
+                EquipSlot::MainHand => "Main hand",
+                EquipSlot::Ring => "Ring",
+            };
+            let line = match self.narrative.equipment.get(&slot) {
+                None => format!("{title}: —"),
+                Some(id) => format!("{title}: {}", cat.display_name(id.as_str())),
+            };
+            eq_lines.push(line);
+        }
+        eq_lines.push(String::new());
+        match &self.narrative.equipped_ammo {
+            None => eq_lines.push("Quiver: (empty)".into()),
+            Some(a) => eq_lines.push(format!(
+                "Quiver: {} x{}",
+                cat.display_name(a.id.as_str()),
+                a.count
+            )),
+        }
+        eq_lines.push("---".into());
+        eq_lines.push("e from list".into());
+        crate::ui::draw_text_block(fb, crate::ui::layout::panel_inner(equipment), &eq_lines);
+
+        crate::ui::draw_bordered_panel(fb, detail, "Detail");
+        let line_w = detail.w.saturating_sub(2) as usize;
+        let mut detail_lines: Vec<String> = Vec::new();
         if let Some(s) = stacks.get(cursor.min(n.saturating_sub(1))) {
             if let Some(def) = cat.get(s.id.as_str()) {
-                detail.push(def.name.to_string());
-                detail.push(cat.category_line(s.id.as_str()));
-                detail.push(String::new());
-                detail.extend(crate::ui::wrap::wrap_words(def.description, line_w.max(12)));
+                detail_lines.push(def.name.to_string());
+                detail_lines.push(cat.category_line(s.id.as_str()));
+                detail_lines.push(String::new());
+                detail_lines.extend(crate::ui::wrap::wrap_words(def.description, line_w.max(12)));
             } else {
-                detail.push(s.id.clone());
+                detail_lines.push(s.id.clone());
             }
         } else {
-            detail.push("(no stacks)".into());
+            detail_lines.push("(no stacks)".into());
         }
-        let r_inner = crate::ui::layout::panel_inner(right);
-        crate::ui::draw_text_block(fb, r_inner, &detail);
+        crate::ui::draw_text_block(fb, crate::ui::layout::panel_inner(detail), &detail_lines);
     }
 
     fn compose_item_transfer_overlay(
@@ -1953,8 +1973,7 @@ impl Game {
         cursor_player: usize,
         cursor_container: usize,
     ) {
-        let (left, right) =
-            crate::ui::layout::OverlaySplitConfig::item_transfer(fb.width, fb.height);
+        let (left, right) = overlay_layout::two_column_tight(fb.width, fb.height);
         let cat = self.content.item_catalog();
         let cname = self
             .entities

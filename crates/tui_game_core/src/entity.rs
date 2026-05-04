@@ -16,6 +16,7 @@ pub struct GridPos {
 pub struct NpcBrainState {
     pub home: GridPos,
     pub roam_goal: Option<GridPos>,
+    pub roam_wait_ticks: u16,
     pub patrol_next_stop: u16,
     pub patrol_wait_ticks: u16,
 }
@@ -105,6 +106,7 @@ impl EntityArena {
         self.npc_brain[i] = NpcBrainState {
             home: pos,
             roam_goal: None,
+            roam_wait_ticks: 0,
             patrol_next_stop: 0,
             patrol_wait_ticks: 0,
         };

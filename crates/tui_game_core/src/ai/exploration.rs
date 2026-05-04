@@ -83,7 +83,7 @@ pub fn next_exploration_step(
 ) -> Option<GridPos> {
     match routine {
         NpcRoutineDef::Idle => None,
-        NpcRoutineDef::Roam { radius } => {
+        NpcRoutineDef::Roam { radius, wait_ticks } => {
             let out_of_range = chebyshev(from, state.home) > i32::from(radius);
             if out_of_range {
                 state.roam_goal = Some(state.home);
@@ -92,6 +92,11 @@ pub fn next_exploration_step(
                 state.roam_goal = None;
             }
             if state.roam_goal.is_none() {
+                if state.roam_wait_ticks < wait_ticks {
+                    state.roam_wait_ticks = state.roam_wait_ticks.saturating_add(1);
+                    return None;
+                }
+                state.roam_wait_ticks = 0;
                 state.roam_goal = pick_roam_goal(state, radius, map, entities, actor, rng_seed);
             }
             let goal = state.roam_goal?;
