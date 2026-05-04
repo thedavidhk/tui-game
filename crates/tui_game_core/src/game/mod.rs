@@ -1,8 +1,13 @@
 //! Top-level game state, mode stack, and stepping.
 
+mod key_commands;
 mod modes;
 pub(crate) mod services;
 mod view;
+
+pub use key_commands::{
+    default_game_key_map, key_layer_for_mode, GameCommand, GameInput, GameKeyMap, KeyMapLayer,
+};
 
 use std::fs;
 
@@ -202,6 +207,8 @@ pub struct Game {
     pub restart_level_ron_path: Option<String>,
     /// Level-wide FoW tint targets and local-light accent (from [`LevelFile`] or save).
     pub global_ambiance: GlobalAmbiance,
+    /// Key chord → [`GameCommand`] tables ([`GameKeyMap`]); normally supplied by the shell binary.
+    pub key_map: GameKeyMap,
 }
 
 impl Game {
@@ -228,15 +235,23 @@ impl Game {
     }
 
     pub fn new_bootstrapped(viewport_w: u16, viewport_h: u16) -> Self {
+        Self::new_bootstrapped_with_keymap(viewport_w, viewport_h, default_game_key_map())
+    }
+
+    /// Same as [`Self::new_bootstrapped`], but uses the supplied [`GameKeyMap`] (for binaries).
+    pub fn new_bootstrapped_with_keymap(
+        viewport_w: u16,
+        viewport_h: u16,
+        key_map: GameKeyMap,
+    ) -> Self {
         let level = game_content::embedded_demo_level();
-        let mut game = Self::from_level_file(&level, viewport_w, viewport_h)
+        let mut game = Self::from_level_file(&level, viewport_w, viewport_h, key_map)
             .expect("built-in default village level must load");
         game.modes = GameModeStack {
             stack: vec![GameMode::MainMenu { selected: 0 }],
         };
         game.rng_seed = 1;
-        game.log = vec!["Welcome. LMB on entities, WASD/arrows move, I inventory, J journal, F1 debug."
-            .into()];
+        game.log = vec!["Welcome. LMB on entities, WASD/arrows move, I/J inventory & journal, F1 debug. Main menu: Esc or q quits.".into()];
         game
     }
 
@@ -244,6 +259,7 @@ impl Game {
         level: &LevelFile,
         viewport_w: u16,
         viewport_h: u16,
+        key_map: GameKeyMap,
     ) -> Result<Self, String> {
         let content = game_content::content_pack();
         content.validate().map_err(|e| e.to_string())?;
@@ -354,6 +370,7 @@ impl Game {
             pending_player_action: None,
             restart_level_ron_path: None,
             global_ambiance: level.global_ambiance,
+            key_map,
         };
         game.seed_demo_weapon_chest();
         game.refresh_fow();
@@ -376,7 +393,7 @@ impl Game {
         };
         let vw = self.viewport_w;
         let vh = self.viewport_h;
-        let mut g = Self::from_level_file(&level, vw, vh)?;
+        let mut g = Self::from_level_file(&level, vw, vh, self.key_map)?;
         g.restart_level_ron_path = stored_path;
         g.modes.stack = vec![GameMode::Exploration];
         g.log.push("New game.".into());
@@ -779,7 +796,9 @@ impl Game {
 
     pub fn step(&mut self, input: &InputBatch) {
         for ev in &input.events {
-            self.handle_event(ev.clone());
+            if let Some(gi) = self.resolve_game_input(ev) {
+                modes::route(self, gi);
+            }
         }
         self.step_npc_combat_ai();
         self.step_npc_exploration_ai();
@@ -1014,15 +1033,22 @@ impl Game {
         };
     }
 
-    fn handle_event(&mut self, ev: InputEvent) {
-        modes::route(self, ev);
+    fn resolve_game_input(&self, ev: &InputEvent) -> Option<GameInput> {
+        match ev {
+            InputEvent::Key(ch) => {
+                let layer = key_layer_for_mode(self.modes.current());
+                self.key_map.resolve(layer, *ch).map(GameInput::Command)
+            }
+            InputEvent::Mouse { .. } => Some(GameInput::Raw(ev.clone())),
+            InputEvent::Resize { .. } => None,
+        }
     }
 
-    pub(crate) fn handle_menu(&mut self, ev: InputEvent, selected: usize) {
+    pub(crate) fn handle_menu(&mut self, ev: GameInput, selected: usize) {
         modes::menu::handle(self, ev, selected);
     }
 
-    pub(crate) fn handle_explore(&mut self, ev: InputEvent) {
+    pub(crate) fn handle_explore(&mut self, ev: GameInput) {
         modes::exploration::handle(self, ev);
     }
 
@@ -1117,7 +1143,7 @@ impl Game {
                 self.start_combat_encounter(
                     vec![actor, target],
                     profile,
-                    "Combat started. LMB attack/move, RMB march, Enter pass, f flee, Esc quit.",
+                    "Combat started. LMB attack/move, RMB march, Enter/Space pass, f flee, Esc or q quit.",
                 );
                 true
             }
@@ -1272,7 +1298,7 @@ impl Game {
         self.log.push(message.into());
     }
 
-    pub(crate) fn handle_dialogue(&mut self, ev: InputEvent) {
+    pub(crate) fn handle_dialogue(&mut self, ev: GameInput) {
         modes::dialogue::handle(self, ev);
     }
 
@@ -1396,19 +1422,19 @@ impl Game {
         }
     }
 
-    pub(crate) fn handle_journal(&mut self, ev: InputEvent) {
+    pub(crate) fn handle_journal(&mut self, ev: GameInput) {
         modes::journal::handle(self, ev);
     }
 
-    pub(crate) fn handle_inventory(&mut self, ev: InputEvent) {
+    pub(crate) fn handle_inventory(&mut self, ev: GameInput) {
         modes::inventory::handle(self, ev);
     }
 
-    pub(crate) fn handle_item_transfer(&mut self, ev: InputEvent) {
+    pub(crate) fn handle_item_transfer(&mut self, ev: GameInput) {
         modes::transfer::handle(self, ev);
     }
 
-    pub(crate) fn handle_combat(&mut self, ev: InputEvent, state: CombatState) {
+    pub(crate) fn handle_combat(&mut self, ev: GameInput, state: CombatState) {
         modes::combat::handle(self, ev, state);
     }
 
@@ -1808,7 +1834,7 @@ impl Game {
         }
     }
 
-    pub(crate) fn handle_game_over(&mut self, ev: InputEvent) {
+    pub(crate) fn handle_game_over(&mut self, ev: GameInput) {
         modes::game_over::handle(self, ev);
     }
 
@@ -1844,7 +1870,7 @@ impl Game {
             }
         }
         rows.push("---".into());
-        rows.push("Up/Down move  Esc close".into());
+        rows.push("Up/Down · PgUp/PgDn · Esc or q back".into());
         crate::ui::draw_text_block(fb, inner_l, &rows);
 
         crate::ui::draw_bordered_panel(fb, right, "Entries");
@@ -1896,7 +1922,7 @@ impl Game {
             rows.push("(empty)".into());
         }
         rows.push("---".into());
-        rows.push("u use  e equip  Esc close".into());
+        rows.push("u use · e equip · Esc or q back".into());
         let inner = crate::ui::layout::panel_inner(left);
         crate::ui::draw_text_block(fb, inner, &rows);
 
@@ -1993,9 +2019,9 @@ impl Game {
             cr.push("(empty)".into());
         }
         pr.push("---".into());
-        pr.push("Tab: side  Enter: move stack".into());
+        pr.push("Tab pane · Enter/Space move stack · Esc or q close".into());
         cr.push("---".into());
-        cr.push("Tab: side  Enter: move stack".into());
+        cr.push("Tab pane · Enter/Space move stack · Esc or q close".into());
 
         let li = crate::ui::layout::panel_inner(left);
         let ri = crate::ui::layout::panel_inner(right);
@@ -2204,10 +2230,10 @@ impl Game {
 
 #[cfg(test)]
 mod tests {
-    use super::{unseen_fog_glyph, Game, GameMode};
+    use super::{unseen_fog_glyph, Game, GameCommand, GameInput, GameMode};
     use crate::combat::{CombatRuleset, CombatState, EncounterOutcomePolicy, EncounterProfile};
     use crate::entity::GridPos;
-    use crate::input::{InputBatch, InputEvent, Key, KeyChord};
+    use crate::input::InputBatch;
 
     #[test]
     fn fog_glyph_weights_sum_to_256() {
@@ -2286,18 +2312,8 @@ mod tests {
             .map(|(idx, _)| crate::entity::EntityId(idx as u32))
             .expect("trainer entity should exist in demo level");
         game.start_dialogue(trainer);
-        game.handle_dialogue(InputEvent::Key(KeyChord {
-            key: Key::Enter,
-            shift: false,
-            ctrl: false,
-            alt: false,
-        }));
-        game.handle_dialogue(InputEvent::Key(KeyChord {
-            key: Key::Enter,
-            shift: false,
-            ctrl: false,
-            alt: false,
-        }));
+        game.handle_dialogue(GameInput::Command(GameCommand::Confirm));
+        game.handle_dialogue(GameInput::Command(GameCommand::Confirm));
         let Some(GameMode::Combat(cs)) = game.modes.current().cloned() else {
             panic!("trainer spar should enter combat mode");
         };
@@ -2341,15 +2357,7 @@ mod tests {
         let player = game.player_id().expect("player must exist");
         game.entities.despawn(player);
         game.modes.stack = vec![GameMode::MainMenu { selected: 0 }];
-        game.handle_menu(
-            InputEvent::Key(KeyChord {
-                key: Key::Enter,
-                shift: false,
-                ctrl: false,
-                alt: false,
-            }),
-            0,
-        );
+        game.handle_menu(GameInput::Command(GameCommand::Confirm), 0);
         assert!(matches!(game.modes.current(), Some(GameMode::Exploration)));
         assert!(
             game.player_id().is_some_and(|pid| game.entities.is_alive(pid)),

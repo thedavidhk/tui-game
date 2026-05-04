@@ -182,7 +182,7 @@ pub struct DialogueNode {
     pub text: &'static str,
     pub text_fn: Option<DialogueTextFn>,
     pub effects: &'static [Effect],
-    /// When [`choices`](Self::choices) is empty, proceed to this node on continue (Enter or click).
+    /// When [`choices`](Self::choices) is empty, proceed to this node on continue (Enter, Space, or click).
     pub auto_next: Option<usize>,
     pub choices: &'static [DialogueChoice],
 }

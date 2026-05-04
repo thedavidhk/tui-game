@@ -19,6 +19,8 @@ use crossterm::{
     },
     QueueableCommand,
 };
+mod keymap;
+
 use tui_game_core::game::GameMode;
 use tui_game_core::input::{
     InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseCell, MouseEventKind,
@@ -47,12 +49,12 @@ fn main() -> std::io::Result<()> {
         let level = tui_game_core::level::level_from_ron(&raw).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, format!("ron: {e}"))
         })?;
-        let mut g = Game::from_level_file(&level, tw, th)
+        let mut g = Game::from_level_file(&level, tw, th, keymap::game_key_map())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         g.set_restart_level_ron_path(Some(path));
         g
     } else {
-        Game::new_bootstrapped(tw, th)
+        Game::new_bootstrapped_with_keymap(tw, th, keymap::game_key_map())
     };
     let mut fb = FrameBuffer::new(tw, th);
     let mut stats = FrameStatsRing::new(120);

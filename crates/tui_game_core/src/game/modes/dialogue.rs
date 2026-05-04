@@ -1,8 +1,8 @@
-use crate::game::{Game, GameMode};
-use crate::input::{InputEvent, Key, KeyChord, MouseButton, MouseEventKind};
+use crate::game::{Game, GameCommand, GameInput, GameMode};
+use crate::input::{InputEvent, MouseButton, MouseEventKind};
 use crate::ui::hit::UiHitTarget;
 
-pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
+pub(crate) fn handle(game: &mut Game, ev: GameInput) {
     let (dialogue_id, node_index) = match game.modes.current() {
         Some(GameMode::Dialogue {
             dialogue_id,
@@ -26,25 +26,22 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
     if node.choices.is_empty() {
         if node.auto_next.is_some() {
             match ev {
-                InputEvent::Mouse {
+                GameInput::Raw(InputEvent::Mouse {
                     kind: MouseEventKind::Down(MouseButton::Left),
                     cell,
                     ..
-                } => {
+                }) => {
                     if matches!(game.ui_hits.pick(cell), Some(UiHitTarget::DialogueContinue)) {
                         game.apply_dialogue_continue(tree, exit_sentinel);
                     }
                 }
-                InputEvent::Key(KeyChord { key: Key::Char('q'), .. }) => {
+                GameInput::Command(GameCommand::Back) => {
                     let _ = game.modes.pop();
                 }
-                InputEvent::Key(KeyChord {
-                    key: Key::Enter,
-                    ..
-                }) => {
+                GameInput::Command(GameCommand::Confirm) => {
                     game.apply_dialogue_continue(tree, exit_sentinel);
                 }
-                _ => {}
+                GameInput::Command(_) | GameInput::Raw(_) => {}
             }
             return;
         }
@@ -61,11 +58,11 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
     }
 
     match ev {
-        InputEvent::Mouse {
+        GameInput::Raw(InputEvent::Mouse {
             kind: MouseEventKind::Down(MouseButton::Left),
             cell,
             ..
-        } => {
+        }) => {
             if let Some(UiHitTarget::DialogueChoice(i)) = game.ui_hits.pick(cell) {
                 if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut() {
                     let max = visible.len().saturating_sub(1);
@@ -74,32 +71,23 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
                 game.apply_dialogue_choice(tree, exit_sentinel);
             }
         }
-        InputEvent::Key(KeyChord { key: Key::Char('q'), .. }) => {
+        GameInput::Command(GameCommand::Back) => {
             let _ = game.modes.pop();
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Up,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::ListPrev) => {
             if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut() {
                 *c = c.saturating_sub(1);
             }
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Down,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::ListNext) => {
             if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut() {
                 let max = visible.len().saturating_sub(1);
                 *c = (*c + 1).min(max);
             }
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Enter,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::Confirm) => {
             game.apply_dialogue_choice(tree, exit_sentinel);
         }
-        _ => {}
+        GameInput::Command(_) | GameInput::Raw(_) => {}
     }
 }

@@ -1,16 +1,12 @@
-use crate::game::{Game, GameMode, TransferFocus};
-use crate::input::{InputEvent, Key, KeyChord};
+use crate::game::{Game, GameCommand, GameInput, GameMode, TransferFocus};
 use crate::item::Inventory;
 
-pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
+pub(crate) fn handle(game: &mut Game, ev: GameInput) {
     match ev {
-        InputEvent::Key(KeyChord { key: Key::Char('q'), .. }) => {
+        GameInput::Command(GameCommand::Back) => {
             let _ = game.modes.pop();
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Tab,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::TransferFocusSide) => {
             if let Some(GameMode::ItemTransfer { focus, .. }) = game.modes.current_mut() {
                 *focus = match *focus {
                     TransferFocus::Player => TransferFocus::Container,
@@ -18,10 +14,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
                 };
             }
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Up,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::ListPrev) => {
             if let Some(GameMode::ItemTransfer {
                 focus,
                 cursor_player,
@@ -48,10 +41,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
                 }
             }
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Down,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::ListNext) => {
             if let Some(GameMode::ItemTransfer {
                 focus,
                 cursor_player,
@@ -79,9 +69,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
                 }
             }
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Enter, ..
-        }) => {
+        GameInput::Command(GameCommand::Confirm) => {
             let Some(GameMode::ItemTransfer {
                 container,
                 focus,
@@ -129,6 +117,6 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
                 *cc = (*cc).min(cn.saturating_sub(1));
             }
         }
-        _ => {}
+        GameInput::Command(_) | GameInput::Raw(_) => {}
     }
 }

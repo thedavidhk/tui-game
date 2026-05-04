@@ -24,7 +24,7 @@ pub fn draw_dialogue(
     lines.push(format!("{speaker_name}: {node_text}"));
     lines.push(String::new());
     if continue_only {
-        lines.push("  (Enter or click to continue)".into());
+        lines.push("  (Enter, Space, or click to continue)".into());
         super::draw_text_block(fb, inner, &lines);
         let hint_y = inner.y + 3;
         hits.push(

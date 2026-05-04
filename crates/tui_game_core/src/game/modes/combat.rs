@@ -1,19 +1,19 @@
 use crate::combat::{CombatAction, CombatState};
-use crate::game::{Game, GameMode};
+use crate::game::{Game, GameCommand, GameInput, GameMode};
 use crate::game::services::hover;
-use crate::input::{InputEvent, Key, KeyChord, MouseButton, MouseEventKind};
+use crate::input::{InputEvent, MouseButton, MouseEventKind};
 use crate::ui::layout::GameShellLayout;
 
-pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
+pub(crate) fn handle(game: &mut Game, ev: GameInput, state: CombatState) {
     let mut next = state.clone();
     let world_r = GameShellLayout::root_panels(game.viewport_w, game.viewport_h).0;
 
     match ev {
-        InputEvent::Mouse {
+        GameInput::Raw(InputEvent::Mouse {
             kind,
             cell,
             ..
-        } => {
+        }) => {
             hover::sync_combat_hover(game, cell, world_r);
             match kind {
                 MouseEventKind::Down(MouseButton::Left) => {
@@ -25,10 +25,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
                 _ => {}
             }
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Enter,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::Confirm) => {
             let report = next.apply_action(
                 CombatAction::Pass,
                 &mut game.entities,
@@ -39,10 +36,7 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
             );
             game.apply_combat_report(&next, report);
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Char('f'),
-            ..
-        }) => {
+        GameInput::Command(GameCommand::CombatFlee) => {
             let report = next.apply_action(
                 CombatAction::Flee,
                 &mut game.entities,
@@ -53,57 +47,36 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent, state: CombatState) {
             );
             game.apply_combat_report(&next, report);
         }
-        InputEvent::Key(KeyChord { key: Key::Up, .. }) if game.world_view_needs_pan() => {
+        GameInput::Command(GameCommand::StepNorth) if game.world_view_needs_pan() => {
             game.nudge_view_pan(0, -1);
         }
-        InputEvent::Key(KeyChord { key: Key::Down, .. }) if game.world_view_needs_pan() => {
+        GameInput::Command(GameCommand::StepSouth) if game.world_view_needs_pan() => {
             game.nudge_view_pan(0, 1);
         }
-        InputEvent::Key(KeyChord { key: Key::Left, .. }) if game.world_view_needs_pan() => {
+        GameInput::Command(GameCommand::StepWest) if game.world_view_needs_pan() => {
             game.nudge_view_pan(-1, 0);
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Right,
-            ..
-        }) if game.world_view_needs_pan() => {
+        GameInput::Command(GameCommand::StepEast) if game.world_view_needs_pan() => {
             game.nudge_view_pan(1, 0);
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Char('w'),
-            ..
-        })
-        | InputEvent::Key(KeyChord { key: Key::Up, .. }) => {
+        GameInput::Command(GameCommand::StepNorth) => {
             game.combat_try_move(&mut next, 0, -1);
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Char('s'),
-            ..
-        })
-        | InputEvent::Key(KeyChord { key: Key::Down, .. }) => {
+        GameInput::Command(GameCommand::StepSouth) => {
             game.combat_try_move(&mut next, 0, 1);
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Char('a'),
-            ..
-        })
-        | InputEvent::Key(KeyChord { key: Key::Left, .. }) => {
+        GameInput::Command(GameCommand::StepWest) => {
             game.combat_try_move(&mut next, -1, 0);
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Char('d'),
-            ..
-        })
-        | InputEvent::Key(KeyChord {
-            key: Key::Right,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::StepEast) => {
             game.combat_try_move(&mut next, 1, 0);
         }
-        InputEvent::Key(KeyChord { key: Key::Esc, .. }) => {
+        GameInput::Command(GameCommand::Back) => {
             game.finish_combat_player_quit(&next);
             return;
         }
-        _ => {}
+        GameInput::Command(_) => {}
+        GameInput::Raw(_) => {}
     }
     if let Some(GameMode::Combat(cs)) = game.modes.current_mut() {
         *cs = next;

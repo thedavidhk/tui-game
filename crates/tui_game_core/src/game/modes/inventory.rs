@@ -1,34 +1,24 @@
-use crate::game::{Game, GameMode};
-use crate::input::{InputEvent, Key, KeyChord};
+use crate::game::{Game, GameCommand, GameInput, GameMode};
 use crate::item::{ItemCategory, ItemStack};
 
-pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
+pub(crate) fn handle(game: &mut Game, ev: GameInput) {
     let n = game.narrative.inventory.stacks.len();
     match ev {
-        InputEvent::Key(KeyChord { key: Key::Char('q'), .. }) => {
+        GameInput::Command(GameCommand::Back) => {
             let _ = game.modes.pop();
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Up,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::ListPrev) => {
             if let Some(GameMode::Inventory { cursor }) = game.modes.current_mut() {
                 *cursor = cursor.saturating_sub(1);
             }
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Down,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::ListNext) => {
             if let Some(GameMode::Inventory { cursor }) = game.modes.current_mut() {
                 let max = n.saturating_sub(1);
                 *cursor = (*cursor + 1).min(max);
             }
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Char('u'),
-            ..
-        }) => {
+        GameInput::Command(GameCommand::InventoryUse) => {
             let Some(GameMode::Inventory { cursor }) = game.modes.current().cloned() else {
                 return;
             };
@@ -55,16 +45,13 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
                         game.log.push(format!("Used {name} (no effect yet)."));
                     }
                 }
-                _ => game.log.push("That item is not consumable (u).".into()),
+                _ => game.log.push("That item is not consumable.".into()),
             }
             if let Some(GameMode::Inventory { cursor }) = game.modes.current_mut() {
                 *cursor = (*cursor).min(game.narrative.inventory.stacks.len().saturating_sub(1));
             }
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Char('e'),
-            ..
-        }) => {
+        GameInput::Command(GameCommand::InventoryEquip) => {
             let Some(GameMode::Inventory { cursor }) = game.modes.current().cloned() else {
                 return;
             };
@@ -122,13 +109,13 @@ pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
                     game.log.push(format!("Loaded {} into quiver.", def.name));
                 }
                 ItemCategory::Mundane | ItemCategory::Consumable => {
-                    game.log.push("e equips weapons or loads ammo; u uses consumables.".into());
+                    game.log.push("Use e to equip weapons or load ammo; u uses consumables.".into());
                 }
             }
             if let Some(GameMode::Inventory { cursor }) = game.modes.current_mut() {
                 *cursor = (*cursor).min(game.narrative.inventory.stacks.len().saturating_sub(1));
             }
         }
-        _ => {}
+        GameInput::Command(_) | GameInput::Raw(_) => {}
     }
 }

@@ -9,11 +9,9 @@ pub(super) mod journal;
 pub(super) mod menu;
 pub(super) mod transfer;
 
-use crate::input::InputEvent;
+use super::{Game, GameInput, GameMode};
 
-use super::{Game, GameMode};
-
-pub fn route(game: &mut Game, ev: InputEvent) {
+pub fn route(game: &mut Game, ev: GameInput) {
     match game.modes.current().cloned() {
         None => {}
         Some(GameMode::MainMenu { selected }) => game.handle_menu(ev, selected),

@@ -1,29 +1,22 @@
-use crate::game::{Game, GameMode};
-use crate::input::{InputEvent, Key, KeyChord};
+use crate::game::{Game, GameCommand, GameInput, GameMode};
 
-pub(crate) fn handle(game: &mut Game, ev: InputEvent) {
+pub(crate) fn handle(game: &mut Game, ev: GameInput) {
     let n = game.narrative.quest_journal.len();
     match ev {
-        InputEvent::Key(KeyChord { key: Key::Char('q'), .. }) => {
+        GameInput::Command(GameCommand::Back) => {
             let _ = game.modes.pop();
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Up,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::ListPrev) => {
             if let Some(GameMode::Journal { quest_cursor }) = game.modes.current_mut() {
                 *quest_cursor = quest_cursor.saturating_sub(1);
             }
         }
-        InputEvent::Key(KeyChord {
-            key: Key::Down,
-            ..
-        }) => {
+        GameInput::Command(GameCommand::ListNext) => {
             if let Some(GameMode::Journal { quest_cursor }) = game.modes.current_mut() {
                 let max = n.saturating_sub(1);
                 *quest_cursor = (*quest_cursor + 1).min(max);
             }
         }
-        _ => {}
+        GameInput::Command(_) | GameInput::Raw(_) => {}
     }
 }
