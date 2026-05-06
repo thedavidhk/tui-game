@@ -51,7 +51,7 @@ Tests are **headless** (no TTY required): FoW, RON round-trips for `LevelFile` a
 - **`world/`** — `MapGrid`, `TileDef` / `TileId`, field-of-view (`compute_visible`, explored mask)
 - **`entity.rs`** — `EntityId`, `EntityArena` (SoA-style stores; not a full ECS framework), optional ground `item` stacks and `is_container`
 - **`item.rs`** — `ItemDef`, `ItemCategory`, `ItemCatalog`, `Inventory`, equipment slot stub
-- **`game/`** — `Game`, mode stack, `modes` dispatch, composition into the buffer
+- **`game/`** — `Game`, mode stack, `modes` dispatch, `overlay_layout` (full-screen column presets), `key_commands` (`GameCommand`, `GameKeyMap`, `KeyMapLayer`), composition into the buffer
 - **`narrative.rs`** — `NarrativeState`, dialogue `Condition` / `Effect` application, `quest_stages`
 - **`input.rs`** — `InputEvent` / `InputBatch` (normalized; binaries map crossterm events here)
 - **`rect.rs`** — cell-space rectangles and hit testing
@@ -64,14 +64,15 @@ Tests are **headless** (no TTY required): FoW, RON round-trips for `LevelFile` a
 
 ## Game controls (reference)
 
-These are implemented in **`Game`** (`game/mod.rs`); the binary forwards keyboard and mouse into `InputBatch`.
+These are implemented in **`Game`** (`game/mod.rs` and `game/modes/*`); the binary forwards keyboard and mouse into `InputBatch`. The game targets **terminals with mouse reporting** (same baseline as truecolor glyphs).
 
-- **Main menu**: arrow keys or `j` / `k`, **Enter** to choose; **mouse** click on a row (hit rects from last frame)
-- **Exploration**: **WASD** or arrows to move; **E** or **Enter** to talk to an adjacent **NPC** or open **transfer** next to a **container** (chest); **I** opens **player inventory** (list + detail; **u** consume stub, **e** equip stub, **Esc** close); **C** combat stub (stand **south** of an entity); **F1** debug; **F5** / **F9** save / load `save.ron`
-- **Player inventory** (pushed over exploration): **j** / **k** or arrows move selection; **u** use consumable (logs “no effect yet”); **e** equip ring-class items into a persisted slot (previous ring returns to inventory); **Esc** closes
-- **Item transfer** (player ↔ adjacent container): **Tab** or **h** / **l** switch side; **j** / **k** move row on focused side; **Enter** moves the **entire** focused stack to the other side; **Esc** closes
-- **Dialogue**: **j** / **k** or arrows for choices, **Enter** / **Space** to confirm, **1–9** to jump to a choice, **Esc** to close; **mouse** click on a choice row where supported. Choices may **require** an item (blocked with a log line if missing), **give** / **take** inventory, and set **quest phase** from static data (`game_content.rs`)
-- **Combat (stub)**: **WASD** / arrows to move current actor, **Tab** or **Space** to end turn, **F** to flee, **Esc** to exit
+- **Main menu**: **Up** / **Down** / **PgUp** / **PgDn** move selection; **Enter** or **Space** to activate the highlighted row; **mouse** on a row; **Esc** or **q** **quit** the game (same as choosing **Quit**)
+- **Exploration**: **WASD** or arrow keys to move; **left click** an **NPC** (talk or fight), **container** (opens transfer when adjacent), or tile (walk there); **right click** sets a walk goal. **I** inventory, **J** journal, **F1** debug, **F5** / **F9** save / load `save.ron` (no **Enter** / **Esc** here — avoids accidental combat keys)
+- **Player inventory**: three columns — **Inventory** (stack list), **Equipped** (main hand, ring, quiver summary), **Detail** (selected stack); **Up** / **Down** / **PgUp** / **PgDn** move selection in the list; **u** use consumable (logs “no effect yet”); **e** equip from the list (previous ring returns to inventory); **Esc** or **q** closes (**Enter** / **Space** unused here so they do not clash with combat muscle memory)
+- **Item transfer** (player ↔ adjacent container): **Tab** switches side; **Up** / **Down** / **PgUp** / **PgDn** move row on focused side; **Enter** or **Space** moves the **entire** focused stack; **Esc** or **q** closes
+- **Dialogue**: **Up** / **Down** / **PgUp** / **PgDn** for choices, **Enter** or **Space** to confirm, **Esc** or **q** to close; **mouse** click on a choice row or continue hint. Choices may **require** an item (blocked with a log line if missing), **give** / **take** inventory, and set **quest phase** from static data (`game_content.rs`)
+- **Combat (stub)**: **WASD** / arrows to move the current actor; **left click** attack or move, **right click** march; **Enter** or **Space** ends turn, **f** flees, **Esc** or **q** exits combat; **I** / **J** still open inventory / journal
+- **Game over**: **Enter**, **Space**, **Esc**, or **q** → main menu
 - **Quit from binary**: **Ctrl+Q** (handled in `tui_game`); from menu choose **Quit**
 
 ## Level editor controls
@@ -92,7 +93,7 @@ These are implemented in **`Game`** (`game/mod.rs`); the binary forwards keyboar
 - **Ctrl+S**: save to the current file path
 - **Ctrl+Q**: quit
 
-Spawns store `kind` matching an **`EntityBlueprint`** from **`game_content`** (see `game_content.rs`). Add blueprints there, then pick them in the editor; **`Ctrl+S`** refuses to save if the level references unknown tile ids or unknown spawn kinds. Blueprint fields include optional **`world_item`** (spawns a pickable ground entity for that `ItemDef.id`) and **`is_container`** (adjacent **E** opens transfer instead of dialogue). Demo level **[`assets/levels/demo_level.ron`](assets/levels/demo_level.ron)** includes villagers, quest pickups, and a **chest** (open in the editor from the repo root so the default path resolves).
+Spawns store `kind` matching an **`EntityBlueprint`** from **`game_content`** (see `game_content.rs`). Add blueprints there, then pick them in the editor; **`Ctrl+S`** refuses to save if the level references unknown tile ids or unknown spawn kinds. Blueprint fields include optional **`world_item`** (spawns a pickable ground entity for that `ItemDef.id`) and **`is_container`** (adjacent **LMB** opens transfer instead of dialogue). Demo level **[`assets/levels/demo_level.ron`](assets/levels/demo_level.ron)** includes villagers, quest pickups, and a **chest** (open in the editor from the repo root so the default path resolves).
 
 Longer-term **quest / inventory / UI** refactors (phased roadmap, acceptance criteria, and completion log) live in **[`docs/REFACTOR_QUEST_INVENTORY_UI.md`](docs/REFACTOR_QUEST_INVENTORY_UI.md)**.
 
