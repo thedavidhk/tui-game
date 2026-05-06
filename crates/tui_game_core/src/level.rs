@@ -16,20 +16,17 @@ pub struct PlayerSpawn {
     pub y: i32,
 }
 
-/// Level-wide atmosphere: FoW colors and mute targets for explored cells, plus local light accent.
+/// Level-wide atmosphere: void palette for undiscovered fog, local light accent, visible boost.
+///
+/// Explored-but-not-visible cells derive their mute by blending terrain toward
+/// [`Self::unseen_void`] / [`Self::unseen_void_fg`] (see [`GlobalAmbiance::EXPLORED_BLEND_TOWARDS_VOID_PCT`]).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GlobalAmbiance {
-    /// Background for unseen map cells (fog of war void).
+    /// Background for undiscovered map cells (fog of war void).
     pub unseen_void: Color,
-    /// Foreground for unseen fog glyphs (mixed deterministic chars in `Game::compose_world`).
+    /// Foreground for undiscovered fog glyphs (mixed deterministic chars in `Game::compose_world`).
     #[serde(default = "default_unseen_void_fg")]
     pub unseen_void_fg: Color,
-    /// Explored-but-not-visible: blend foreground toward this color (`0..=100`).
-    pub explored_fg: Color,
-    pub explored_fg_mute_pct: u8,
-    /// Explored-but-not-visible: blend background toward this color (`0..=100`).
-    pub explored_bg: Color,
-    pub explored_bg_mute_pct: u8,
     /// Per-cell `ambiance` weight blends tile background toward this color (`0..=255` weight).
     pub local_accent: Color,
     /// Added to each RGB channel (saturating) for **visible** cells after terrain + local mix.
@@ -41,10 +38,6 @@ impl Default for GlobalAmbiance {
         Self {
             unseen_void: Color::rgb(5, 5, 8),
             unseen_void_fg: default_unseen_void_fg(),
-            explored_fg: Color::rgb(90, 85, 100),
-            explored_fg_mute_pct: 38,
-            explored_bg: Color::rgb(12, 12, 18),
-            explored_bg_mute_pct: 55,
             local_accent: Color::rgb(210, 150, 95),
             visible_boost: 8,
         }
@@ -59,8 +52,29 @@ pub enum MapTileFog {
     Visible,
 }
 
+#[inline]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)] // `round` + `clamp(0, 255)` guarantees `u8` range
+fn lerp_color_f32(a: Color, b: Color, t: f32) -> Color {
+    let t = f64::from(t.clamp(0.0, 1.0));
+    let mix = |x: u8, y: u8| -> u8 {
+        let xi = f64::from(x);
+        let yi = f64::from(y);
+        (xi * (1.0 - t) + yi * t).round().clamp(0.0, 255.0) as u8
+    };
+    Color::rgb(mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b))
+}
+
 impl GlobalAmbiance {
-    /// Combine terrain colors with per-cell ambiance weight and fog state (game and editor preview).
+    /// How strongly explored-but-not-visible terrain pulls toward the void palette (`0..=100`).
+    pub const EXPLORED_BLEND_TOWARDS_VOID_PCT: u8 = 48;
+
+    /// Luminance anchor for the explored fog state in [`Self::compose_map_tile_from_luminance`].
+    pub const FOG_LUMINANCE_EXPLORED: f32 = 0.5;
+
+    /// Combine terrain colors with per-cell ambiance weight and discrete fog (editor and helpers).
     #[must_use]
     pub fn compose_map_tile(
         self,
@@ -76,11 +90,48 @@ impl GlobalAmbiance {
                 (base_fg, bg)
             }
             MapTileFog::Explored => {
-                let fg = base_fg.mix_towards(self.explored_fg, self.explored_fg_mute_pct.min(100));
-                let bg = local_bg.mix_towards(self.explored_bg, self.explored_bg_mute_pct.min(100));
+                let pct = Self::EXPLORED_BLEND_TOWARDS_VOID_PCT.min(100);
+                let fg = base_fg.mix_towards(self.unseen_void_fg, pct);
+                let bg = local_bg.mix_towards(self.unseen_void, pct);
                 (fg, bg)
             }
             MapTileFog::Unseen => (self.unseen_void_fg, self.unseen_void),
+        }
+    }
+
+    /// Same color model as [`Self::compose_map_tile`], but `l_smooth` in `0.0..=1.0` interpolates
+    /// void → explored → visible (piecewise linear at [`Self::FOG_LUMINANCE_EXPLORED`]).
+    #[must_use]
+    pub fn compose_map_tile_from_luminance(
+        self,
+        base_fg: Color,
+        base_bg: Color,
+        local_ambiance_w: u8,
+        l_smooth: f32,
+    ) -> (Color, Color) {
+        let local_bg = base_bg.blend_weight(self.local_accent, local_ambiance_w);
+        let fog_void_glyph = self.unseen_void_fg;
+        let fog_void_back = self.unseen_void;
+        let pct = Self::EXPLORED_BLEND_TOWARDS_VOID_PCT.min(100);
+        let explored_glyph = base_fg.mix_towards(fog_void_glyph, pct);
+        let explored_back = local_bg.mix_towards(fog_void_back, pct);
+        let lit_glyph = base_fg;
+        let lit_back = local_bg.lighten(self.visible_boost);
+
+        let l = l_smooth.clamp(0.0, 1.0);
+        let mid = Self::FOG_LUMINANCE_EXPLORED;
+        if l <= mid {
+            let t = if mid > f32::EPSILON { l / mid } else { 0.0 };
+            (
+                lerp_color_f32(fog_void_glyph, explored_glyph, t),
+                lerp_color_f32(fog_void_back, explored_back, t),
+            )
+        } else {
+            let t = (l - mid) / (1.0 - mid).max(f32::EPSILON);
+            (
+                lerp_color_f32(explored_glyph, lit_glyph, t),
+                lerp_color_f32(explored_back, lit_back, t),
+            )
         }
     }
 }
@@ -335,6 +386,31 @@ mod tests {
         let (fg, bg) = ga.compose_map_tile(base_fg, base_bg, 0, MapTileFog::Explored);
         assert_ne!(fg, base_fg);
         assert_ne!(bg, base_bg);
+        assert_eq!(fg, base_fg.mix_towards(ga.unseen_void_fg, GlobalAmbiance::EXPLORED_BLEND_TOWARDS_VOID_PCT));
+    }
+
+    #[test]
+    fn compose_luminance_matches_discrete_fog_endpoints() {
+        use crate::render::Color;
+        let ga = GlobalAmbiance {
+            visible_boost: 8,
+            ..GlobalAmbiance::default()
+        };
+        let base_fg = Color::rgb(100, 90, 80);
+        let base_bg = Color::rgb(20, 22, 28);
+        for &(l, fog) in &[
+            (0.0_f32, MapTileFog::Unseen),
+            (GlobalAmbiance::FOG_LUMINANCE_EXPLORED, MapTileFog::Explored),
+            (1.0_f32, MapTileFog::Visible),
+        ] {
+            let (a_fg, a_bg) = ga.compose_map_tile(base_fg, base_bg, 0, fog);
+            let (b_fg, b_bg) = ga.compose_map_tile_from_luminance(base_fg, base_bg, 0, l);
+            assert_eq!(
+                (a_fg, a_bg),
+                (b_fg, b_bg),
+                "luminance {l} vs {fog:?}",
+            );
+        }
     }
 
     #[test]

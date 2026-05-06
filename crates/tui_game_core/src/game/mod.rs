@@ -42,10 +42,10 @@ use crate::ui::viewport_scroll::{
 };
 use crate::world::{
     compute_visible, def_is_animated, first_step_on_line, merge_explored, mix64, plan_path,
-    plan_path_player_fow, resolve_animated, MapGrid, TileDisplayCell,
+    plan_path_player_fow, resolve_animated, smooth_fog_luminance, MapGrid, TileDisplayCell,
 };
 
-const FOW_RADIUS: i32 = 16;
+const FOW_RADIUS: i32 = 20;
 const NPC_EXPLORATION_AI_COOLDOWN_TICKS: u16 = 6;
 
 /// `(weight, glyph)`; weights sum to **256** (lighter / speck glyphs more common than heavy blocks).
@@ -93,7 +93,7 @@ struct PendingPlayerAction {
 }
 
 fn player_default_stats() -> ActorStats {
-    ActorStats::from_full(24, 24, 7, 6, 6)
+    ActorStats::from_full(24, 24, 7, 6, 20)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2051,54 +2051,51 @@ impl Game {
                 }
                 let idx = wy as usize * self.map.width as usize + wx as usize;
                 let seen = self.explored.get(idx).copied().unwrap_or(false);
-                let vis = self.visible.get(idx).copied().unwrap_or(false);
                 let tid = self.map.tile_at(wx, wy).unwrap_or(0);
                 let def = self.map.table.def(tid);
                 let local_w = self.map.ambiance.get(idx).copied().unwrap_or(0);
-                if seen {
-                    let baked = self.map.display.get(idx).copied();
-                    let (g, base_fg, base_bg) = match def {
-                        Some(d) if def_is_animated(d) => {
-                            let r = resolve_animated(
-                                d,
-                                wx,
-                                wy,
-                                self.surface_tick,
-                                self.map_visual_seed,
-                            );
-                            (r.ch, r.fg, d.terrain_bg())
-                        }
-                        _ => {
-                            let d = baked.unwrap_or(TileDisplayCell {
-                                ch: '?',
-                                fg: Color::rgb(220, 220, 200),
-                                bg: Color::rgb(35, 30, 40),
-                            });
-                            (d.ch, d.fg, d.bg)
-                        }
-                    };
-                    cell.ch = g;
-                    let fog = if vis {
-                        MapTileFog::Visible
-                    } else {
-                        MapTileFog::Explored
-                    };
-                    let (out_fg, out_bg) = self
-                        .global_ambiance
-                        .compose_map_tile(base_fg, base_bg, local_w, fog);
-                    cell.fg = out_fg;
-                    cell.bg = out_bg;
+                let baked = self.map.display.get(idx).copied();
+                let (terrain_ch, base_fg, base_bg) = match def {
+                    Some(d) if def_is_animated(d) => {
+                        let r = resolve_animated(
+                            d,
+                            wx,
+                            wy,
+                            self.surface_tick,
+                            self.map_visual_seed,
+                        );
+                        (r.ch, r.fg, d.terrain_bg())
+                    }
+                    _ => {
+                        let d = baked.unwrap_or(TileDisplayCell {
+                            ch: '?',
+                            fg: Color::rgb(220, 220, 200),
+                            bg: Color::rgb(35, 30, 40),
+                        });
+                        (d.ch, d.fg, d.bg)
+                    }
+                };
+                let l = smooth_fog_luminance(
+                    self.map.width,
+                    self.map.height,
+                    &self.explored,
+                    &self.visible,
+                    wx,
+                    wy,
+                );
+                let (out_fg, out_bg) = self.global_ambiance.compose_map_tile_from_luminance(
+                    base_fg,
+                    base_bg,
+                    local_w,
+                    l,
+                );
+                cell.ch = if seen {
+                    terrain_ch
                 } else {
-                    let (fg_u, bg_u) = self.global_ambiance.compose_map_tile(
-                        Color::rgb(40, 40, 50),
-                        Color::rgb(10, 10, 14),
-                        local_w,
-                        MapTileFog::Unseen,
-                    );
-                    cell.ch = unseen_fog_glyph(wx, wy, self.map_visual_seed);
-                    cell.fg = fg_u;
-                    cell.bg = bg_u;
-                }
+                    unseen_fog_glyph(wx, wy, self.map_visual_seed)
+                };
+                cell.fg = out_fg;
+                cell.bg = out_bg;
                 fb.set(screen_x, screen_y, cell);
             }
         }

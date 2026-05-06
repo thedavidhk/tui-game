@@ -16683,27 +16683,15 @@
     visual_seed: Some(11400714819323198485),
     global_ambiance: (
         unseen_void: (
-            r: 45,
-            g: 55,
-            b: 55,
+            r: 90,
+            g: 100,
+            b: 110,
         ),
         unseen_void_fg: (
             r: 107,
             g: 125,
             b: 125,
         ),
-        explored_fg: (
-            r: 88,
-            g: 82,
-            b: 98,
-        ),
-        explored_fg_mute_pct: 38,
-        explored_bg: (
-            r: 18,
-            g: 16,
-            b: 26,
-        ),
-        explored_bg_mute_pct: 52,
         local_accent: (
             r: 0,
             g: 0,

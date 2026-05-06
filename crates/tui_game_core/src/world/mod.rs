@@ -1,9 +1,11 @@
+mod fog_visual;
 mod fow;
 mod map;
 mod path;
 mod tile_surface;
 mod tiles;
 
+pub use fog_visual::{smooth_fog_luminance, FOG_COLOR_SOFTEN_RADIUS_CHEBYSHEV};
 pub use fow::{compute_visible, merge_explored};
 pub use map::{MapGrid, TileTable};
 pub use path::{

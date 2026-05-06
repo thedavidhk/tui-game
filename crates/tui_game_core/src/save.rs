@@ -6,7 +6,7 @@ use crate::level::GlobalAmbiance;
 use crate::narrative::NarrativeState;
 use crate::world::MapGrid;
 
-pub const SAVE_SCHEMA_VERSION: u32 = 5;
+pub const SAVE_SCHEMA_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct WorldSnapshot {
