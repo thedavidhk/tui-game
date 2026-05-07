@@ -1,12 +1,67 @@
-//! Serializable level files (RON).
+//! Serializable level files (RON), atmosphere recipes, and terrain pack merging.
+
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 use crate::render::Color;
 use crate::world::{mix64, MapGrid, TileDef, TileId, TileTable};
 
-fn default_unseen_void_fg() -> Color {
+fn default_void_glyph_fg() -> Color {
     Color::rgb(40, 40, 43)
+}
+
+/// Tunable atmosphere parameters (global default or per-zone recipe).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AtmosphereRecipe {
+    pub void_background: Color,
+    #[serde(default = "default_void_glyph_fg")]
+    pub void_glyph_foreground: Color,
+    /// Blend visible terrain **background** toward [`Self::void_background`] (`0..=100`).
+    pub visible_background_pull: u8,
+    /// Multiplier on base fog-of-war radius at the **level** (v1; zonal LOS deferred).
+    pub sight_strength: f32,
+}
+
+impl Default for AtmosphereRecipe {
+    fn default() -> Self {
+        Self {
+            void_background: Color::rgb(5, 5, 8),
+            void_glyph_foreground: default_void_glyph_fg(),
+            visible_background_pull: 12,
+            sight_strength: 1.0,
+        }
+    }
+}
+
+/// Axis-aligned rectangle or disk in tile space, centered on [`AtmosphereZone`] anchor.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AtmosphereShape {
+    Rectangle {
+        width_tiles: u16,
+        height_tiles: u16,
+    },
+    Circle {
+        radius_tiles: u16,
+    },
+}
+
+/// Placed atmosphere volume. Influence falls off outside the hard shape across [`Self::edge_falloff_tiles`].
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AtmosphereZone {
+    pub anchor_x: i32,
+    pub anchor_y: i32,
+    pub shape: AtmosphereShape,
+    pub edge_falloff_tiles: u16,
+    pub recipe: AtmosphereRecipe,
+}
+
+/// Fog-of-war state for a map cell when composing colors (discrete / editor).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MapTileFog {
+    Unseen,
+    Explored,
+    Visible,
 }
 
 /// Explicit player start cell in a [`LevelFile`]. When absent, the game uses map center.
@@ -16,124 +71,15 @@ pub struct PlayerSpawn {
     pub y: i32,
 }
 
-/// Level-wide atmosphere: void palette for undiscovered fog, local light accent, visible boost.
-///
-/// Explored-but-not-visible cells derive their mute by blending terrain toward
-/// [`Self::unseen_void`] / [`Self::unseen_void_fg`] (see [`GlobalAmbiance::EXPLORED_BLEND_TOWARDS_VOID_PCT`]).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GlobalAmbiance {
-    /// Background for undiscovered map cells (fog of war void).
-    pub unseen_void: Color,
-    /// Foreground for undiscovered fog glyphs (mixed deterministic chars in `Game::compose_world`).
-    #[serde(default = "default_unseen_void_fg")]
-    pub unseen_void_fg: Color,
-    /// Per-cell `ambiance` weight blends tile background toward this color (`0..=255` weight).
-    pub local_accent: Color,
-    /// Added to each RGB channel (saturating) for **visible** cells after terrain + local mix.
-    pub visible_boost: u8,
+/// Serializable terrain definitions (referenced by [`LevelFile::terrain_pack`]).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TerrainPack {
+    pub schema_version: u32,
+    pub tile_defs: Vec<TileDef>,
 }
 
-impl Default for GlobalAmbiance {
-    fn default() -> Self {
-        Self {
-            unseen_void: Color::rgb(5, 5, 8),
-            unseen_void_fg: default_unseen_void_fg(),
-            local_accent: Color::rgb(210, 150, 95),
-            visible_boost: 8,
-        }
-    }
-}
-
-/// Fog-of-war state for a map cell when composing colors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MapTileFog {
-    Unseen,
-    Explored,
-    Visible,
-}
-
-#[inline]
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)] // `round` + `clamp(0, 255)` guarantees `u8` range
-fn lerp_color_f32(a: Color, b: Color, t: f32) -> Color {
-    let t = f64::from(t.clamp(0.0, 1.0));
-    let mix = |x: u8, y: u8| -> u8 {
-        let xi = f64::from(x);
-        let yi = f64::from(y);
-        (xi * (1.0 - t) + yi * t).round().clamp(0.0, 255.0) as u8
-    };
-    Color::rgb(mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b))
-}
-
-impl GlobalAmbiance {
-    /// How strongly explored-but-not-visible terrain pulls toward the void palette (`0..=100`).
-    pub const EXPLORED_BLEND_TOWARDS_VOID_PCT: u8 = 48;
-
-    /// Luminance anchor for the explored fog state in [`Self::compose_map_tile_from_luminance`].
-    pub const FOG_LUMINANCE_EXPLORED: f32 = 0.5;
-
-    /// Combine terrain colors with per-cell ambiance weight and discrete fog (editor and helpers).
-    #[must_use]
-    pub fn compose_map_tile(
-        self,
-        base_fg: Color,
-        base_bg: Color,
-        local_ambiance_w: u8,
-        fog: MapTileFog,
-    ) -> (Color, Color) {
-        let local_bg = base_bg.blend_weight(self.local_accent, local_ambiance_w);
-        match fog {
-            MapTileFog::Visible => {
-                let bg = local_bg.lighten(self.visible_boost);
-                (base_fg, bg)
-            }
-            MapTileFog::Explored => {
-                let pct = Self::EXPLORED_BLEND_TOWARDS_VOID_PCT.min(100);
-                let fg = base_fg.mix_towards(self.unseen_void_fg, pct);
-                let bg = local_bg.mix_towards(self.unseen_void, pct);
-                (fg, bg)
-            }
-            MapTileFog::Unseen => (self.unseen_void_fg, self.unseen_void),
-        }
-    }
-
-    /// Same color model as [`Self::compose_map_tile`], but `l_smooth` in `0.0..=1.0` interpolates
-    /// void → explored → visible (piecewise linear at [`Self::FOG_LUMINANCE_EXPLORED`]).
-    #[must_use]
-    pub fn compose_map_tile_from_luminance(
-        self,
-        base_fg: Color,
-        base_bg: Color,
-        local_ambiance_w: u8,
-        l_smooth: f32,
-    ) -> (Color, Color) {
-        let local_bg = base_bg.blend_weight(self.local_accent, local_ambiance_w);
-        let fog_void_glyph = self.unseen_void_fg;
-        let fog_void_back = self.unseen_void;
-        let pct = Self::EXPLORED_BLEND_TOWARDS_VOID_PCT.min(100);
-        let explored_glyph = base_fg.mix_towards(fog_void_glyph, pct);
-        let explored_back = local_bg.mix_towards(fog_void_back, pct);
-        let lit_glyph = base_fg;
-        let lit_back = local_bg.lighten(self.visible_boost);
-
-        let l = l_smooth.clamp(0.0, 1.0);
-        let mid = Self::FOG_LUMINANCE_EXPLORED;
-        if l <= mid {
-            let t = if mid > f32::EPSILON { l / mid } else { 0.0 };
-            (
-                lerp_color_f32(fog_void_glyph, explored_glyph, t),
-                lerp_color_f32(fog_void_back, explored_back, t),
-            )
-        } else {
-            let t = (l - mid) / (1.0 - mid).max(f32::EPSILON);
-            (
-                lerp_color_f32(explored_glyph, lit_glyph, t),
-                lerp_color_f32(explored_back, lit_back, t),
-            )
-        }
-    }
+impl TerrainPack {
+    pub const SCHEMA: u32 = 1;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -156,19 +102,55 @@ pub struct LevelFile {
     pub width: u16,
     pub height: u16,
     pub tiles: Vec<TileId>,
+    /// Relative path from the level file’s directory (e.g. `"../terrains/demo_terrain_pack.ron"`).
+    /// When empty, [`Self::tile_defs`] must be populated (tests / legacy).
+    #[serde(default)]
+    pub terrain_pack: String,
+    /// Inline tile definitions when [`Self::terrain_pack`] is empty.
+    #[serde(default)]
     pub tile_defs: Vec<TileDef>,
     pub spawns: Vec<EntitySpawn>,
-    /// Player start position. If `None`, the runtime uses the map center (legacy behavior).
     #[serde(default)]
     pub player_spawn: Option<PlayerSpawn>,
-    /// Stable seed for baked static tile variants (grass). If omitted, derived from level data.
     #[serde(default)]
     pub visual_seed: Option<u64>,
     #[serde(default)]
-    pub global_ambiance: GlobalAmbiance,
-    /// Per-cell ambiance weight `0..=255` (same length as `tiles` when set). `0` = no local tint.
+    pub default_atmosphere: AtmosphereRecipe,
     #[serde(default)]
-    pub ambiance: Vec<u8>,
+    pub atmosphere_zones: Vec<AtmosphereZone>,
+}
+
+/// Load a [`TerrainPack`] from disk and assign [`LevelFile::tile_defs`].
+pub fn materialize_tile_defs_from_pack(
+    level: &mut LevelFile,
+    level_file_parent: Option<&Path>,
+) -> Result<(), String> {
+    let path = level.terrain_pack.trim();
+    if path.is_empty() {
+        if level.tile_defs.is_empty() {
+            return Err("level has empty terrain_pack and no inline tile_defs".into());
+        }
+        return Ok(());
+    }
+    let base = level_file_parent.unwrap_or_else(|| Path::new("."));
+    let full = base.join(path);
+    let raw = std::fs::read_to_string(&full)
+        .map_err(|e| format!("read terrain pack {}: {e}", full.display()))?;
+    let pack: TerrainPack = ron::from_str(&raw)
+        .map_err(|e| format!("parse terrain pack {}: {e}", full.display()))?;
+    if pack.schema_version != TerrainPack::SCHEMA {
+        return Err(format!(
+            "terrain pack {} schema_version {} != {}",
+            full.display(),
+            pack.schema_version,
+            TerrainPack::SCHEMA
+        ));
+    }
+    if pack.tile_defs.is_empty() {
+        return Err(format!("terrain pack {} has no tile_defs", full.display()));
+    }
+    level.tile_defs = pack.tile_defs;
+    Ok(())
 }
 
 /// Default `visual_seed` when [`LevelFile::visual_seed`] is `None`.
@@ -213,21 +195,20 @@ impl LevelFile {
                 expected
             ));
         }
+        if self.tile_defs.is_empty() {
+            return Err("to_map: tile_defs is empty (load terrain pack first)".into());
+        }
         let table = TileTable {
             defs: self.tile_defs.clone(),
         };
-        let n = expected;
-        let mut ambiance = self.ambiance.clone();
-        if ambiance.len() != n {
-            ambiance.resize(n, 0);
-        }
         Ok(MapGrid {
             width: self.width,
             height: self.height,
             tiles: self.tiles.clone(),
             table,
-            display: vec![crate::world::TileDisplayCell::default(); n],
-            ambiance,
+            display: vec![crate::world::TileDisplayCell::default(); expected],
+            default_atmosphere: self.default_atmosphere,
+            atmosphere_zones: self.atmosphere_zones.clone(),
         })
     }
 
@@ -238,12 +219,13 @@ impl LevelFile {
             width: map.width,
             height: map.height,
             tiles: map.tiles.clone(),
+            terrain_pack: String::new(),
             tile_defs: map.table.defs.clone(),
             spawns,
             player_spawn: None,
             visual_seed: None,
-            global_ambiance: GlobalAmbiance::default(),
-            ambiance: map.ambiance.clone(),
+            default_atmosphere: map.default_atmosphere,
+            atmosphere_zones: map.atmosphere_zones.clone(),
         }
     }
 }
@@ -256,6 +238,14 @@ pub fn level_from_ron(s: &str) -> Result<LevelFile, ron::de::SpannedError> {
     ron::from_str(s)
 }
 
+pub fn terrain_pack_to_ron(pack: &TerrainPack) -> Result<String, ron::Error> {
+    ron::ser::to_string_pretty(pack, ron::ser::PrettyConfig::new())
+}
+
+pub fn terrain_pack_from_ron(s: &str) -> Result<TerrainPack, ron::de::SpannedError> {
+    ron::from_str(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,7 +253,6 @@ mod tests {
 
     #[test]
     fn ron_roundtrips_anim_mode() {
-        use crate::render::Color;
         use crate::world::{AnimMode, AnimatedFrame, TileSurface};
         let animated = TileSurface::Animated {
             frames: vec![AnimatedFrame {
@@ -284,7 +273,6 @@ mod tests {
 
     #[test]
     fn ron_roundtrips_anim_mode_drift() {
-        use crate::render::Color;
         use crate::world::{AnimMode, AnimatedFrame, TileSurface};
         let animated = TileSurface::Animated {
             frames: vec![AnimatedFrame {
@@ -303,10 +291,8 @@ mod tests {
         assert_eq!(back, animated);
     }
 
-    /// Editor / older RON used bare `mode: cycle,` which RON parses as unit, not a string.
     #[test]
     fn ron_deserializes_legacy_bare_anim_mode_token() {
-        use crate::render::Color;
         use crate::world::{AnimMode, AnimatedFrame, TileSurface};
         let raw = r#"(
             kind: "animated",
@@ -362,72 +348,5 @@ mod tests {
         let s = level_to_ron(&level).unwrap();
         let back = level_from_ron(&s).unwrap();
         assert_eq!(back, level);
-    }
-
-    #[test]
-    fn compose_visible_boosts_background() {
-        use crate::render::Color;
-        let ga = GlobalAmbiance {
-            visible_boost: 24,
-            ..GlobalAmbiance::default()
-        };
-        let base = Color::rgb(20, 24, 30);
-        let (fg, bg) = ga.compose_map_tile(Color::rgb(200, 200, 200), base, 0, MapTileFog::Visible);
-        assert_eq!(fg, Color::rgb(200, 200, 200));
-        assert!(bg.r > base.r, "{bg:?}");
-    }
-
-    #[test]
-    fn compose_explored_mutes_foreground_and_background() {
-        use crate::render::Color;
-        let ga = GlobalAmbiance::default();
-        let base_fg = Color::rgb(200, 100, 50);
-        let base_bg = Color::rgb(40, 35, 50);
-        let (fg, bg) = ga.compose_map_tile(base_fg, base_bg, 0, MapTileFog::Explored);
-        assert_ne!(fg, base_fg);
-        assert_ne!(bg, base_bg);
-        assert_eq!(fg, base_fg.mix_towards(ga.unseen_void_fg, GlobalAmbiance::EXPLORED_BLEND_TOWARDS_VOID_PCT));
-    }
-
-    #[test]
-    fn compose_luminance_matches_discrete_fog_endpoints() {
-        use crate::render::Color;
-        let ga = GlobalAmbiance {
-            visible_boost: 8,
-            ..GlobalAmbiance::default()
-        };
-        let base_fg = Color::rgb(100, 90, 80);
-        let base_bg = Color::rgb(20, 22, 28);
-        for &(l, fog) in &[
-            (0.0_f32, MapTileFog::Unseen),
-            (GlobalAmbiance::FOG_LUMINANCE_EXPLORED, MapTileFog::Explored),
-            (1.0_f32, MapTileFog::Visible),
-        ] {
-            let (a_fg, a_bg) = ga.compose_map_tile(base_fg, base_bg, 0, fog);
-            let (b_fg, b_bg) = ga.compose_map_tile_from_luminance(base_fg, base_bg, 0, l);
-            assert_eq!(
-                (a_fg, a_bg),
-                (b_fg, b_bg),
-                "luminance {l} vs {fog:?}",
-            );
-        }
-    }
-
-    #[test]
-    fn compose_unseen_uses_void_fg_and_bg() {
-        use crate::render::Color;
-        let ga = GlobalAmbiance {
-            unseen_void: Color::rgb(10, 10, 20),
-            unseen_void_fg: Color::rgb(100, 90, 120),
-            ..GlobalAmbiance::default()
-        };
-        let (fg, bg) = ga.compose_map_tile(
-            Color::rgb(255, 0, 0),
-            Color::rgb(0, 255, 0),
-            200,
-            MapTileFog::Unseen,
-        );
-        assert_eq!(fg, Color::rgb(100, 90, 120));
-        assert_eq!(bg, Color::rgb(10, 10, 20));
     }
 }

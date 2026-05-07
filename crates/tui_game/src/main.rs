@@ -4,6 +4,7 @@
 
 use std::env;
 use std::io::{stdout, Write};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crossterm::{
@@ -49,7 +50,8 @@ fn main() -> std::io::Result<()> {
         let level = tui_game_core::level::level_from_ron(&raw).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, format!("ron: {e}"))
         })?;
-        let mut g = Game::from_level_file(&level, tw, th, keymap::game_key_map())
+        let pack_base = Path::new(&path).parent();
+        let mut g = Game::from_level_file(&level, tw, th, keymap::game_key_map(), pack_base)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         g.set_restart_level_ron_path(Some(path));
         g

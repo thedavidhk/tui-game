@@ -1,8 +1,9 @@
 //! Level editor: `LevelFile` paint/spawns, custom tile defs, resize, named save.
 //!
-//! Hot-reload: if the `.ron` on disk changes, the editor reloads when there are no unsaved edits;
-//! otherwise it prompts (Y discard + reload, N/Esc keep). Reload only applies after RON parse and
-//! `validate_level` succeed; failures keep the previous level and show an error.
+//! Hot-reload: when the level `.ron` **or** the referenced `terrain_pack` file changes on disk, the
+//! editor reloads when there are no unsaved edits; otherwise it prompts (Y discard + reload,
+//! N/Esc keep). Reload only applies after RON parse and `validate_level` succeed; failures keep
+//! the previous level and show an error.
 
 use std::env;
 use std::fs;
@@ -29,8 +30,9 @@ use tui_game_core::input::{
     InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseCell, MouseEventKind,
 };
 use tui_game_core::level::{
-    derive_visual_seed, level_from_ron, level_to_ron, EntitySpawn, GlobalAmbiance, LevelFile,
-    MapTileFog, PlayerSpawn,
+    derive_visual_seed, level_from_ron, level_to_ron, materialize_tile_defs_from_pack,
+    AtmosphereRecipe, AtmosphereShape, AtmosphereZone, EntitySpawn, LevelFile, MapTileFog,
+    PlayerSpawn,
 };
 use tui_game_core::rect::Rect;
 use tui_game_core::render::{
@@ -42,7 +44,10 @@ use tui_game_core::ui::{
     viewport_scroll::{edge_scroll_pan_delta, EDGE_SCROLL_COOLDOWN_TICKS},
     TextField, TextFieldOutput, TextFilter, PRESET_COLORS,
 };
-use tui_game_core::world::{def_is_animated, resolve_animated, TileDef, TileDisplayCell, TileId};
+use tui_game_core::world::{
+    compose_map_tile_discrete, def_is_animated, rebuild_atmosphere_bake, resolve_animated,
+    FogBakedTrio, TileDef, TileDisplayCell, TileId,
+};
 use tui_game_core::EntityBlueprint;
 
 /// Fixed width for the right-hand palette / help column.
@@ -104,14 +109,16 @@ struct Editor {
     viewport_edge_scroll_cooldown: u16,
     /// Baked static tile visuals (parallel to `level.tiles`).
     tile_display: Vec<TileDisplayCell>,
-    /// Brush value for [`Mode::PaintAmbiance`] (`0..=255`).
-    ambiance_brush: u8,
+    /// Baked fog colors per cell (parallel to tiles; rebuilt with tile display).
+    atmosphere_bake: Vec<FogBakedTrio>,
     map_visual_seed: u64,
     surface_tick: u64,
     /// True after any edit not yet written with Ctrl+S / save dialog.
     dirty: bool,
-    /// Last known on-disk fingerprint we treated as "in sync" (load, save, reload, or dismiss prompt).
-    last_disk_fingerprint: FileFingerprint,
+    /// Last known on-disk fingerprint for the level `.ron` (load, save, reload, or dismiss prompt).
+    last_level_disk_fingerprint: FileFingerprint,
+    /// Fingerprint for the resolved `terrain_pack` file when non-empty; `MISSING` when inline defs only.
+    last_pack_disk_fingerprint: FileFingerprint,
     /// Rate-limit disk reads for hot-reload.
     last_hot_reload_poll: Instant,
 }
@@ -123,8 +130,8 @@ enum Mode {
     EraseSpawns,
     /// Single-cell marker: where the runtime spawns the player (`LevelFile.player_spawn`).
     SetPlayerSpawn,
-    /// Per-cell weight blending tile `bg` toward `LevelFile.global_ambiance.local_accent` in-game.
-    PaintAmbiance,
+    /// Place [`AtmosphereZone`] volumes (keyboard: Enter adds a default rectangle at cursor).
+    AtmosphereZones,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -186,6 +193,7 @@ impl Editor {
             width: w,
             height: h,
             tiles,
+            terrain_pack: String::new(),
             tile_defs,
             spawns: vec![EntitySpawn {
                 kind: "guide".into(),
@@ -197,8 +205,8 @@ impl Editor {
             }],
             player_spawn: Some(PlayerSpawn { x: 12, y: 8 }),
             visual_seed: None,
-            global_ambiance: GlobalAmbiance::default(),
-            ambiance: Vec::new(),
+            default_atmosphere: AtmosphereRecipe::default(),
+            atmosphere_zones: Vec::new(),
         }
     }
 
@@ -206,7 +214,19 @@ impl Editor {
         let (level, status) = if path.exists() {
             match fs::read_to_string(path) {
                 Ok(s) => match level_from_ron(&s) {
-                    Ok(l) => (l, format!("Loaded {}", path.display())),
+                    Ok(mut l) => {
+                        let st = format!("Loaded {}", path.display());
+                        if let Err(e) =
+                            materialize_tile_defs_from_pack(&mut l, path.parent())
+                        {
+                            (
+                                Self::default_level(),
+                                format!("Terrain pack: {e}; new level"),
+                            )
+                        } else {
+                            (l, st)
+                        }
+                    }
                     Err(e) => (
                         Self::default_level(),
                         format!("Parse error: {e}; new level"),
@@ -230,7 +250,9 @@ impl Editor {
         let map_visual_seed = level
             .visual_seed
             .unwrap_or_else(|| derive_visual_seed(&level));
-        let last_disk_fingerprint = FileFingerprint::from_path(path).unwrap_or(FileFingerprint::MISSING);
+        let last_level_disk_fingerprint =
+            FileFingerprint::from_path(path).unwrap_or(FileFingerprint::MISSING);
+        let last_pack_disk_fingerprint = Editor::pack_fingerprint_for_path(path, &level);
         let mut ed = Self {
             path: path.clone(),
             level,
@@ -254,11 +276,12 @@ impl Editor {
             last_mouse_cell: None,
             viewport_edge_scroll_cooldown: 0,
             tile_display: Vec::new(),
-            ambiance_brush: 180,
+            atmosphere_bake: Vec::new(),
             map_visual_seed,
             surface_tick: 0,
             dirty: false,
-            last_disk_fingerprint,
+            last_level_disk_fingerprint,
+            last_pack_disk_fingerprint,
             last_hot_reload_poll: Instant::now(),
         };
         ed.rebuild_tile_display_full();
@@ -269,14 +292,28 @@ impl Editor {
         self.dirty = true;
     }
 
+    fn pack_fingerprint_for_path(level_path: &Path, level: &LevelFile) -> FileFingerprint {
+        let parent = level_path.parent().unwrap_or_else(|| Path::new("."));
+        let rel = level.terrain_pack.trim();
+        if rel.is_empty() {
+            return FileFingerprint::MISSING;
+        }
+        let pack_path = parent.join(rel);
+        FileFingerprint::from_path(&pack_path).unwrap_or(FileFingerprint::MISSING)
+    }
+
     fn refresh_disk_fingerprint(&mut self) {
-        self.last_disk_fingerprint = FileFingerprint::from_path(&self.path).unwrap_or(FileFingerprint::MISSING);
+        self.last_level_disk_fingerprint =
+            FileFingerprint::from_path(&self.path).unwrap_or(FileFingerprint::MISSING);
+        self.last_pack_disk_fingerprint = Self::pack_fingerprint_for_path(&self.path, &self.level);
     }
 
     /// Parse and validate `path` without mutating editor state.
     fn load_level_from_disk(path: &Path, content: &ContentPack) -> Result<LevelFile, String> {
         let raw = fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        let level = level_from_ron(&raw).map_err(|e| format!("RON parse: {e}"))?;
+        let mut level = level_from_ron(&raw).map_err(|e| format!("RON parse: {e}"))?;
+        materialize_tile_defs_from_pack(&mut level, path.parent())
+            .map_err(|e| format!("terrain pack: {e}"))?;
         content
             .validate_level(&level)
             .map_err(|e| format!("level check: {e}"))?;
@@ -330,10 +367,11 @@ impl Editor {
         if self.dialog.is_some() {
             return;
         }
-        let Some(disk_fp) = FileFingerprint::from_path(&self.path) else {
+        let Some(level_fp) = FileFingerprint::from_path(&self.path) else {
             return;
         };
-        if disk_fp == self.last_disk_fingerprint {
+        let pack_fp = Self::pack_fingerprint_for_path(&self.path, &self.level);
+        if level_fp == self.last_level_disk_fingerprint && pack_fp == self.last_pack_disk_fingerprint {
             return;
         }
         if !self.dirty {
@@ -341,7 +379,8 @@ impl Editor {
                 Ok(()) => {}
                 Err(e) => {
                     self.status = format!("Hot-reload skipped: {e}");
-                    self.last_disk_fingerprint = disk_fp;
+                    self.last_level_disk_fingerprint = level_fp;
+                    self.last_pack_disk_fingerprint = pack_fp;
                 }
             }
             return;
@@ -355,10 +394,12 @@ impl Editor {
     fn rebuild_tile_display_full(&mut self) {
         let Ok(mut m) = self.level.to_map() else {
             self.tile_display.clear();
+            self.atmosphere_bake.clear();
             return;
         };
         m.rebuild_display_cache(self.map_visual_seed);
-        self.tile_display = m.display;
+        self.tile_display = m.display.clone();
+        rebuild_atmosphere_bake(&m, &mut self.atmosphere_bake);
     }
 
     fn save(&mut self) -> Result<(), String> {
@@ -427,7 +468,6 @@ impl Editor {
         let ow = self.level.width as usize;
         let oh = self.level.height as usize;
         let mut new_tiles = vec![0u16; nw as usize * nh as usize];
-        let mut new_amb = vec![0u8; nw as usize * nh as usize];
         for y in 0..nh as usize {
             for x in 0..nw as usize {
                 let t = if x < ow && y < oh {
@@ -436,18 +476,11 @@ impl Editor {
                     0
                 };
                 new_tiles[y * nw as usize + x] = t;
-                let a = if x < ow && y < oh {
-                    self.level.ambiance.get(y * ow + x).copied().unwrap_or(0)
-                } else {
-                    0
-                };
-                new_amb[y * nw as usize + x] = a;
             }
         }
         self.level.width = nw;
         self.level.height = nh;
         self.level.tiles = new_tiles;
-        self.level.ambiance = new_amb;
         self.mark_dirty();
         self.level
             .spawns
@@ -631,46 +664,37 @@ impl Editor {
         self.rebuild_tile_display_full();
     }
 
-    fn fill_rect_ambiance(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
-        if self.mode != Mode::PaintAmbiance {
-            return;
-        }
-        let v = self.ambiance_brush;
-        for_each_in_rect(x0, y0, x1, y1, |tx, ty| {
-            self.set_ambiance_clamped(tx, ty, v);
+    fn add_atmosphere_zone_at(&mut self, ax: i32, ay: i32) {
+        self.level.atmosphere_zones.push(AtmosphereZone {
+            anchor_x: ax,
+            anchor_y: ay,
+            shape: AtmosphereShape::Rectangle {
+                width_tiles: 5,
+                height_tiles: 5,
+            },
+            edge_falloff_tiles: 2,
+            recipe: self.level.default_atmosphere,
         });
-        self.status = format!("Filled ambiance ({x0},{y0})—({x1},{y1}) value {v}.");
         self.mark_dirty();
+        self.rebuild_tile_display_full();
+        self.status = format!(
+            "Atmosphere zone {} at ({ax},{ay})",
+            self.level.atmosphere_zones.len()
+        );
     }
 
-    fn set_ambiance_clamped(&mut self, tx: i32, ty: i32, v: u8) {
-        let w = self.level.width as i32;
-        let h = self.level.height as i32;
-        if tx < 0 || ty < 0 || tx >= w || ty >= h {
-            return;
-        }
-        let n = self.level.width as usize * self.level.height as usize;
-        if self.level.ambiance.len() != n {
-            self.level.ambiance.resize(n, 0);
-        }
-        let i = ty as usize * self.level.width as usize + tx as usize;
-        if i < self.level.ambiance.len() {
-            self.level.ambiance[i] = v;
+    fn add_atmosphere_zone_here(&mut self) {
+        self.add_atmosphere_zone_at(self.cursor_x, self.cursor_y);
+    }
+
+    fn remove_last_atmosphere_zone(&mut self) {
+        if self.level.atmosphere_zones.pop().is_some() {
             self.mark_dirty();
+            self.rebuild_tile_display_full();
+            self.status = "Removed last atmosphere zone.".into();
+        } else {
+            self.status = "No atmosphere zones.".into();
         }
-    }
-
-    fn apply_paint_ambiance(&mut self, cx: i32, cy: i32) {
-        let v = self.ambiance_brush;
-        for_each_in_brush(cx, cy, self.brush_radius, |tx, ty| {
-            self.set_ambiance_clamped(tx, ty, v);
-        });
-    }
-
-    fn erase_paint_ambiance(&mut self, cx: i32, cy: i32) {
-        for_each_in_brush(cx, cy, self.brush_radius, |tx, ty| {
-            self.set_ambiance_clamped(tx, ty, 0);
-        });
     }
 
     fn cycle_tile_bg(&mut self, delta: i32) {
@@ -706,35 +730,36 @@ impl Editor {
         self.status = format!("Terrain {name}: bg {:?}", new_bg);
     }
 
-    fn cycle_global_ambiance_preset(&mut self) {
-        const PRESETS: &[GlobalAmbiance] = &[
-            GlobalAmbiance {
-                unseen_void: Color::rgb(6, 6, 12),
-                unseen_void_fg: Color::rgb(52, 52, 68),
-                local_accent: Color::rgb(225, 165, 95),
-                visible_boost: 10,
+    fn cycle_default_atmosphere_preset(&mut self) {
+        const PRESETS: &[AtmosphereRecipe] = &[
+            AtmosphereRecipe {
+                void_background: Color::rgb(6, 6, 12),
+                void_glyph_foreground: Color::rgb(52, 52, 68),
+                visible_background_pull: 10,
+                sight_strength: 1.0,
             },
-            GlobalAmbiance {
-                unseen_void: Color::rgb(4, 4, 10),
-                unseen_void_fg: Color::rgb(55, 55, 72),
-                local_accent: Color::rgb(180, 130, 220),
-                visible_boost: 4,
+            AtmosphereRecipe {
+                void_background: Color::rgb(4, 4, 10),
+                void_glyph_foreground: Color::rgb(55, 55, 72),
+                visible_background_pull: 14,
+                sight_strength: 1.0,
             },
-            GlobalAmbiance {
-                unseen_void: Color::rgb(10, 8, 8),
-                unseen_void_fg: Color::rgb(95, 85, 82),
-                local_accent: Color::rgb(250, 200, 110),
-                visible_boost: 14,
+            AtmosphereRecipe {
+                void_background: Color::rgb(10, 8, 8),
+                void_glyph_foreground: Color::rgb(95, 85, 82),
+                visible_background_pull: 8,
+                sight_strength: 1.0,
             },
         ];
         let cur = PRESETS
             .iter()
-            .position(|&p| p == self.level.global_ambiance)
+            .position(|&p| p == self.level.default_atmosphere)
             .unwrap_or(0);
         let next = (cur + 1) % PRESETS.len();
-        self.level.global_ambiance = PRESETS[next];
+        self.level.default_atmosphere = PRESETS[next];
         self.mark_dirty();
-        self.status = format!("Global ambiance preset {}/{}", next + 1, PRESETS.len());
+        self.rebuild_tile_display_full();
+        self.status = format!("Default atmosphere preset {}/{}", next + 1, PRESETS.len());
     }
 
     fn cell_has_spawn(&self, tx: i32, ty: i32) -> bool {
@@ -773,8 +798,8 @@ impl Editor {
             Mode::PaintTiles => Mode::PlaceSpawns,
             Mode::PlaceSpawns => Mode::EraseSpawns,
             Mode::EraseSpawns => Mode::SetPlayerSpawn,
-            Mode::SetPlayerSpawn => Mode::PaintAmbiance,
-            Mode::PaintAmbiance => Mode::PaintTiles,
+            Mode::SetPlayerSpawn => Mode::AtmosphereZones,
+            Mode::AtmosphereZones => Mode::PaintTiles,
         };
         self.status = format!("Mode: {:?}", self.mode);
     }
@@ -913,12 +938,8 @@ impl Editor {
                             );
                         }
                         Mode::SetPlayerSpawn => self.set_player_spawn_at(tx, ty),
-                        Mode::PaintAmbiance => {
-                            self.apply_paint_ambiance(tx, ty);
-                            self.status = format!(
-                                "Ambiance {} at ({tx},{ty}) r{}.",
-                                self.ambiance_brush, self.brush_radius
-                            );
+                        Mode::AtmosphereZones => {
+                            self.add_atmosphere_zone_at(tx, ty);
                         }
                     }
                     self.last_paint_cell = Some((tx, ty));
@@ -942,22 +963,12 @@ impl Editor {
                             }
                         }
                         Mode::SetPlayerSpawn => self.set_player_spawn_at(tx, ty),
-                        Mode::PaintAmbiance => {
-                            self.apply_paint_ambiance(tx, ty);
-                            self.status = format!("Ambiance drag {} at ({tx},{ty}).", self.ambiance_brush);
-                        }
+                        Mode::AtmosphereZones => {}
                     }
                     self.last_paint_cell = Some((tx, ty));
                 }
             }
-            MouseEventKind::Down(MouseButton::Right) => {
-                if self.mode == Mode::PaintAmbiance {
-                    self.rect_drag_start = None;
-                    self.erase_paint_ambiance(tx, ty);
-                    self.status = format!("Erased ambiance at ({tx},{ty}) r{}.", self.brush_radius);
-                    self.last_paint_cell = Some((tx, ty));
-                }
-            }
+            MouseEventKind::Down(MouseButton::Right) => {}
             MouseEventKind::Up(MouseButton::Left) => {
                 if let Some((sx, sy)) = self.rect_drag_start.take() {
                     match self.mode {
@@ -968,8 +979,7 @@ impl Editor {
                                 "Removed {n} spawn(s) in rectangle ({sx},{sy})—({tx},{ty})."
                             );
                         }
-                        Mode::PaintAmbiance => self.fill_rect_ambiance(sx, sy, tx, ty),
-                        Mode::PlaceSpawns | Mode::SetPlayerSpawn => {}
+                        Mode::AtmosphereZones | Mode::PlaceSpawns | Mode::SetPlayerSpawn => {}
                     }
                 }
                 self.last_paint_cell = None;
@@ -1276,15 +1286,8 @@ impl Editor {
                 Mode::SetPlayerSpawn => {
                     self.set_player_spawn_at(self.cursor_x, self.cursor_y);
                 }
-                Mode::PaintAmbiance => {
-                    self.apply_paint_ambiance(self.cursor_x, self.cursor_y);
-                    self.status = format!(
-                        "Ambiance {} at ({},{}) r{}.",
-                        self.ambiance_brush,
-                        self.cursor_x,
-                        self.cursor_y,
-                        self.brush_radius
-                    );
+                Mode::AtmosphereZones => {
+                    self.add_atmosphere_zone_here();
                 }
             },
             KeyChord {
@@ -1295,15 +1298,28 @@ impl Editor {
                 self.clear_player_spawn();
             },
             KeyChord {
+                key: Key::Backspace,
+                ctrl: false,
+                ..
+            } if self.mode == Mode::AtmosphereZones => {
+                self.remove_last_atmosphere_zone();
+            },
+            KeyChord {
                 key: Key::Char('[') | Key::Char('k'),
                 ctrl: false,
                 ..
             } => match self.mode {
                 Mode::PaintTiles => self.cycle_tile_palette(-1),
                 Mode::PlaceSpawns => self.cycle_spawn_blueprint(-1),
-                Mode::PaintAmbiance => {
-                    self.ambiance_brush = self.ambiance_brush.saturating_sub(16);
-                    self.status = format!("Ambiance brush {}", self.ambiance_brush);
+                Mode::AtmosphereZones => {
+                    self.level.default_atmosphere.visible_background_pull =
+                        self.level.default_atmosphere.visible_background_pull.saturating_sub(4);
+                    self.mark_dirty();
+                    self.rebuild_tile_display_full();
+                    self.status = format!(
+                        "Default visible bg pull {}%",
+                        self.level.default_atmosphere.visible_background_pull
+                    );
                 }
                 Mode::EraseSpawns | Mode::SetPlayerSpawn => {}
             },
@@ -1314,9 +1330,19 @@ impl Editor {
             } => match self.mode {
                 Mode::PaintTiles => self.cycle_tile_palette(1),
                 Mode::PlaceSpawns => self.cycle_spawn_blueprint(1),
-                Mode::PaintAmbiance => {
-                    self.ambiance_brush = (self.ambiance_brush.saturating_add(16)).min(255);
-                    self.status = format!("Ambiance brush {}", self.ambiance_brush);
+                Mode::AtmosphereZones => {
+                    self.level.default_atmosphere.visible_background_pull = (self
+                        .level
+                        .default_atmosphere
+                        .visible_background_pull
+                        .saturating_add(4))
+                    .min(100);
+                    self.mark_dirty();
+                    self.rebuild_tile_display_full();
+                    self.status = format!(
+                        "Default visible bg pull {}%",
+                        self.level.default_atmosphere.visible_background_pull
+                    );
                 }
                 Mode::EraseSpawns | Mode::SetPlayerSpawn => {}
             },
@@ -1368,7 +1394,7 @@ impl Editor {
                 ctrl: false,
                 ..
             } => {
-                self.cycle_global_ambiance_preset();
+                self.cycle_default_atmosphere_preset();
             }
             KeyChord {
                 key: Key::Char('b'),
@@ -1541,7 +1567,7 @@ impl Editor {
                 let tid = self.level.tiles[idx];
                 let def = self.level.tile_defs.iter().find(|d| d.id == tid);
                 let baked = self.tile_display.get(idx).copied();
-                let (ch, tile_fg, base_bg) = match def {
+                let (ch, tile_fg, _base_bg) = match def {
                     Some(d) if def_is_animated(d) => {
                         let r = resolve_animated(
                             d,
@@ -1561,13 +1587,13 @@ impl Editor {
                         (d.ch, d.fg, d.bg)
                     }
                 };
-                let amb_w = self.level.ambiance.get(idx).copied().unwrap_or(0);
-                let (_, tile_bg) = self.level.global_ambiance.compose_map_tile(
-                    tile_fg,
-                    base_bg,
-                    amb_w,
-                    MapTileFog::Visible,
-                );
+                let fog_baked = self
+                    .atmosphere_bake
+                    .get(idx)
+                    .copied()
+                    .unwrap_or_default();
+                let (_, tile_bg) =
+                    compose_map_tile_discrete(fog_baked, MapTileFog::Visible);
                 let mut c = Cell {
                     ch,
                     fg: tile_fg,
@@ -1618,14 +1644,9 @@ impl Editor {
                                     }
                                 }
                             }
-                            Mode::PaintAmbiance => {
+                            Mode::AtmosphereZones => {
                                 if cell_in_brush(txi, tyi, hx, hy, self.brush_radius) {
                                     lift = lift.max(14);
-                                }
-                                if let Some((sx, sy)) = self.rect_drag_start {
-                                    if cell_in_axis_rect(txi, tyi, sx, sy, hx, hy) {
-                                        lift = lift.max(20);
-                                    }
                                 }
                             }
                         }
@@ -1755,8 +1776,8 @@ impl Editor {
             "WASD cursor  Arrows: pan (large map)  Tab/m: mode",
         );
         Self::sidebar_plain(fb, inner, &mut y, "p: player start   Space/L: act  +/- wheel: r");
-        Self::sidebar_plain(fb, inner, &mut y, "b: cycle terrain bg (paint)  F10: global ambiance");
-        Self::sidebar_plain(fb, inner, &mut y, "Shift+L drag: rect (tiles, spawns, ambiance)");
+        Self::sidebar_plain(fb, inner, &mut y, "b: cycle terrain bg (paint)  F10: atmosphere presets");
+        Self::sidebar_plain(fb, inner, &mut y, "Shift+L drag: rect (tiles, spawns)");
         Self::sidebar_plain(
             fb,
             inner,
@@ -1774,8 +1795,11 @@ impl Editor {
             inner,
             &mut y,
             &row(&format!(
-                "Mode: {:?}  r{}  amb{}",
-                self.mode, self.brush_radius, self.ambiance_brush
+                "Mode: {:?}  r{}  zones:{} pull:{}%",
+                self.mode,
+                self.brush_radius,
+                self.level.atmosphere_zones.len(),
+                self.level.default_atmosphere.visible_background_pull
             )),
         );
         Self::sidebar_plain(
@@ -1809,18 +1833,18 @@ impl Editor {
                 Self::sidebar_plain(fb, inner, &mut y, &row(&brush));
             }
         }
-        if self.mode == Mode::PaintAmbiance {
+        if self.mode == Mode::AtmosphereZones {
             Self::sidebar_plain(
                 fb,
                 inner,
                 &mut y,
-                &row("> Local light weight toward global local_accent"),
+                &row("> Space/LMB: add zone  Backspace: remove last"),
             );
             Self::sidebar_plain(
                 fb,
                 inner,
                 &mut y,
-                &row("[ / ]: brush  RMB: erase  Shift+L: rect fill"),
+                &row("[ / ]: default visible bg pull%  F10: presets"),
             );
         }
         Self::sidebar_plain(fb, inner, &mut y, "");

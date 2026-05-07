@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::level::{AtmosphereRecipe, AtmosphereZone};
+
 use super::tile_surface::{bake_tile_display, TileBakeView, TileDisplayCell};
 use super::tiles::{TileDef, TileId};
 
@@ -38,9 +40,10 @@ pub struct MapGrid {
     /// tiles still read `tiles` + defs at compose time.
     #[serde(default)]
     pub display: Vec<TileDisplayCell>,
-    /// Per-cell ambiance weight `0..=255`, same length as `tiles` when present (filled with `0` on load).
     #[serde(default)]
-    pub ambiance: Vec<u8>,
+    pub default_atmosphere: AtmosphereRecipe,
+    #[serde(default)]
+    pub atmosphere_zones: Vec<AtmosphereZone>,
 }
 
 impl MapGrid {
@@ -52,7 +55,8 @@ impl MapGrid {
             tiles: vec![tile; n],
             table,
             display: vec![TileDisplayCell::default(); n],
-            ambiance: vec![0u8; n],
+            default_atmosphere: AtmosphereRecipe::default(),
+            atmosphere_zones: Vec::new(),
         };
         m.rebuild_display_cache(0);
         m

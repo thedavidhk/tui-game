@@ -2,11 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity::EntityArena;
 use crate::game::GameModeStack;
-use crate::level::GlobalAmbiance;
 use crate::narrative::NarrativeState;
 use crate::world::MapGrid;
 
-pub const SAVE_SCHEMA_VERSION: u32 = 6;
+pub const SAVE_SCHEMA_VERSION: u32 = 7;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct WorldSnapshot {
@@ -14,9 +13,6 @@ pub struct WorldSnapshot {
     pub entities: EntityArena,
     pub narrative: NarrativeState,
     pub rng_seed: u64,
-    /// Level-wide atmosphere (FoW tint targets, local-light accent). Older saves omit this field.
-    #[serde(default)]
-    pub global_ambiance: GlobalAmbiance,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -79,7 +75,6 @@ mod tests {
             entities: ents,
             narrative: NarrativeState::default(),
             rng_seed: 42,
-            global_ambiance: GlobalAmbiance::default(),
         };
         let modes = GameModeStack {
             stack: vec![GameMode::Exploration],
@@ -128,7 +123,6 @@ mod tests {
             entities: ents,
             narrative,
             rng_seed: 3,
-            global_ambiance: GlobalAmbiance::default(),
         };
         let modes = GameModeStack {
             stack: vec![GameMode::ItemTransfer {

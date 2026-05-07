@@ -380,12 +380,45 @@ impl ContentPack {
                 ));
             }
         }
-        let n = (level.width as usize) * (level.height as usize);
-        if !level.ambiance.is_empty() && level.ambiance.len() != n {
-            return Err(format!(
-                "ambiance len {} must be 0 or width*height ({n})",
-                level.ambiance.len()
-            ));
+        if level.tile_defs.is_empty() {
+            return Err(
+                "tile_defs is empty — load terrain pack (materialize_tile_defs_from_pack) before validate_level".into(),
+            );
+        }
+        let w = i32::from(level.width);
+        let h = i32::from(level.height);
+        const MAX_ZONE_FALLOFF: u16 = 64;
+        for (i, z) in level.atmosphere_zones.iter().enumerate() {
+            if z.edge_falloff_tiles > MAX_ZONE_FALLOFF {
+                return Err(format!(
+                    "atmosphere_zones[{i}].edge_falloff_tiles {} exceeds max {MAX_ZONE_FALLOFF}",
+                    z.edge_falloff_tiles
+                ));
+            }
+            use crate::level::AtmosphereShape;
+            match z.shape {
+                AtmosphereShape::Rectangle {
+                    width_tiles,
+                    height_tiles,
+                } => {
+                    if width_tiles == 0 || height_tiles == 0 {
+                        return Err(format!(
+                            "atmosphere_zones[{i}] rectangle has zero width or height"
+                        ));
+                    }
+                }
+                AtmosphereShape::Circle { radius_tiles } => {
+                    if radius_tiles == 0 {
+                        return Err(format!("atmosphere_zones[{i}] circle has zero radius"));
+                    }
+                }
+            }
+            if z.anchor_x < -w || z.anchor_x >= w * 2 || z.anchor_y < -h || z.anchor_y >= h * 2 {
+                return Err(format!(
+                    "atmosphere_zones[{i}] anchor ({},{}) is unreasonably far from map",
+                    z.anchor_x, z.anchor_y
+                ));
+            }
         }
         Ok(())
     }

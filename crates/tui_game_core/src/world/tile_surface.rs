@@ -19,7 +19,7 @@ fn cell_from_def(ch: char, fg: Color, def: &TileDef) -> TileDisplayCell {
 
 use serde::{Deserialize, Serialize};
 
-/// Resolved glyph + colors for one map cell (terrain `bg` is baked; FoW and ambiance adjust at compose).
+/// Resolved glyph + colors for one map cell (terrain `bg` is baked; FoW and baked atmosphere adjust at compose).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct TileDisplayCell {
     pub ch: char,

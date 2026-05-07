@@ -6,6 +6,9 @@
 /// across category boundaries (larger = softer edges).
 pub const FOG_COLOR_SOFTEN_RADIUS_CHEBYSHEV: i32 = 1;
 
+/// Discrete luminance for explored-but-not-visible cells (`fog_luminance_hard`); matches bake midpoint.
+pub const FOG_LUMINANCE_EXPLORED: f32 = 0.5;
+
 #[inline]
 const fn chebyshev_distance(dx: i32, dy: i32) -> i32 {
     let ax = dx.abs();
@@ -27,7 +30,7 @@ fn kernel_weight(radius: i32, chebyshev_d: i32) -> f32 {
     f32::from((radius + 1 - chebyshev_d) as i16)
 }
 
-/// Discrete fog "luminance" used before spatial smoothing: unseen `0`, explored `0.5`, visible `1`.
+/// Discrete fog "luminance" used before spatial smoothing: unseen `0`, explored [`FOG_LUMINANCE_EXPLORED`], visible `1`.
 #[inline]
 pub fn fog_luminance_hard(seen: bool, visible: bool) -> f32 {
     if !seen {
@@ -35,7 +38,7 @@ pub fn fog_luminance_hard(seen: bool, visible: bool) -> f32 {
     } else if visible {
         1.0
     } else {
-        0.4
+        FOG_LUMINANCE_EXPLORED
     }
 }
 
@@ -108,7 +111,7 @@ mod tests {
     #[test]
     fn hard_luminance_tri_state() {
         assert_eq!(fog_luminance_hard(false, false), 0.0);
-        assert_eq!(fog_luminance_hard(true, false), 0.5);
+        assert_eq!(fog_luminance_hard(true, false), FOG_LUMINANCE_EXPLORED);
         assert_eq!(fog_luminance_hard(true, true), 1.0);
     }
 

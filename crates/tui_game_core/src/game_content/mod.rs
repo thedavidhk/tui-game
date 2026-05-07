@@ -12,14 +12,22 @@ pub mod quests;
 
 pub(crate) use macros::{dialogue_tree, effects, quest_defs, requires};
 
-/// Default serialized level: `assets/levels/demo_level.ron` (editor or hand edit, then rebuild).
+/// Default serialized level body: `assets/levels/demo_level.ron` (references terrain pack).
 const EMBEDDED_DEMO_LEVEL_RON: &str = include_str!("../../../../assets/levels/demo_level.ron");
+/// Default terrain definitions: `assets/terrains/demo_terrain_pack.ron`.
+const EMBEDDED_DEMO_TERRAIN_PACK_RON: &str = include_str!("../../../../assets/terrains/demo_terrain_pack.ron");
 
-/// Parsed embedded demo level (same file as `assets/levels/demo_level.ron` on disk).
+/// Parsed embedded demo level with inline `tile_defs` (pack merged at compile time; `terrain_pack` cleared).
 #[must_use]
 pub fn embedded_demo_level() -> crate::level::LevelFile {
-    crate::level::level_from_ron(EMBEDDED_DEMO_LEVEL_RON)
-        .expect("embedded demo_level.ron must parse; fix the RON or schema")
+    use crate::level::{terrain_pack_from_ron, LevelFile};
+    let mut level: LevelFile =
+        crate::level::level_from_ron(EMBEDDED_DEMO_LEVEL_RON).expect("embedded demo_level.ron");
+    let pack = terrain_pack_from_ron(EMBEDDED_DEMO_TERRAIN_PACK_RON)
+        .expect("embedded demo_terrain_pack.ron must parse");
+    level.tile_defs = pack.tile_defs;
+    level.terrain_pack.clear();
+    level
 }
 
 #[derive(Debug)]
@@ -145,12 +153,22 @@ mod tests {
     }
 
     #[test]
-    fn validate_level_rejects_bad_ambiance_len() {
+    fn validate_level_rejects_atmosphere_zone_zero_rectangle() {
+        use crate::level::{AtmosphereRecipe, AtmosphereShape, AtmosphereZone};
         let p = content_pack();
         let table = TileTable::default_pack().expect("default terrain pack must load");
         let mut level = LevelFile::from_map(&MapGrid::filled(2, 2, 0, table), "x", vec![]);
-        level.ambiance = vec![1, 2];
+        level.atmosphere_zones.push(AtmosphereZone {
+            anchor_x: 0,
+            anchor_y: 0,
+            shape: AtmosphereShape::Rectangle {
+                width_tiles: 0,
+                height_tiles: 3,
+            },
+            edge_falloff_tiles: 1,
+            recipe: AtmosphereRecipe::default(),
+        });
         let err = p.validate_level(&level).unwrap_err();
-        assert!(err.contains("ambiance len"), "{err}");
+        assert!(err.contains("zero width"), "{err}");
     }
 }

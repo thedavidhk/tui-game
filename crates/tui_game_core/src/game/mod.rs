@@ -11,6 +11,7 @@ pub use key_commands::{
 };
 
 use std::fs;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -28,8 +29,8 @@ use crate::game_content;
 use crate::input::{InputBatch, InputEvent, MouseCell};
 use crate::item::{EquipSlot, Inventory, ItemStack, WeaponKind};
 use crate::level::{
-    derive_visual_seed, derive_visual_seed_from_map, level_from_ron, GlobalAmbiance, LevelFile,
-    MapTileFog,
+    derive_visual_seed, derive_visual_seed_from_map, level_from_ron, materialize_tile_defs_from_pack,
+    LevelFile,
 };
 use crate::narrative::NarrativeState;
 use crate::rect::Rect;
@@ -41,8 +42,9 @@ use crate::ui::viewport_scroll::{
     EDGE_SCROLL_COOLDOWN_TICKS,
 };
 use crate::world::{
-    compute_visible, def_is_animated, first_step_on_line, merge_explored, mix64, plan_path,
-    plan_path_player_fow, resolve_animated, smooth_fog_luminance, MapGrid, TileDisplayCell,
+    compose_fog_from_luminance, compute_visible, def_is_animated, effective_fow_radius_cells,
+    first_step_on_line, merge_explored, mix64, plan_path, plan_path_player_fow, rebuild_atmosphere_bake,
+    resolve_animated, smooth_fog_luminance, FogBakedTrio, MapGrid, TileDisplayCell,
 };
 
 const FOW_RADIUS: i32 = 20;
@@ -198,8 +200,8 @@ pub struct Game {
     pending_player_action: Option<PendingPlayerAction>,
     /// When set, [`Game::restart_new_game`] reloads this `.ron`; when `None`, uses the embedded demo level.
     pub restart_level_ron_path: Option<String>,
-    /// Level-wide FoW tint targets and local-light accent (from [`LevelFile`] or save).
-    pub global_ambiance: GlobalAmbiance,
+    /// Baked fog colors per cell ([`rebuild_atmosphere_bake`]); rebuilt with the map display cache.
+    pub atmosphere_bake: Vec<FogBakedTrio>,
     /// Key chord → [`GameCommand`] tables ([`GameKeyMap`]); normally supplied by the shell binary.
     pub key_map: GameKeyMap,
 }
@@ -238,7 +240,7 @@ impl Game {
         key_map: GameKeyMap,
     ) -> Self {
         let level = game_content::embedded_demo_level();
-        let mut game = Self::from_level_file(&level, viewport_w, viewport_h, key_map)
+        let mut game = Self::from_level_file(&level, viewport_w, viewport_h, key_map, None)
             .expect("built-in default village level must load");
         game.modes = GameModeStack {
             stack: vec![GameMode::MainMenu { selected: 0 }],
@@ -253,16 +255,23 @@ impl Game {
         viewport_w: u16,
         viewport_h: u16,
         key_map: GameKeyMap,
+        terrain_pack_base: Option<&Path>,
     ) -> Result<Self, String> {
         let content = game_content::content_pack();
         content.validate().map_err(|e| e.to_string())?;
-        content.validate_level(level).map_err(|e| e.to_string())?;
+        let mut level = level.clone();
+        materialize_tile_defs_from_pack(&mut level, terrain_pack_base).map_err(|e| e.to_string())?;
+        content
+            .validate_level(&level)
+            .map_err(|e| e.to_string())?;
         let map_visual_seed = level
             .visual_seed
-            .unwrap_or_else(|| derive_visual_seed(level));
+            .unwrap_or_else(|| derive_visual_seed(&level));
         let mut map = level.to_map()?;
         map.rebuild_display_cache(map_visual_seed);
         let n = (map.width as usize) * (map.height as usize);
+        let mut atmosphere_bake = Vec::new();
+        rebuild_atmosphere_bake(&map, &mut atmosphere_bake);
         let mut entities = EntityArena::new();
         for s in &level.spawns {
             let bp = content.blueprint(s.kind.as_str()).ok_or_else(|| {
@@ -363,7 +372,7 @@ impl Game {
             pending_forced_dialogue: None,
             pending_player_action: None,
             restart_level_ron_path: None,
-            global_ambiance: level.global_ambiance,
+            atmosphere_bake,
             key_map,
         };
         game.seed_demo_weapon_chest();
@@ -387,7 +396,8 @@ impl Game {
         };
         let vw = self.viewport_w;
         let vh = self.viewport_h;
-        let mut g = Self::from_level_file(&level, vw, vh, self.key_map)?;
+        let pack_base = stored_path.as_ref().map(|p| Path::new(p.as_str()).parent()).flatten();
+        let mut g = Self::from_level_file(&level, vw, vh, self.key_map, pack_base)?;
         g.restart_level_ron_path = stored_path;
         g.modes.stack = vec![GameMode::Exploration];
         g.log.push("New game.".into());
@@ -415,7 +425,8 @@ impl Game {
         if self.explored.len() < n {
             self.explored.resize(n, false);
         }
-        compute_visible(&self.map, p.x, p.y, FOW_RADIUS, &mut self.visible);
+        let radius = effective_fow_radius_cells(FOW_RADIUS, &self.map.default_atmosphere);
+        compute_visible(&self.map, p.x, p.y, radius, &mut self.visible);
         merge_explored(&self.map, &self.visible, &mut self.explored);
     }
 
@@ -2043,9 +2054,10 @@ impl Game {
                 let mut cell = Cell::default();
                 if !self.map.in_bounds(wx, wy) {
                     cell.ch = unseen_fog_glyph(wx, wy, self.map_visual_seed);
-                    let oob = self.global_ambiance.unseen_void.lighten(6);
+                    let d = &self.map.default_atmosphere;
+                    let oob = d.void_background.lighten(6);
                     cell.bg = oob;
-                    cell.fg = self.global_ambiance.unseen_void_fg;
+                    cell.fg = d.void_glyph_foreground;
                     fb.set(screen_x, screen_y, cell);
                     continue;
                 }
@@ -2053,9 +2065,8 @@ impl Game {
                 let seen = self.explored.get(idx).copied().unwrap_or(false);
                 let tid = self.map.tile_at(wx, wy).unwrap_or(0);
                 let def = self.map.table.def(tid);
-                let local_w = self.map.ambiance.get(idx).copied().unwrap_or(0);
-                let baked = self.map.display.get(idx).copied();
-                let (terrain_ch, base_fg, base_bg) = match def {
+                let baked_cell = self.map.display.get(idx).copied();
+                let (terrain_ch, _base_fg, _base_bg) = match def {
                     Some(d) if def_is_animated(d) => {
                         let r = resolve_animated(
                             d,
@@ -2067,7 +2078,7 @@ impl Game {
                         (r.ch, r.fg, d.terrain_bg())
                     }
                     _ => {
-                        let d = baked.unwrap_or(TileDisplayCell {
+                        let d = baked_cell.unwrap_or(TileDisplayCell {
                             ch: '?',
                             fg: Color::rgb(220, 220, 200),
                             bg: Color::rgb(35, 30, 40),
@@ -2083,12 +2094,12 @@ impl Game {
                     wx,
                     wy,
                 );
-                let (out_fg, out_bg) = self.global_ambiance.compose_map_tile_from_luminance(
-                    base_fg,
-                    base_bg,
-                    local_w,
-                    l,
-                );
+                let fog_baked = self
+                    .atmosphere_bake
+                    .get(idx)
+                    .copied()
+                    .unwrap_or_default();
+                let (out_fg, out_bg) = compose_fog_from_luminance(fog_baked, l);
                 cell.ch = if seen {
                     terrain_ch
                 } else {
@@ -2139,20 +2150,19 @@ impl Game {
             let tid_t = self.map.tile_at(wx, wy).unwrap_or(0);
             let tdef = self.map.table.def(tid_t);
             let baked_t = self.map.display.get(idx).copied();
-            let base_bg_ent = match tdef {
+            let _base_bg_ent = match tdef {
                 Some(d) if def_is_animated(d) => d.terrain_bg(),
                 _ => baked_t
                     .map(|c| c.bg)
                     .unwrap_or_else(|| Color::terrain_bg_from_fg(Color::rgb(180, 175, 165))),
             };
-            let local_w = self.map.ambiance.get(idx).copied().unwrap_or(0);
             let ent_fg = relation_fg.unwrap_or(base_fg);
-            let (_, ent_bg) = self.global_ambiance.compose_map_tile(
-                ent_fg,
-                base_bg_ent,
-                local_w,
-                MapTileFog::Visible,
-            );
+            let fog_baked = self
+                .atmosphere_bake
+                .get(idx)
+                .copied()
+                .unwrap_or_default();
+            let ent_bg = fog_baked.visible.bg;
             let c = Cell {
                 ch: g,
                 fg: ent_fg,
@@ -2173,7 +2183,6 @@ impl Game {
             entities: self.entities.clone(),
             narrative: self.narrative.clone(),
             rng_seed: self.rng_seed,
-            global_ambiance: self.global_ambiance,
         }
     }
 
@@ -2191,10 +2200,10 @@ impl Game {
         self.map = s.world.map;
         self.map_visual_seed = derive_visual_seed_from_map(&self.map);
         self.map.rebuild_display_cache(self.map_visual_seed);
+        rebuild_atmosphere_bake(&self.map, &mut self.atmosphere_bake);
         self.entities = s.world.entities;
         self.narrative = s.world.narrative;
         self.rng_seed = s.world.rng_seed;
-        self.global_ambiance = s.world.global_ambiance;
         self.modes = s.modes;
         self.view_pan_offset = (0, 0);
         self.last_world_pointer_cell = None;
