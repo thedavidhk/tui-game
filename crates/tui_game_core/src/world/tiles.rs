@@ -74,6 +74,11 @@ mod anim_mode_ron {
 /// (first def is `0`, etc.). RON omits per-def `id`; see [`normalize_tile_def_ids`].
 pub type TileId = u16;
 
+/// Sentinel for [`crate::world::MapGrid::props`]: no prop overlay on that cell.
+///
+/// This value is never assigned to [`TileDef::id`] by [`normalize_tile_def_ids`] (indices only).
+pub const EMPTY_PROP_ID: TileId = u16::MAX;
+
 /// Assign `defs[i].id = i as u16` for every entry. Call after deserializing `tile_defs` / `TileTable.defs`
 /// so runtime ids match placement data (`tiles` stores indices into this slice).
 ///

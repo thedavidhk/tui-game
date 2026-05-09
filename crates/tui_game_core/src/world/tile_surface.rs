@@ -11,7 +11,7 @@
 use crate::render::Color;
 
 use super::map::TileTable;
-use super::tiles::{AnimMode, TileDef, TileId, TileSurface, WeightedGlyph};
+use super::tiles::{AnimMode, TileDef, TileId, TileSurface, WeightedGlyph, EMPTY_PROP_ID};
 
 #[inline]
 fn cell_from_def(ch: char, fg: Color, def: &TileDef) -> TileDisplayCell {
@@ -218,6 +218,35 @@ pub fn bake_tile_display(v: TileBakeView<'_>, wx: i32, wy: i32, visual_seed: u64
     }
 }
 
+/// Static bake for ground + optional prop: prop glyph/foreground over ground background.
+#[must_use]
+pub fn bake_layered_tile_display(
+    ground: TileBakeView<'_>,
+    props: &[TileId],
+    wx: i32,
+    wy: i32,
+    visual_seed: u64,
+) -> TileDisplayCell {
+    let base = bake_tile_display(ground, wx, wy, visual_seed);
+    let i = wy as usize * ground.width as usize + wx as usize;
+    let pid = props.get(i).copied().unwrap_or(EMPTY_PROP_ID);
+    if pid == EMPTY_PROP_ID {
+        return base;
+    }
+    let prop_view = TileBakeView {
+        table: ground.table,
+        tiles: props,
+        width: ground.width,
+        height: ground.height,
+    };
+    let over = bake_tile_display(prop_view, wx, wy, visual_seed);
+    TileDisplayCell {
+        ch: over.ch,
+        fg: over.fg,
+        bg: base.bg,
+    }
+}
+
 /// Runtime-only glyph for animated tiles (deterministic; no per-cell mutable state).
 #[must_use]
 pub fn resolve_animated(
@@ -309,7 +338,7 @@ mod tests {
         let map = MapGrid::filled(4, 4, grass_id, table);
         let v = TileBakeView {
             table: &map.table,
-            tiles: &map.tiles,
+            tiles: &map.ground,
             width: map.width,
             height: map.height,
         };
@@ -355,7 +384,7 @@ mod tests {
         map.set_tile(2, 1, test_tid);
         let v = TileBakeView {
             table: &map.table,
-            tiles: &map.tiles,
+            tiles: &map.ground,
             width: map.width,
             height: map.height,
         };
@@ -393,7 +422,7 @@ mod tests {
         map.set_tile(2, 1, dw);
         let v = TileBakeView {
             table: &map.table,
-            tiles: &map.tiles,
+            tiles: &map.ground,
             width: map.width,
             height: map.height,
         };

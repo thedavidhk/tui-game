@@ -5,6 +5,7 @@
 //! N/Esc keep). Reload only applies after RON parse and `validate_level` succeed; failures keep
 //! the previous level and show an error.
 
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::{stdout, Write};
@@ -45,13 +46,15 @@ use tui_game_core::ui::{
     TextField, TextFieldOutput, TextFilter, PRESET_COLORS,
 };
 use tui_game_core::world::{
-    compose_map_tile_discrete, def_is_animated, normalize_tile_def_ids, rebuild_atmosphere_bake,
-    resolve_animated, FogBakedTrio, TileDef, TileDisplayCell, TileId,
+    compose_map_tile_discrete, mix64, normalize_tile_def_ids, rebuild_atmosphere_bake, FogBakedTrio,
+    MapGrid, TileDef, TileId, EMPTY_PROP_ID,
 };
 use tui_game_core::EntityBlueprint;
 
 /// Fixed width for the right-hand palette / help column.
-const EDITOR_SIDEBAR_WIDTH: u16 = 28;
+const EDITOR_SIDEBAR_WIDTH: u16 = 64;
+
+const MAX_BRUSH_SIZE: u8 = 16;
 
 /// `mtime` + `len` so two writes in the same second still register as different when size changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +98,12 @@ struct Editor {
     viewport_h: u16,
     /// Chebyshev brush radius in cells (0 = single cell).
     brush_radius: u8,
+    /// Prop layer only: `0` or `100` = dense; `1..99` = each cell gets brush with probability p/100, else prop cleared.
+    brush_sparse_pct: u8,
+    /// Level cells already given a sparse roll during the current LMB paint stroke (prevents stacking density while dragging the brush).
+    sparse_paint_drag_seen: HashSet<(i32, i32)>,
+    /// Ground vs prop overlay when [`Mode::PaintTiles`].
+    paint_layer: PaintLayer,
     /// Shift–left drag rectangle: anchor corner until mouse up.
     rect_drag_start: Option<(i32, i32)>,
     last_paint_cell: Option<(i32, i32)>,
@@ -107,8 +116,8 @@ struct Editor {
     view_origin_y: i32,
     last_mouse_cell: Option<MouseCell>,
     viewport_edge_scroll_cooldown: u16,
-    /// Baked static tile visuals (parallel to `level.tiles`).
-    tile_display: Vec<TileDisplayCell>,
+    /// Last `to_map` + `rebuild_display_cache` for compose and atmosphere (stays in sync via rebuild).
+    level_map: Option<MapGrid>,
     /// Baked fog colors per cell (parallel to tiles; rebuilt with tile display).
     atmosphere_bake: Vec<FogBakedTrio>,
     map_visual_seed: u64,
@@ -134,8 +143,17 @@ enum Mode {
     AtmosphereZones,
 }
 
+/// Which grid [`LevelFile::tiles`] (ground) vs [`LevelFile::props`] receives paint / sparse brush.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PaintLayer {
+    Ground,
+    Prop,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum SidebarHit {
+    /// Clear prop overlay (only listed when painting props).
+    ClearPropOverlay,
     Terrain(usize),
     Entity(usize),
     PlayerSpawn,
@@ -178,14 +196,15 @@ impl Editor {
         let w = 24u16;
         let h = 16u16;
         let n = (w as usize) * (h as usize);
-        let mut tiles = vec![floor_tile; n];
+        let tiles = vec![floor_tile; n];
+        let mut props = vec![EMPTY_PROP_ID; n];
         for x in 0..w {
-            tiles[x as usize] = wall_tile;
-            tiles[(h as usize - 1) * w as usize + x as usize] = wall_tile;
+            props[x as usize] = wall_tile;
+            props[(h as usize - 1) * w as usize + x as usize] = wall_tile;
         }
         for y in 0..h {
-            tiles[y as usize * w as usize] = wall_tile;
-            tiles[y as usize * w as usize + (w as usize - 1)] = wall_tile;
+            props[y as usize * w as usize] = wall_tile;
+            props[y as usize * w as usize + (w as usize - 1)] = wall_tile;
         }
         LevelFile {
             schema_version: LevelFile::SCHEMA,
@@ -193,6 +212,7 @@ impl Editor {
             width: w,
             height: h,
             tiles,
+            props,
             terrain_pack: String::new(),
             tile_defs,
             spawns: vec![EntitySpawn {
@@ -267,6 +287,9 @@ impl Editor {
             viewport_w: 80,
             viewport_h: 24,
             brush_radius: 0,
+            brush_sparse_pct: 0,
+            sparse_paint_drag_seen: HashSet::new(),
+            paint_layer: PaintLayer::Prop,
             rect_drag_start: None,
             last_paint_cell: None,
             sidebar_hits: Vec::new(),
@@ -275,7 +298,7 @@ impl Editor {
             view_origin_y: 0,
             last_mouse_cell: None,
             viewport_edge_scroll_cooldown: 0,
-            tile_display: Vec::new(),
+            level_map: None,
             atmosphere_bake: Vec::new(),
             map_visual_seed,
             surface_tick: 0,
@@ -393,13 +416,20 @@ impl Editor {
 
     fn rebuild_tile_display_full(&mut self) {
         let Ok(mut m) = self.level.to_map() else {
-            self.tile_display.clear();
+            self.level_map = None;
             self.atmosphere_bake.clear();
             return;
         };
         m.rebuild_display_cache(self.map_visual_seed);
-        self.tile_display = m.display.clone();
         rebuild_atmosphere_bake(&m, &mut self.atmosphere_bake);
+        self.level_map = Some(m);
+    }
+
+    fn ensure_level_props_len(&mut self) {
+        let n = (self.level.width as usize) * (self.level.height as usize);
+        if self.level.props.len() != n {
+            self.level.props.resize(n, EMPTY_PROP_ID);
+        }
     }
 
     fn save(&mut self) -> Result<(), String> {
@@ -469,19 +499,31 @@ impl Editor {
         let ow = self.level.width as usize;
         let oh = self.level.height as usize;
         let mut new_tiles = vec![0u16; nw as usize * nh as usize];
+        let mut new_props = vec![EMPTY_PROP_ID; nw as usize * nh as usize];
         for y in 0..nh as usize {
             for x in 0..nw as usize {
-                let t = if x < ow && y < oh {
-                    self.level.tiles[y * ow + x]
+                let (t, p) = if x < ow && y < oh {
+                    let i = y * ow + x;
+                    (
+                        self.level.tiles[i],
+                        self.level
+                            .props
+                            .get(i)
+                            .copied()
+                            .unwrap_or(EMPTY_PROP_ID),
+                    )
                 } else {
-                    0
+                    (0u16, EMPTY_PROP_ID)
                 };
-                new_tiles[y * nw as usize + x] = t;
+                let ni = y * nw as usize + x;
+                new_tiles[ni] = t;
+                new_props[ni] = p;
             }
         }
         self.level.width = nw;
         self.level.height = nh;
         self.level.tiles = new_tiles;
+        self.level.props = new_props;
         self.mark_dirty();
         self.level
             .spawns
@@ -625,7 +667,7 @@ impl Editor {
             .map(|(h, _)| *h)
     }
 
-    fn set_tile_clamped(&mut self, tx: i32, ty: i32, tile: TileId) {
+    fn set_ground_clamped(&mut self, tx: i32, ty: i32, tile: TileId) {
         let w = self.level.width as i32;
         let h = self.level.height as i32;
         if tx < 0 || ty < 0 || tx >= w || ty >= h {
@@ -638,24 +680,160 @@ impl Editor {
         }
     }
 
-    fn apply_paint_brush(&mut self, cx: i32, cy: i32) {
-        let t = self.current_tile;
+    fn set_prop_clamped(&mut self, tx: i32, ty: i32, tile: TileId) {
+        let w = self.level.width as i32;
+        let h = self.level.height as i32;
+        if tx < 0 || ty < 0 || tx >= w || ty >= h {
+            return;
+        }
+        self.ensure_level_props_len();
+        let i = ty as usize * self.level.width as usize + tx as usize;
+        if i < self.level.props.len() {
+            self.level.props[i] = tile;
+            self.mark_dirty();
+        }
+    }
+
+    /// Prop layer: with probability `brush_sparse_pct/100` set brush tile, else clear prop ([`EMPTY_PROP_ID`]).
+    /// When `drag_session_dedupe` is true, cells already present in [`Self::sparse_paint_drag_seen`]
+    /// are skipped so dragging the brush does not re-roll overlapping footprint cells.
+    fn apply_sparse_paint_to_cells(
+        &mut self,
+        label: &str,
+        cells: Vec<(i32, i32)>,
+        drag_session_dedupe: bool,
+    ) {
+        if cells.is_empty() {
+            return;
+        }
+        let brush_tid = self.current_tile;
+        let p_base = (self.brush_sparse_pct as f32 / 100.0).clamp(0.0, 1.0);
+        let mut seed = mix64(
+            self.map_visual_seed
+                ^ self.surface_tick.wrapping_mul(0x9E3779B185EBCA87)
+                ^ mix64(cells.len() as u64),
+        );
+        for (tx, ty) in cells {
+            if drag_session_dedupe && !self.sparse_paint_drag_seen.insert((tx, ty)) {
+                continue;
+            }
+            seed = mix64(seed ^ (tx as u64).rotate_left(3) ^ (ty as u64).rotate_left(19));
+            let roll = ((seed >> 16) & 0xFFFFFF) as f32 / 16_777_215.0_f32;
+            if roll < p_base {
+                self.set_prop_clamped(tx, ty, brush_tid);
+            } else {
+                self.set_prop_clamped(tx, ty, EMPTY_PROP_ID);
+            }
+        }
+        self.status = format!(
+            "{label}Prop sparse {}% (p→brush, else clear){}",
+            self.brush_sparse_pct,
+            if drag_session_dedupe {
+                " · drag: each cell once"
+            } else {
+                ""
+            }
+        );
+    }
+
+    fn apply_sparse_paint_brush(&mut self, cx: i32, cy: i32, drag_session_dedupe: bool) {
+        let mut cells = Vec::new();
         for_each_in_brush(cx, cy, self.brush_radius, |tx, ty| {
-            self.set_tile_clamped(tx, ty, t);
+            if tx >= 0
+                && ty >= 0
+                && (tx as u16) < self.level.width
+                && (ty as u16) < self.level.height
+            {
+                cells.push((tx, ty));
+            }
         });
+        self.apply_sparse_paint_to_cells(
+            &format!("Paint @({cx},{cy}) r{}. ", self.brush_radius),
+            cells,
+            drag_session_dedupe,
+        );
+    }
+
+    /// `drag_session_dedupe`: when sparse, skip cells already rolled this mouse stroke (LMB down → up).
+    fn apply_paint_brush(&mut self, cx: i32, cy: i32, drag_session_dedupe: bool) {
+        match self.paint_layer {
+            PaintLayer::Ground => {
+                let t = self.current_tile;
+                for_each_in_brush(cx, cy, self.brush_radius, |tx, ty| {
+                    self.set_ground_clamped(tx, ty, t);
+                });
+                self.mark_dirty();
+            }
+            PaintLayer::Prop => {
+                if self.brush_sparse_pct == 0 || self.brush_sparse_pct >= 100 {
+                    let t = self.current_tile;
+                    for_each_in_brush(cx, cy, self.brush_radius, |tx, ty| {
+                        self.set_prop_clamped(tx, ty, t);
+                    });
+                    self.mark_dirty();
+                } else {
+                    self.apply_sparse_paint_brush(cx, cy, drag_session_dedupe);
+                }
+            }
+        }
         self.rebuild_tile_display_full();
+    }
+
+    /// After [`Self::apply_paint_brush`], set status only for dense paint (sparse sets its own).
+    fn set_status_after_dense_paint(&mut self, tx: i32, ty: i32, drag: bool) {
+        if self.paint_layer == PaintLayer::Prop
+            && self.brush_sparse_pct > 0
+            && self.brush_sparse_pct < 100
+        {
+            return;
+        }
+        self.status = if drag {
+            format!("Paint drag ({tx},{ty}).")
+        } else {
+            format!("Paint at ({tx},{ty}) r{}.", self.brush_radius)
+        };
     }
 
     fn fill_rect_tiles(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
         if self.mode != Mode::PaintTiles {
             return;
         }
-        let t = self.current_tile;
-        for_each_in_rect(x0, y0, x1, y1, |tx, ty| {
-            self.set_tile_clamped(tx, ty, t);
-        });
-        self.status = format!("Filled tiles ({x0},{y0})—({x1},{y1}).");
-        self.mark_dirty();
+        match self.paint_layer {
+            PaintLayer::Ground => {
+                let t = self.current_tile;
+                for_each_in_rect(x0, y0, x1, y1, |tx, ty| {
+                    self.set_ground_clamped(tx, ty, t);
+                });
+                self.mark_dirty();
+                self.status = format!("Filled ground ({x0},{y0})—({x1},{y1}).");
+            }
+            PaintLayer::Prop => {
+                if self.brush_sparse_pct == 0 || self.brush_sparse_pct >= 100 {
+                    let t = self.current_tile;
+                    for_each_in_rect(x0, y0, x1, y1, |tx, ty| {
+                        self.set_prop_clamped(tx, ty, t);
+                    });
+                    self.mark_dirty();
+                    self.status = format!("Filled props ({x0},{y0})—({x1},{y1}).");
+                } else {
+                    let mut cells = Vec::new();
+                    for_each_in_rect(x0, y0, x1, y1, |tx, ty| {
+                        if tx >= 0
+                            && ty >= 0
+                            && (tx as u16) < self.level.width
+                            && (ty as u16) < self.level.height
+                        {
+                            cells.push((tx, ty));
+                        }
+                    });
+                    self.apply_sparse_paint_to_cells(
+                        &format!("Rect fill props ({x0},{y0})—({x1},{y1}). "),
+                        cells,
+                        false,
+                    );
+                }
+            }
+        }
         self.rebuild_tile_display_full();
     }
 
@@ -846,7 +1024,7 @@ impl Editor {
             kind,
             cell,
             shift,
-            ctrl: _,
+            ctrl,
             alt: _,
             ..
         } = ev
@@ -869,12 +1047,26 @@ impl Editor {
 
         if matches!(kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
             if cell_local_in_rect(*cell, map_rect).is_some() {
-                if matches!(kind, MouseEventKind::ScrollUp) {
-                    self.brush_radius = (self.brush_radius + 1).min(4);
+                if *ctrl && self.mode == Mode::PaintTiles && self.paint_layer == PaintLayer::Prop {
+                    let delta: i8 = if matches!(kind, MouseEventKind::ScrollUp) {
+                        1
+                    } else {
+                        -1
+                    };
+                    self.brush_sparse_pct = (self.brush_sparse_pct as i16 + delta as i16)
+                        .clamp(0, 100) as u8;
+                    self.status = if self.brush_sparse_pct == 0 {
+                        "Prop brush: dense. Ctrl+wheel: sparse % (else clears prop)".into()
+                    } else {
+                        format!("Prop sparse {}% (else clear)", self.brush_sparse_pct)
+                    };
+                } else if matches!(kind, MouseEventKind::ScrollUp) {
+                    self.brush_radius = (self.brush_radius + 1).min(MAX_BRUSH_SIZE);
+                    self.status = format!("Brush radius {}", self.brush_radius);
                 } else {
                     self.brush_radius = self.brush_radius.saturating_sub(1);
+                    self.status = format!("Brush radius {}", self.brush_radius);
                 }
-                self.status = format!("Brush radius {}", self.brush_radius);
             }
             return;
         }
@@ -882,6 +1074,12 @@ impl Editor {
         if let Some(hit) = self.sidebar_pick(*cell) {
             if let MouseEventKind::Down(MouseButton::Left) = kind {
                 match hit {
+                    SidebarHit::ClearPropOverlay => {
+                        self.current_tile = EMPTY_PROP_ID;
+                        self.mode = Mode::PaintTiles;
+                        self.paint_layer = PaintLayer::Prop;
+                        self.status = "Brush: clear prop overlay (erase).".into();
+                    }
                     SidebarHit::Terrain(i) => {
                         if let Some(d) = self.level.tile_defs.get(i) {
                             self.current_tile = d.id;
@@ -921,8 +1119,14 @@ impl Editor {
                     self.rect_drag_start = None;
                     match self.mode {
                         Mode::PaintTiles => {
-                            self.apply_paint_brush(tx, ty);
-                            self.status = format!("Paint at ({tx},{ty}) r{}.", self.brush_radius);
+                            if self.paint_layer == PaintLayer::Prop
+                                && self.brush_sparse_pct > 0
+                                && self.brush_sparse_pct < 100
+                            {
+                                self.sparse_paint_drag_seen.clear();
+                            }
+                            self.apply_paint_brush(tx, ty, true);
+                            self.set_status_after_dense_paint(tx, ty, false);
                         }
                         Mode::PlaceSpawns => self.place_spawn_at(tx, ty),
                         Mode::EraseSpawns => {
@@ -947,8 +1151,8 @@ impl Editor {
                 if self.last_paint_cell != Some((tx, ty)) {
                     match self.mode {
                         Mode::PaintTiles => {
-                            self.apply_paint_brush(tx, ty);
-                            self.status = format!("Paint drag ({tx},{ty}).");
+                            self.apply_paint_brush(tx, ty, true);
+                            self.set_status_after_dense_paint(tx, ty, true);
                         }
                         Mode::PlaceSpawns => self.place_spawn_at(tx, ty),
                         Mode::EraseSpawns => {
@@ -978,6 +1182,7 @@ impl Editor {
                     }
                 }
                 self.last_paint_cell = None;
+                self.sparse_paint_drag_seen.clear();
             }
             _ => {}
         }
@@ -1209,6 +1414,39 @@ impl Editor {
                 self.status = format!("Brush radius {}", self.brush_radius);
             }
             KeyChord {
+                key: Key::Char('0'),
+                ctrl: false,
+                ..
+            } if self.mode == Mode::PaintTiles => {
+                self.brush_sparse_pct = 0;
+                self.status =
+                    "Prop brush: dense fill. , . sparse ±1%   Ctrl+wheel on map (prop layer)".into();
+            }
+            KeyChord {
+                key: Key::Char(','),
+                ctrl: false,
+                ..
+            } if self.mode == Mode::PaintTiles => {
+                self.brush_sparse_pct = self.brush_sparse_pct.saturating_sub(1);
+                self.status = if self.brush_sparse_pct == 0 {
+                    "Prop brush: dense. , . sparse   Ctrl+wheel (prop layer)".into()
+                } else {
+                    format!("Prop sparse {}% (else clear)", self.brush_sparse_pct)
+                };
+            }
+            KeyChord {
+                key: Key::Char('.'),
+                ctrl: false,
+                ..
+            } if self.mode == Mode::PaintTiles => {
+                self.brush_sparse_pct = (self.brush_sparse_pct + 1).min(100);
+                self.status = if self.brush_sparse_pct >= 100 {
+                    "Prop brush: dense (100%).".into()
+                } else {
+                    format!("Prop sparse {}% (else clear)", self.brush_sparse_pct)
+                };
+            }
+            KeyChord {
                 key: Key::Esc,
                 ctrl: false,
                 ..
@@ -1233,6 +1471,22 @@ impl Editor {
                 self.cycle_mode();
             }
             KeyChord {
+                key: Key::Char('f'),
+                ctrl: false,
+                ..
+            } if self.mode == Mode::PaintTiles => {
+                self.paint_layer = PaintLayer::Ground;
+                self.status = "Paint layer: ground.".into();
+            }
+            KeyChord {
+                key: Key::Char('o'),
+                ctrl: false,
+                ..
+            } if self.mode == Mode::PaintTiles => {
+                self.paint_layer = PaintLayer::Prop;
+                self.status = "Paint layer: props (overlay).".into();
+            }
+            KeyChord {
                 key: Key::Char('p'),
                 ctrl: false,
                 ..
@@ -1246,11 +1500,10 @@ impl Editor {
                 ..
             } => match self.mode {
                 Mode::PaintTiles => {
-                    self.apply_paint_brush(self.cursor_x, self.cursor_y);
-                    self.status = format!(
-                        "Paint at ({},{}) r{}.",
-                        self.cursor_x, self.cursor_y, self.brush_radius
-                    );
+                    let cx = self.cursor_x;
+                    let cy = self.cursor_y;
+                    self.apply_paint_brush(cx, cy, false);
+                    self.set_status_after_dense_paint(cx, cy, false);
                 }
                 Mode::PlaceSpawns => {
                     let Some(bp) = self.current_spawn_blueprint() else {
@@ -1559,28 +1812,11 @@ impl Editor {
                 }
                 let wi = self.level.width as usize;
                 let idx = ty as usize * wi + tx as usize;
-                let tid = self.level.tiles[idx];
-                let def = self.level.tile_defs.iter().find(|d| d.id == tid);
-                let baked = self.tile_display.get(idx).copied();
-                let (ch, tile_fg, _base_bg) = match def {
-                    Some(d) if def_is_animated(d) => {
-                        let r = resolve_animated(
-                            d,
-                            tx,
-                            ty,
-                            self.surface_tick,
-                            self.map_visual_seed,
-                        );
-                        (r.ch, r.fg, d.terrain_bg())
-                    }
-                    _ => {
-                        let d = baked.unwrap_or(TileDisplayCell {
-                            ch: '?',
-                            fg: Color::rgb(200, 190, 170),
-                            bg: Color::rgb(28, 24, 32),
-                        });
-                        (d.ch, d.fg, d.bg)
-                    }
+                let (ch, tile_fg) = if let Some(ref map) = self.level_map {
+                    let c = map.composed_terrain_cell(tx, ty, self.surface_tick, self.map_visual_seed);
+                    (c.ch, c.fg)
+                } else {
+                    ('?', Color::rgb(200, 190, 170))
                 };
                 let fog_baked = self
                     .atmosphere_bake
@@ -1770,9 +2006,20 @@ impl Editor {
             &mut y,
             "WASD cursor  Arrows: pan (large map)  Tab/m: mode",
         );
-        Self::sidebar_plain(fb, inner, &mut y, "p: player start   Space/L: act  +/- wheel: r");
+        Self::sidebar_plain(
+            fb,
+            inner,
+            &mut y,
+            "p: player start   f/o: ground|prop paint   Space/L: act  wheel: r",
+        );
+        Self::sidebar_plain(
+            fb,
+            inner,
+            &mut y,
+            "Prop layer: Ctrl+wheel sparse% (p→brush, else clear)  , . 0 dense",
+        );
         Self::sidebar_plain(fb, inner, &mut y, "b: cycle terrain bg (paint)  F10: atmosphere presets");
-        Self::sidebar_plain(fb, inner, &mut y, "Shift+L drag: rect (tiles, spawns)");
+        Self::sidebar_plain(fb, inner, &mut y, "Shift+L drag: rect (terrain layers, spawns)");
         Self::sidebar_plain(
             fb,
             inner,
@@ -1790,11 +2037,29 @@ impl Editor {
             inner,
             &mut y,
             &row(&format!(
-                "Mode: {:?}  r{}  zones:{} pull:{}%",
+                "Mode: {:?}  r{}  zones:{} pull:{}%{}",
                 self.mode,
                 self.brush_radius,
                 self.level.atmosphere_zones.len(),
-                self.level.default_atmosphere.visible_background_pull
+                self.level.default_atmosphere.visible_background_pull,
+                if self.mode == Mode::PaintTiles {
+                    let layer = match self.paint_layer {
+                        PaintLayer::Ground => "gnd",
+                        PaintLayer::Prop => "prop",
+                    };
+                    let sp = if self.paint_layer == PaintLayer::Prop {
+                        if self.brush_sparse_pct == 0 || self.brush_sparse_pct >= 100 {
+                            " sp:dense".into()
+                        } else {
+                            format!(" sp:{}%", self.brush_sparse_pct)
+                        }
+                    } else {
+                        String::new()
+                    };
+                    format!(" {layer}{sp}")
+                } else {
+                    String::new()
+                }
             )),
         );
         Self::sidebar_plain(
@@ -1810,6 +2075,9 @@ impl Editor {
         Self::sidebar_plain(fb, inner, &mut y, "");
 
         Self::sidebar_plain(fb, inner, &mut y, "-- Terrain --");
+        if self.mode == Mode::PaintTiles && self.paint_layer == PaintLayer::Prop {
+            self.sidebar_clear_prop_row(fb, inner, &mut y);
+        }
         let n_terrains = self.level.tile_defs.len();
         for ti in 0..n_terrains {
             let def = self.level.tile_defs[ti].clone();
@@ -1817,7 +2085,14 @@ impl Editor {
             self.sidebar_tile_row(fb, inner, &mut y, ti, &def, sel);
         }
         if self.mode == Mode::PaintTiles {
-            if let Some(d) = self.current_tile_def() {
+            if self.paint_layer == PaintLayer::Prop && self.current_tile == EMPTY_PROP_ID {
+                Self::sidebar_plain(
+                    fb,
+                    inner,
+                    &mut y,
+                    &row("> Brush: clear prop (sidebar row or pick terrain)"),
+                );
+            } else if let Some(d) = self.current_tile_def() {
                 let brush = format!(
                     "> Brush id {} glyph '{}' {} {}",
                     d.id,
@@ -1826,6 +2101,14 @@ impl Editor {
                     row(&d.name)
                 );
                 Self::sidebar_plain(fb, inner, &mut y, &row(&brush));
+            }
+            if self.paint_layer == PaintLayer::Prop {
+                Self::sidebar_plain(
+                    fb,
+                    inner,
+                    &mut y,
+                    &row("> , . sparse ±1%   0 dense   Ctrl+wheel on map (props)"),
+                );
             }
         }
         if self.mode == Mode::AtmosphereZones {
@@ -1946,6 +2229,49 @@ impl Editor {
         let row_w = inner.w.min(right.saturating_sub(inner.x));
         self.sidebar_hits.push((
             SidebarHit::PlayerSpawn,
+            Rect::new(inner.x, row_y, row_w, 1),
+        ));
+        *y = y.saturating_add(1);
+    }
+
+    fn sidebar_clear_prop_row(&mut self, fb: &mut FrameBuffer, inner: Rect, y: &mut u16) {
+        if *y >= inner.bottom() {
+            return;
+        }
+        let row_y = *y;
+        let right = inner.right();
+        let bg = Color::rgb(18, 16, 22);
+        let meta_fg = Color::rgb(175, 170, 160);
+        let mark = Color::rgb(200, 160, 120);
+        let sel = self.current_tile == EMPTY_PROP_ID;
+        let mut x = inner.x;
+        let mut put = |ch: char, fg: Color| -> bool {
+            if x >= right {
+                return false;
+            }
+            fb.set(
+                x,
+                *y,
+                Cell {
+                    ch,
+                    fg,
+                    bg,
+                    style: Style::default(),
+                },
+            );
+            x = x.saturating_add(1);
+            true
+        };
+        let _ = put(if sel { '>' } else { ' ' }, meta_fg);
+        for ch in "(clear) ".chars() {
+            let _ = put(ch, mark);
+        }
+        for ch in "no prop overlay".chars() {
+            let _ = put(ch, meta_fg);
+        }
+        let row_w = inner.w.min(right.saturating_sub(inner.x));
+        self.sidebar_hits.push((
+            SidebarHit::ClearPropOverlay,
             Rect::new(inner.x, row_y, row_w, 1),
         ));
         *y = y.saturating_add(1);

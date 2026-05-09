@@ -5,7 +5,13 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::render::Color;
-use crate::world::{mix64, normalize_tile_def_ids, MapGrid, TileDef, TileId, TileTable};
+use crate::world::{
+    mix64, normalize_tile_def_ids, MapGrid, TileDef, TileId, TileTable, EMPTY_PROP_ID,
+};
+
+fn level_props_omittable(props: &[TileId]) -> bool {
+    props.is_empty() || props.iter().all(|&p| p == EMPTY_PROP_ID)
+}
 
 fn default_void_glyph_fg() -> Color {
     Color::rgb(40, 40, 43)
@@ -101,7 +107,11 @@ pub struct LevelFile {
     pub name: String,
     pub width: u16,
     pub height: u16,
+    /// Ground terrain indices into [`Self::tile_defs`] (RON field `tiles`).
     pub tiles: Vec<TileId>,
+    /// Prop overlay per cell; [`EMPTY_PROP_ID`] = none. Omitted from RON when empty or all-clear.
+    #[serde(default, skip_serializing_if = "level_props_omittable")]
+    pub props: Vec<TileId>,
     /// Relative path from the level file’s directory (e.g. `"../terrains/demo_terrain_pack.ron"`).
     /// When empty, [`Self::tile_defs`] must be populated (tests / legacy).
     #[serde(default)]
@@ -175,9 +185,15 @@ pub fn derive_visual_seed(level: &LevelFile) -> u64 {
 pub fn derive_visual_seed_from_map(map: &MapGrid) -> u64 {
     let mut h: u64 = 0xdeadbeefcafe0000;
     h ^= (map.width as u64) << 16 | map.height as u64;
-    for &t in &map.tiles {
+    for &t in &map.ground {
         h = h.wrapping_add(t as u64);
         h = mix64(h);
+    }
+    for &t in &map.props {
+        if t != EMPTY_PROP_ID {
+            h = h.wrapping_add(t as u64).rotate_left(3);
+            h = mix64(h);
+        }
     }
     for d in &map.table.defs {
         h ^= (d.id as u64).rotate_left(11);
@@ -200,13 +216,19 @@ impl LevelFile {
         if self.tile_defs.is_empty() {
             return Err("to_map: tile_defs is empty (load terrain pack first)".into());
         }
+        let props = if self.props.len() == expected {
+            self.props.clone()
+        } else {
+            vec![EMPTY_PROP_ID; expected]
+        };
         let mut defs = self.tile_defs.clone();
         normalize_tile_def_ids(&mut defs);
         let table = TileTable { defs };
         Ok(MapGrid {
             width: self.width,
             height: self.height,
-            tiles: self.tiles.clone(),
+            ground: self.tiles.clone(),
+            props,
             table,
             display: vec![crate::world::TileDisplayCell::default(); expected],
             default_atmosphere: self.default_atmosphere,
@@ -217,12 +239,17 @@ impl LevelFile {
     pub fn from_map(map: &MapGrid, name: impl Into<String>, spawns: Vec<EntitySpawn>) -> Self {
         let mut tile_defs = map.table.defs.clone();
         normalize_tile_def_ids(&mut tile_defs);
+        let mut props = map.props.clone();
+        if level_props_omittable(&props) {
+            props.clear();
+        }
         Self {
             schema_version: Self::SCHEMA,
             name: name.into(),
             width: map.width,
             height: map.height,
-            tiles: map.tiles.clone(),
+            tiles: map.ground.clone(),
+            props,
             terrain_pack: String::new(),
             tile_defs,
             spawns,
@@ -356,5 +383,18 @@ mod tests {
         let s = level_to_ron(&level).unwrap();
         let back = level_from_ron(&s).unwrap();
         assert_eq!(back, level);
+    }
+
+    #[test]
+    fn round_trip_level_ron_prop_layer() {
+        let table = TileTable::default_pack().expect("default terrain pack must load");
+        let mut map = MapGrid::filled(3, 3, 0, table);
+        map.set_prop(1, 1, 1);
+        let level = LevelFile::from_map(&map, "props", vec![]);
+        let s = level_to_ron(&level).unwrap();
+        let back = level_from_ron(&s).unwrap();
+        let m2 = back.to_map().expect("to_map");
+        assert_eq!(m2.ground, map.ground);
+        assert_eq!(m2.props, map.props);
     }
 }

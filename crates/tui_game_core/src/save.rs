@@ -41,6 +41,7 @@ pub fn save_to_ron(s: &SaveGameV1) -> Result<String, ron::Error> {
 pub fn save_from_ron(s: &str) -> Result<SaveGameV1, ron::de::SpannedError> {
     let mut sg: SaveGameV1 = ron::from_str(s)?;
     normalize_tile_def_ids(&mut sg.world.map.table.defs);
+    sg.world.map.normalize_layer_sizes();
     Ok(sg)
 }
 

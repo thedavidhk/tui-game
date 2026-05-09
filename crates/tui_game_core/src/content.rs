@@ -333,11 +333,29 @@ impl ContentPack {
     /// Check that a level only references known tiles and entity [`EntityBlueprint::kind`] values.
     pub fn validate_level(&self, level: &LevelFile) -> Result<(), String> {
         let n_defs = level.tile_defs.len();
+        let expected = (level.width as usize) * (level.height as usize);
         for (i, tid) in level.tiles.iter().enumerate() {
             let ti = *tid as usize;
             if ti >= n_defs {
                 return Err(format!(
                     "tiles[{i}] references unknown tile id {tid} (only {n_defs} tile_defs)"
+                ));
+            }
+        }
+        if !level.props.is_empty() && level.props.len() != expected {
+            return Err(format!(
+                "props len {} != width*height {expected}",
+                level.props.len()
+            ));
+        }
+        for (i, tid) in level.props.iter().enumerate() {
+            if *tid == crate::world::EMPTY_PROP_ID {
+                continue;
+            }
+            let ti = *tid as usize;
+            if ti >= n_defs {
+                return Err(format!(
+                    "props[{i}] references unknown tile id {tid} (only {n_defs} tile_defs)"
                 ));
             }
         }
@@ -361,19 +379,30 @@ impl ContentPack {
                 ));
             }
             let idx = p.y as usize * level.width as usize + p.x as usize;
-            let tid = level
+            let g_tid = level
                 .tiles
                 .get(idx)
                 .copied()
                 .ok_or_else(|| format!("player_spawn tile index {idx} out of range"))?;
-            let blocks = level
+            let p_tid = level
+                .props
+                .get(idx)
+                .copied()
+                .unwrap_or(crate::world::EMPTY_PROP_ID);
+            let g_blocks = level
                 .tile_defs
                 .iter()
-                .find(|d| d.id == tid)
+                .find(|d| d.id == g_tid)
                 .is_some_and(|d| d.blocks_movement);
-            if blocks {
+            let p_blocks = p_tid != crate::world::EMPTY_PROP_ID
+                && level
+                    .tile_defs
+                    .iter()
+                    .find(|d| d.id == p_tid)
+                    .is_some_and(|d| d.blocks_movement);
+            if g_blocks || p_blocks {
                 return Err(format!(
-                    "player_spawn ({},{}) is on a blocking tile (tile id {tid})",
+                    "player_spawn ({},{}) is on a blocking tile (ground {g_tid} prop {p_tid})",
                     p.x, p.y
                 ));
             }

@@ -7,7 +7,7 @@ use crate::game::Game;
 use crate::game::GameMode;
 use crate::input::MouseCell;
 use crate::rect::Rect;
-use crate::world::MapGrid;
+use crate::world::{MapGrid, EMPTY_PROP_ID};
 
 /// Max Manhattan distance from the player for starting dialogue (after walking into range).
 pub const TALK_RANGE_MANHATTAN: i32 = 4;
@@ -32,10 +32,20 @@ fn blueprint_for<'a>(
 }
 
 fn tile_label(map: &MapGrid, pos: GridPos) -> String {
-    map.tile_at(pos.x, pos.y)
+    let g = map
+        .ground_at(pos.x, pos.y)
         .and_then(|id| map.table.def(id))
-        .map(|d| d.name.clone())
-        .unwrap_or_else(|| "unknown".into())
+        .map(|d| d.name.as_str())
+        .unwrap_or("?");
+    let p = map
+        .prop_at(pos.x, pos.y)
+        .filter(|&id| id != EMPTY_PROP_ID)
+        .and_then(|id| map.table.def(id))
+        .map(|d| d.name.as_str());
+    match p {
+        Some(pn) => format!("{g} / {pn}"),
+        None => g.into(),
+    }
 }
 
 /// Lines appended under the status HUD while exploring (short lines for narrow HUD).

@@ -22,10 +22,11 @@ pub use path::{
     PathError, PathPlan,
 };
 pub use tile_surface::{
-    bake_tile_display, def_is_animated, hash_cell, mix64, resolve_animated, TileBakeView,
-    TileDisplayCell,
+    bake_layered_tile_display, bake_tile_display, def_is_animated, hash_cell, mix64,
+    resolve_animated, TileBakeView, TileDisplayCell,
 };
 pub use tiles::{
     normalize_tile_def_ids, AnimatedFrame, AnimMode, ConnectorLineStyle, ConnectorSurface, TileDef,
     TileId, TileSurface, WeightedGlyph, CONNECTOR_GLYPHS_DOUBLE, CONNECTOR_GLYPHS_SINGLE,
+    EMPTY_PROP_ID,
 };

@@ -7,50 +7,48 @@
             blocks_sight: false,
             name: "floor",
             fg: (
-                r: 190,
-                g: 188,
-                b: 175,
+                r: 178,
+                g: 176,
+                b: 164,
             ),
             bg: Some((
                 r: 28,
-                g: 26,
+                g: 27,
                 b: 34,
             )),
             connect_mask: 0,
             surface: None,
         ),
+
         (
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
             name: "wall",
             fg: (
-                r: 140,
-                g: 135,
-                b: 125,
+                r: 154,
+                g: 150,
+                b: 140,
             ),
-            bg: Some((
-                r: 42,
-                g: 38,
-                b: 34,
-            )),
+            bg: None,
             connect_mask: 0,
             surface: None,
         ),
+
         (
             glyph: ',',
             blocks_movement: false,
             blocks_sight: false,
             name: "grass",
             fg: (
-                r: 90,
-                g: 140,
-                b: 70,
+                r: 111,
+                g: 168,
+                b: 91,
             ),
             bg: Some((
-                r: 44,
-                g: 38,
-                b: 5,
+                r: 29,
+                g: 52,
+                b: 32,
             )),
             connect_mask: 0,
             surface: Some((
@@ -60,55 +58,56 @@
                         weight: 4,
                         ch: ',',
                         fg: (
-                            r: 80,
-                            g: 120,
-                            b: 60,
+                            r: 101,
+                            g: 150,
+                            b: 82,
                         ),
                     ),
                     (
                         weight: 3,
                         ch: '.',
                         fg: (
-                            r: 80,
-                            g: 135,
-                            b: 70,
+                            r: 92,
+                            g: 138,
+                            b: 77,
                         ),
                     ),
                     (
                         weight: 1,
                         ch: ';',
                         fg: (
-                            r: 95,
-                            g: 110,
-                            b: 55,
+                            r: 132,
+                            g: 162,
+                            b: 86,
                         ),
                     ),
                     (
                         weight: 2,
                         ch: '`',
                         fg: (
-                            r: 90,
-                            g: 150,
-                            b: 90,
+                            r: 124,
+                            g: 184,
+                            b: 112,
                         ),
                     ),
                 ],
             )),
         ),
+
         (
             glyph: '~',
             blocks_movement: false,
             blocks_sight: false,
             name: "water",
             fg: (
-                r: 50,
-                g: 100,
-                b: 200,
+                r: 92,
+                g: 181,
+                b: 204,
             ),
             bg: Some((
-                r: 10,
-                g: 28,
-                b: 52,
+                r: 17,
+                g: 56,
+                b: 72,
             )),
             connect_mask: 0,
             surface: Some((
@@ -117,33 +116,33 @@
                     (
                         ch: '~',
                         fg: (
-                            r: 45,
-                            g: 95,
+                            r: 82,
+                            g: 166,
                             b: 190,
                         ),
                     ),
                     (
                         ch: '≈',
                         fg: (
-                            r: 60,
-                            g: 115,
-                            b: 210,
+                            r: 104,
+                            g: 194,
+                            b: 216,
                         ),
                     ),
                     (
                         ch: '~',
                         fg: (
-                            r: 55,
-                            g: 105,
-                            b: 200,
+                            r: 92,
+                            g: 181,
+                            b: 204,
                         ),
                     ),
                     (
                         ch: '-',
                         fg: (
-                            r: 40,
-                            g: 90,
-                            b: 185,
+                            r: 72,
+                            g: 150,
+                            b: 178,
                         ),
                     ),
                 ],
@@ -153,46 +152,570 @@
                 p_step_den: 60,
             )),
         ),
+
         (
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
             name: "stone_wall",
             fg: (
-                r: 130,
-                g: 128,
-                b: 120,
+                r: 162,
+                g: 162,
+                b: 154,
             ),
-            bg: Some((
-                r: 36,
-                g: 34,
-                b: 40,
-            )),
+            bg: None,
             connect_mask: 1,
             surface: Some((
                 kind: "connector",
                 style: "single_line",
             )),
         ),
+
         (
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
             name: "thick_stone_wall",
             fg: (
-                r: 130,
-                g: 128,
-                b: 120,
+                r: 176,
+                g: 174,
+                b: 164,
             ),
-            bg: Some((
-                r: 36,
-                g: 34,
-                b: 40,
-            )),
+            bg: None,
             connect_mask: 1,
             surface: Some((
                 kind: "connector",
                 style: "double_line",
+            )),
+        ),
+
+        (
+            glyph: '#',
+            blocks_movement: true,
+            blocks_sight: true,
+            name: "plank_wall",
+            fg: (
+                r: 176,
+                g: 119,
+                b: 67,
+            ),
+            bg: None,
+            connect_mask: 1,
+            surface: Some((
+                kind: "connector",
+                style: "single_line",
+            )),
+        ),
+
+        (
+            glyph: '#',
+            blocks_movement: true,
+            blocks_sight: true,
+            name: "log_wall",
+            fg: (
+                r: 148,
+                g: 91,
+                b: 48,
+            ),
+            bg: None,
+            connect_mask: 1,
+            surface: Some((
+                kind: "connector",
+                style: "double_line",
+            )),
+        ),
+
+        (
+            glyph: '♣',
+            blocks_movement: true,
+            blocks_sight: true,
+            name: "tree",
+            fg: (
+                r: 116,
+                g: 184,
+                b: 98,
+            ),
+            bg: None,
+            connect_mask: 0,
+            surface: None,
+        ),
+
+        // --- New optional ground terrains ---
+
+        (
+            glyph: '.',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "dirt",
+            fg: (
+                r: 139,
+                g: 104,
+                b: 72,
+            ),
+            bg: Some((
+                r: 53,
+                g: 39,
+                b: 26,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "static_variants",
+                entries: [
+                    (
+                        weight: 5,
+                        ch: '.',
+                        fg: (
+                            r: 128,
+                            g: 96,
+                            b: 67,
+                        ),
+                    ),
+                    (
+                        weight: 3,
+                        ch: ',',
+                        fg: (
+                            r: 112,
+                            g: 83,
+                            b: 58,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: ';',
+                        fg: (
+                            r: 153,
+                            g: 116,
+                            b: 80,
+                        ),
+                    ),
+                ],
+            )),
+        ),
+
+        (
+            glyph: '.',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "path",
+            fg: (
+                r: 166,
+                g: 124,
+                b: 82,
+            ),
+            bg: Some((
+                r: 70,
+                g: 49,
+                b: 31,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "static_variants",
+                entries: [
+                    (
+                        weight: 5,
+                        ch: '.',
+                        fg: (
+                            r: 156,
+                            g: 116,
+                            b: 76,
+                        ),
+                    ),
+                    (
+                        weight: 2,
+                        ch: ',',
+                        fg: (
+                            r: 133,
+                            g: 98,
+                            b: 66,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: '`',
+                        fg: (
+                            r: 181,
+                            g: 137,
+                            b: 91,
+                        ),
+                    ),
+                ],
+            )),
+        ),
+
+        (
+            glyph: ',',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "dark_grass",
+            fg: (
+                r: 82,
+                g: 126,
+                b: 75,
+            ),
+            bg: Some((
+                r: 22,
+                g: 36,
+                b: 25,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "static_variants",
+                entries: [
+                    (
+                        weight: 4,
+                        ch: ',',
+                        fg: (
+                            r: 75,
+                            g: 113,
+                            b: 68,
+                        ),
+                    ),
+                    (
+                        weight: 3,
+                        ch: '.',
+                        fg: (
+                            r: 65,
+                            g: 100,
+                            b: 62,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: ';',
+                        fg: (
+                            r: 97,
+                            g: 129,
+                            b: 73,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: '`',
+                        fg: (
+                            r: 89,
+                            g: 142,
+                            b: 88,
+                        ),
+                    ),
+                ],
+            )),
+        ),
+
+        (
+            glyph: ',',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "moss",
+            fg: (
+                r: 126,
+                g: 169,
+                b: 91,
+            ),
+            bg: Some((
+                r: 31,
+                g: 52,
+                b: 29,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "static_variants",
+                entries: [
+                    (
+                        weight: 4,
+                        ch: ',',
+                        fg: (
+                            r: 119,
+                            g: 158,
+                            b: 84,
+                        ),
+                    ),
+                    (
+                        weight: 3,
+                        ch: '.',
+                        fg: (
+                            r: 103,
+                            g: 143,
+                            b: 78,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: ';',
+                        fg: (
+                            r: 146,
+                            g: 180,
+                            b: 101,
+                        ),
+                    ),
+                ],
+            )),
+        ),
+
+        (
+            glyph: '.',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "sand",
+            fg: (
+                r: 202,
+                g: 171,
+                b: 107,
+            ),
+            bg: Some((
+                r: 88,
+                g: 72,
+                b: 44,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "static_variants",
+                entries: [
+                    (
+                        weight: 5,
+                        ch: '.',
+                        fg: (
+                            r: 190,
+                            g: 160,
+                            b: 100,
+                        ),
+                    ),
+                    (
+                        weight: 2,
+                        ch: ',',
+                        fg: (
+                            r: 171,
+                            g: 143,
+                            b: 91,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: '`',
+                        fg: (
+                            r: 218,
+                            g: 188,
+                            b: 121,
+                        ),
+                    ),
+                ],
+            )),
+        ),
+
+        (
+            glyph: '.',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "gravel",
+            fg: (
+                r: 150,
+                g: 146,
+                b: 136,
+            ),
+            bg: Some((
+                r: 54,
+                g: 53,
+                b: 50,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "static_variants",
+                entries: [
+                    (
+                        weight: 4,
+                        ch: '.',
+                        fg: (
+                            r: 135,
+                            g: 132,
+                            b: 124,
+                        ),
+                    ),
+                    (
+                        weight: 2,
+                        ch: ',',
+                        fg: (
+                            r: 118,
+                            g: 116,
+                            b: 110,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: ';',
+                        fg: (
+                            r: 166,
+                            g: 162,
+                            b: 151,
+                        ),
+                    ),
+                ],
+            )),
+        ),
+
+        (
+            glyph: '.',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "mud",
+            fg: (
+                r: 111,
+                g: 91,
+                b: 68,
+            ),
+            bg: Some((
+                r: 42,
+                g: 34,
+                b: 25,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "static_variants",
+                entries: [
+                    (
+                        weight: 4,
+                        ch: '.',
+                        fg: (
+                            r: 101,
+                            g: 82,
+                            b: 61,
+                        ),
+                    ),
+                    (
+                        weight: 2,
+                        ch: ',',
+                        fg: (
+                            r: 87,
+                            g: 72,
+                            b: 54,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: '~',
+                        fg: (
+                            r: 126,
+                            g: 103,
+                            b: 75,
+                        ),
+                    ),
+                ],
+            )),
+        ),
+
+        (
+            glyph: '~',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "deep_water",
+            fg: (
+                r: 54,
+                g: 129,
+                b: 156,
+            ),
+            bg: Some((
+                r: 11,
+                g: 38,
+                b: 54,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "animated",
+                frames: [
+                    (
+                        ch: '~',
+                        fg: (
+                            r: 48,
+                            g: 117,
+                            b: 145,
+                        ),
+                    ),
+                    (
+                        ch: '≈',
+                        fg: (
+                            r: 61,
+                            g: 141,
+                            b: 166,
+                        ),
+                    ),
+                    (
+                        ch: '~',
+                        fg: (
+                            r: 54,
+                            g: 129,
+                            b: 156,
+                        ),
+                    ),
+                    (
+                        ch: '-',
+                        fg: (
+                            r: 42,
+                            g: 105,
+                            b: 133,
+                        ),
+                    ),
+                ],
+                mode: "cycle",
+                ticks_per_frame: 8,
+                p_step_num: 0,
+                p_step_den: 60,
+            )),
+        ),
+
+        (
+            glyph: '~',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "shallow_water",
+            fg: (
+                r: 113,
+                g: 199,
+                b: 211,
+            ),
+            bg: Some((
+                r: 24,
+                g: 72,
+                b: 82,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "animated",
+                frames: [
+                    (
+                        ch: '~',
+                        fg: (
+                            r: 101,
+                            g: 184,
+                            b: 198,
+                        ),
+                    ),
+                    (
+                        ch: '≈',
+                        fg: (
+                            r: 127,
+                            g: 213,
+                            b: 222,
+                        ),
+                    ),
+                    (
+                        ch: '~',
+                        fg: (
+                            r: 113,
+                            g: 199,
+                            b: 211,
+                        ),
+                    ),
+                    (
+                        ch: '-',
+                        fg: (
+                            r: 91,
+                            g: 169,
+                            b: 186,
+                        ),
+                    ),
+                ],
+                mode: "cycle",
+                ticks_per_frame: 6,
+                p_step_num: 0,
+                p_step_den: 60,
             )),
         ),
     ],

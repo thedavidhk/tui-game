@@ -42,9 +42,9 @@ use crate::ui::viewport_scroll::{
     EDGE_SCROLL_COOLDOWN_TICKS,
 };
 use crate::world::{
-    compose_fog_from_luminance, compute_visible, def_is_animated, effective_fow_radius_cells,
-    first_step_on_line, merge_explored, mix64, plan_path, plan_path_player_fow, rebuild_atmosphere_bake,
-    resolve_animated, smooth_fog_luminance, FogBakedTrio, MapGrid, TileDisplayCell,
+    compose_fog_from_luminance, compute_visible, effective_fow_radius_cells, first_step_on_line,
+    merge_explored, mix64, plan_path, plan_path_player_fow, rebuild_atmosphere_bake,
+    smooth_fog_luminance, FogBakedTrio, MapGrid,
 };
 
 const FOW_RADIUS: i32 = 20;
@@ -2063,29 +2063,13 @@ impl Game {
                 }
                 let idx = wy as usize * self.map.width as usize + wx as usize;
                 let seen = self.explored.get(idx).copied().unwrap_or(false);
-                let tid = self.map.tile_at(wx, wy).unwrap_or(0);
-                let def = self.map.table.def(tid);
-                let baked_cell = self.map.display.get(idx).copied();
-                let (terrain_ch, _base_fg, _base_bg) = match def {
-                    Some(d) if def_is_animated(d) => {
-                        let r = resolve_animated(
-                            d,
-                            wx,
-                            wy,
-                            self.surface_tick,
-                            self.map_visual_seed,
-                        );
-                        (r.ch, r.fg, d.terrain_bg())
-                    }
-                    _ => {
-                        let d = baked_cell.unwrap_or(TileDisplayCell {
-                            ch: '?',
-                            fg: Color::rgb(220, 220, 200),
-                            bg: Color::rgb(35, 30, 40),
-                        });
-                        (d.ch, d.fg, d.bg)
-                    }
-                };
+                let composed = self.map.composed_terrain_cell(
+                    wx,
+                    wy,
+                    self.surface_tick,
+                    self.map_visual_seed,
+                );
+                let terrain_ch = composed.ch;
                 let l = smooth_fog_luminance(
                     self.map.width,
                     self.map.height,
@@ -2099,7 +2083,8 @@ impl Game {
                     .get(idx)
                     .copied()
                     .unwrap_or_default();
-                let (out_fg, out_bg) = compose_fog_from_luminance(fog_baked, l);
+                let (out_fg, out_bg) =
+                    compose_fog_from_luminance(fog_baked, l);
                 cell.ch = if seen {
                     terrain_ch
                 } else {
@@ -2146,15 +2131,6 @@ impl Game {
                 }
             } else {
                 None
-            };
-            let tid_t = self.map.tile_at(wx, wy).unwrap_or(0);
-            let tdef = self.map.table.def(tid_t);
-            let baked_t = self.map.display.get(idx).copied();
-            let _base_bg_ent = match tdef {
-                Some(d) if def_is_animated(d) => d.terrain_bg(),
-                _ => baked_t
-                    .map(|c| c.bg)
-                    .unwrap_or_else(|| Color::terrain_bg_from_fg(Color::rgb(180, 175, 165))),
             };
             let ent_fg = relation_fg.unwrap_or(base_fg);
             let fog_baked = self
