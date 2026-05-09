@@ -69,7 +69,22 @@ mod anim_mode_ron {
 }
 
 /// Stable tile type id; properties resolved via `TileDef` table.
+///
+/// For levels and terrain packs, numeric tile ids in `tiles` / maps match **`tile_defs` index**
+/// (first def is `0`, etc.). RON omits per-def `id`; see [`normalize_tile_def_ids`].
 pub type TileId = u16;
+
+/// Assign `defs[i].id = i as u16` for every entry. Call after deserializing `tile_defs` / `TileTable.defs`
+/// so runtime ids match placement data (`tiles` stores indices into this slice).
+///
+/// **Caveat:** reordering `tile_defs` changes every numeric id — keep the same order as when the
+/// level grid was authored (or renumber `tiles` accordingly).
+#[inline]
+pub fn normalize_tile_def_ids(defs: &mut [TileDef]) {
+    for (i, d) in defs.iter_mut().enumerate() {
+        d.id = TileId::try_from(i).expect("tile_defs length must fit u16");
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WeightedGlyph {
@@ -101,16 +116,135 @@ fn default_drift_denom() -> u32 {
     60
 }
 
+mod connector_line_style_ron {
+    use super::ConnectorLineStyle;
+    use serde::{de, Deserializer, Serializer};
+    use std::fmt;
+
+    pub fn serialize<S>(value: &ConnectorLineStyle, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let s = match value {
+            ConnectorLineStyle::SingleLine => "single_line",
+            ConnectorLineStyle::DoubleLine => "double_line",
+        };
+        serializer.serialize_str(s)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<ConnectorLineStyle, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> de::Visitor<'de> for Visitor {
+            type Value = ConnectorLineStyle;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(
+                    "\"single_line\" or \"double_line\" (in RON quote `double_line` — bare `double_line` parses as subtraction)",
+                )
+            }
+
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                parse(v)
+            }
+
+            fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+                parse(&v)
+            }
+
+            fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+                parse(std::str::from_utf8(v).map_err(de::Error::custom)?)
+            }
+        }
+
+        fn parse<E: de::Error>(s: &str) -> Result<ConnectorLineStyle, E> {
+            let t = s.trim();
+            if t.eq_ignore_ascii_case("single_line") || t == "SingleLine" {
+                Ok(ConnectorLineStyle::SingleLine)
+            } else if t.eq_ignore_ascii_case("double_line") || t == "DoubleLine" {
+                Ok(ConnectorLineStyle::DoubleLine)
+            } else {
+                Err(de::Error::unknown_variant(
+                    t,
+                    &["single_line", "double_line"],
+                ))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// Built-in 16-glyph connector autotile tables (mask order: N, E, S, W — see [`crate::world::tile_surface::neighbor_link_mask`]).
+///
+/// **RON:** write `style: "double_line"` (quoted). Bare `double_line` is parsed as `double` `-` `line`, so the field is dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectorLineStyle {
+    /// Light box-drawing (`─│┌…┼`); shared by any terrain with the same line weight.
+    SingleLine,
+    /// Double box-drawing (`═║╔…╬`); same topology as single.
+    DoubleLine,
+}
+
+impl serde::Serialize for ConnectorLineStyle {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        connector_line_style_ron::serialize(self, serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ConnectorLineStyle {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        connector_line_style_ron::deserialize(deserializer)
+    }
+}
+
+/// Payload for [`TileSurface::Connector`]: reuse a preset line weight, or override with 16 custom glyphs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ConnectorSurface {
+    /// When `glyphs` is missing or shorter than 16, selects the shared glyph table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<ConnectorLineStyle>,
+    /// Legacy / custom: full 16-entry table (same mask order as presets). When present with len ≥ 16, overrides `style`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyphs: Option<Vec<char>>,
+}
+
+/// Preset glyphs for [`ConnectorLineStyle::SingleLine`] (light box drawing).
+pub const CONNECTOR_GLYPHS_SINGLE: [char; 16] = [
+    '·', '╵', '╶', '└', '╷', '│', '┌', '├', '╴', '┘', '─', '┴', '┐', '┤', '┬', '┼',
+];
+
+/// Preset glyphs for [`ConnectorLineStyle::DoubleLine`] (double rules; stubs use light terminals).
+pub const CONNECTOR_GLYPHS_DOUBLE: [char; 16] = [
+    '#', '╨', '╞', '╚', '╥', '║', '╔', '╠', '╡', '╝', '═', '╩', '╗', '╣', '╦', '╬',
+];
+
+impl ConnectorSurface {
+    /// Resolved 16-glyph row for baking: custom table if long enough, else the preset for `style` (default single).
+    #[must_use]
+    pub fn glyph_table(&self) -> &[char] {
+        if let Some(ref g) = self.glyphs {
+            if g.len() >= 16 {
+                return g.as_slice();
+            }
+        }
+        match self.style.unwrap_or(ConnectorLineStyle::SingleLine) {
+            ConnectorLineStyle::SingleLine => &CONNECTOR_GLYPHS_SINGLE,
+            ConnectorLineStyle::DoubleLine => &CONNECTOR_GLYPHS_DOUBLE,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TileSurface {
     StaticVariants {
         entries: Vec<WeightedGlyph>,
     },
-    Connector {
-        /// Index = 4-bit mask: bit0 = north, bit1 = east, bit2 = south, bit3 = west.
-        glyphs: Vec<char>,
-    },
+    Connector(ConnectorSurface),
     Animated {
         frames: Vec<AnimatedFrame>,
         #[serde(default, with = "anim_mode_ron")]
@@ -126,6 +260,8 @@ pub enum TileSurface {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TileDef {
+    /// Implicit index in `tile_defs` / `TileTable.defs`; not written to RON (see [`normalize_tile_def_ids`]).
+    #[serde(default, skip_serializing)]
     pub id: TileId,
     pub glyph: char,
     pub blocks_movement: bool,
@@ -138,7 +274,7 @@ pub struct TileDef {
     /// Tile background when drawn; `None` uses [`Color::terrain_bg_from_fg`] on `fg`.
     #[serde(default)]
     pub bg: Option<Color>,
-    /// Non-zero masks participate in [`TileSurface::Connector`] neighbor tests: a link exists
+    /// Non-zero masks participate in connector neighbor tests: a link exists
     /// when `(self.connect_mask & neighbor.connect_mask) != 0`.
     #[serde(default)]
     pub connect_mask: u8,

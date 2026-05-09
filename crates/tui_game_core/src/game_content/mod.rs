@@ -104,7 +104,7 @@ pub fn content_pack() -> ContentPack {
 #[cfg(test)]
 mod tests {
     use crate::level::{EntitySpawn, LevelFile};
-    use crate::world::{MapGrid, TileTable};
+    use crate::world::{ConnectorLineStyle, MapGrid, TileSurface, TileTable};
 
     use super::content_pack;
 
@@ -119,6 +119,26 @@ mod tests {
         let p = content_pack();
         let level = super::embedded_demo_level();
         p.validate_level(&level).unwrap();
+    }
+
+    #[test]
+    fn embedded_thick_stone_wall_uses_double_line_connector() {
+        let level = super::embedded_demo_level();
+        let thick = level
+            .tile_defs
+            .iter()
+            .find(|d| d.name == "thick_stone_wall")
+            .expect("thick_stone_wall in embedded pack");
+        let Some(TileSurface::Connector(c)) = &thick.surface else {
+            panic!("expected connector surface: {:?}", thick.surface);
+        };
+        assert_eq!(
+            c.style,
+            Some(ConnectorLineStyle::DoubleLine),
+            "thick wall should deserialize double_line from terrain pack (got {:?})",
+            c.style
+        );
+        assert_eq!(c.glyph_table()[15], '╬');
     }
 
     #[test]

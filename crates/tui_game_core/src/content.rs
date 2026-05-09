@@ -332,15 +332,13 @@ impl ContentPack {
 
     /// Check that a level only references known tiles and entity [`EntityBlueprint::kind`] values.
     pub fn validate_level(&self, level: &LevelFile) -> Result<(), String> {
-        let mut def_ids = HashSet::new();
-        for d in &level.tile_defs {
-            if !def_ids.insert(d.id) {
-                return Err(format!("duplicate tile_def id {}", d.id));
-            }
-        }
+        let n_defs = level.tile_defs.len();
         for (i, tid) in level.tiles.iter().enumerate() {
-            if !def_ids.contains(tid) {
-                return Err(format!("tiles[{i}] references unknown tile id {tid}"));
+            let ti = *tid as usize;
+            if ti >= n_defs {
+                return Err(format!(
+                    "tiles[{i}] references unknown tile id {tid} (only {n_defs} tile_defs)"
+                ));
             }
         }
         for (i, s) in level.spawns.iter().enumerate() {

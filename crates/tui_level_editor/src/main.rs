@@ -45,8 +45,8 @@ use tui_game_core::ui::{
     TextField, TextFieldOutput, TextFilter, PRESET_COLORS,
 };
 use tui_game_core::world::{
-    compose_map_tile_discrete, def_is_animated, rebuild_atmosphere_bake, resolve_animated,
-    FogBakedTrio, TileDef, TileDisplayCell, TileId,
+    compose_map_tile_discrete, def_is_animated, normalize_tile_def_ids, rebuild_atmosphere_bake,
+    resolve_animated, FogBakedTrio, TileDef, TileDisplayCell, TileId,
 };
 use tui_game_core::EntityBlueprint;
 
@@ -403,6 +403,7 @@ impl Editor {
     }
 
     fn save(&mut self) -> Result<(), String> {
+        normalize_tile_def_ids(&mut self.level.tile_defs);
         self.content
             .validate_level(&self.level)
             .map_err(|e| e.to_string())?;
@@ -593,13 +594,7 @@ impl Editor {
     }
 
     fn next_tile_id(&self) -> TileId {
-        self.level
-            .tile_defs
-            .iter()
-            .map(|d| d.id)
-            .max()
-            .unwrap_or(0)
-            .saturating_add(1)
+        u16::try_from(self.level.tile_defs.len()).expect("tile_defs length fits TileId")
     }
 
     fn step(&mut self, input: &InputBatch) {

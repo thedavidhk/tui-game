@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::render::Color;
-use crate::world::{mix64, MapGrid, TileDef, TileId, TileTable};
+use crate::world::{mix64, normalize_tile_def_ids, MapGrid, TileDef, TileId, TileTable};
 
 fn default_void_glyph_fg() -> Color {
     Color::rgb(40, 40, 43)
@@ -130,6 +130,7 @@ pub fn materialize_tile_defs_from_pack(
         if level.tile_defs.is_empty() {
             return Err("level has empty terrain_pack and no inline tile_defs".into());
         }
+        normalize_tile_def_ids(&mut level.tile_defs);
         return Ok(());
     }
     let base = level_file_parent.unwrap_or_else(|| Path::new("."));
@@ -150,6 +151,7 @@ pub fn materialize_tile_defs_from_pack(
         return Err(format!("terrain pack {} has no tile_defs", full.display()));
     }
     level.tile_defs = pack.tile_defs;
+    normalize_tile_def_ids(&mut level.tile_defs);
     Ok(())
 }
 
@@ -198,9 +200,9 @@ impl LevelFile {
         if self.tile_defs.is_empty() {
             return Err("to_map: tile_defs is empty (load terrain pack first)".into());
         }
-        let table = TileTable {
-            defs: self.tile_defs.clone(),
-        };
+        let mut defs = self.tile_defs.clone();
+        normalize_tile_def_ids(&mut defs);
+        let table = TileTable { defs };
         Ok(MapGrid {
             width: self.width,
             height: self.height,
@@ -213,6 +215,8 @@ impl LevelFile {
     }
 
     pub fn from_map(map: &MapGrid, name: impl Into<String>, spawns: Vec<EntitySpawn>) -> Self {
+        let mut tile_defs = map.table.defs.clone();
+        normalize_tile_def_ids(&mut tile_defs);
         Self {
             schema_version: Self::SCHEMA,
             name: name.into(),
@@ -220,7 +224,7 @@ impl LevelFile {
             height: map.height,
             tiles: map.tiles.clone(),
             terrain_pack: String::new(),
-            tile_defs: map.table.defs.clone(),
+            tile_defs,
             spawns,
             player_spawn: None,
             visual_seed: None,
@@ -235,7 +239,9 @@ pub fn level_to_ron(level: &LevelFile) -> Result<String, ron::Error> {
 }
 
 pub fn level_from_ron(s: &str) -> Result<LevelFile, ron::de::SpannedError> {
-    ron::from_str(s)
+    let mut level: LevelFile = ron::from_str(s)?;
+    normalize_tile_def_ids(&mut level.tile_defs);
+    Ok(level)
 }
 
 pub fn terrain_pack_to_ron(pack: &TerrainPack) -> Result<String, ron::Error> {
@@ -243,7 +249,9 @@ pub fn terrain_pack_to_ron(pack: &TerrainPack) -> Result<String, ron::Error> {
 }
 
 pub fn terrain_pack_from_ron(s: &str) -> Result<TerrainPack, ron::de::SpannedError> {
-    ron::from_str(s)
+    let mut pack: TerrainPack = ron::from_str(s)?;
+    normalize_tile_def_ids(&mut pack.tile_defs);
+    Ok(pack)
 }
 
 #[cfg(test)]

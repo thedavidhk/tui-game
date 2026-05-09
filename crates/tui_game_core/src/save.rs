@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::entity::EntityArena;
 use crate::game::GameModeStack;
 use crate::narrative::NarrativeState;
-use crate::world::MapGrid;
+use crate::world::{normalize_tile_def_ids, MapGrid};
 
 pub const SAVE_SCHEMA_VERSION: u32 = 7;
 
@@ -39,7 +39,9 @@ pub fn save_to_ron(s: &SaveGameV1) -> Result<String, ron::Error> {
 }
 
 pub fn save_from_ron(s: &str) -> Result<SaveGameV1, ron::de::SpannedError> {
-    ron::from_str(s)
+    let mut sg: SaveGameV1 = ron::from_str(s)?;
+    normalize_tile_def_ids(&mut sg.world.map.table.defs);
+    Ok(sg)
 }
 
 #[cfg(test)]

@@ -2,6 +2,11 @@
 //!
 //! Static visuals are resolved in [`crate::world::map::MapGrid::rebuild_display_cache`]; only
 //! [`resolve_animated`] runs each frame for animated tile types.
+//!
+//! **Connectors:** [`crate::world::tiles::ConnectorSurface`] normally uses a shared
+//! [`crate::world::tiles::ConnectorLineStyle`] preset (RON: quoted `"single_line"` / `"double_line"`)
+//! so many `TileDef`s can share the same 16-glyph autotile without duplicating RON; optional `glyphs`
+//! overrides when 16 entries are present (legacy levels).
 
 use crate::render::Color;
 
@@ -201,9 +206,13 @@ pub fn bake_tile_display(v: TileBakeView<'_>, wx: i32, wy: i32, visual_seed: u64
                 |(ch, fg)| cell_from_def(ch, fg, def),
             )
         }
-        Some(TileSurface::Connector { glyphs }) => {
+        Some(TileSurface::Connector(conn)) => {
             let mask = neighbor_link_mask(v, wx, wy) as usize;
-            cell_from_def(connector_glyph(glyphs, mask, def.glyph), def.fg, def)
+            cell_from_def(
+                connector_glyph(conn.glyph_table(), mask, def.glyph),
+                def.fg,
+                def,
+            )
         }
         Some(TileSurface::Animated { .. }) => cell_from_def(def.glyph, def.fg, def),
     }
@@ -257,7 +266,10 @@ pub fn resolve_animated(
 mod tests {
     use super::*;
     use crate::world::map::{MapGrid, TileTable};
-    use crate::world::tiles::AnimatedFrame;
+    use crate::world::tiles::{
+        normalize_tile_def_ids, AnimatedFrame, ConnectorLineStyle, ConnectorSurface, TileId,
+        TileSurface, CONNECTOR_GLYPHS_SINGLE,
+    };
 
     #[test]
     fn mix64_stable() {
@@ -269,7 +281,7 @@ mod tests {
     fn static_variant_deterministic_per_cell() {
         let mut table = TileTable::default_pack().expect("default terrain pack must load");
         table.defs.push(TileDef {
-            id: 9,
+            id: 0,
             glyph: ',',
             blocks_movement: false,
             blocks_sight: false,
@@ -292,7 +304,9 @@ mod tests {
                 ],
             }),
         });
-        let map = MapGrid::filled(4, 4, 9, table);
+        normalize_tile_def_ids(&mut table.defs);
+        let grass_id = (table.defs.len() - 1) as TileId;
+        let map = MapGrid::filled(4, 4, grass_id, table);
         let v = TileBakeView {
             table: &map.table,
             tiles: &map.tiles,
@@ -314,7 +328,7 @@ mod tests {
         // id 1 wall with connect 1
         table.defs[1].connect_mask = 1;
         table.defs.push(TileDef {
-            id: 5,
+            id: 0,
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
@@ -322,16 +336,23 @@ mod tests {
             fg: Color::rgb(120, 120, 120),
             bg: None,
             connect_mask: 1,
-            surface: Some(TileSurface::Connector {
-                glyphs: (0..16).map(|i| char::from_u32('a' as u32 + i as u32).unwrap()).collect(),
-            }),
+            surface: Some(TileSurface::Connector(ConnectorSurface {
+                style: None,
+                glyphs: Some(
+                    (0..16)
+                        .map(|i| char::from_u32('a' as u32 + i as u32).unwrap())
+                        .collect(),
+                ),
+            })),
         });
+        normalize_tile_def_ids(&mut table.defs);
+        let test_tid = (table.defs.len() - 1) as TileId;
         let mut map = MapGrid::filled(3, 3, 0, table);
-        map.set_tile(1, 0, 5);
-        map.set_tile(1, 1, 5);
-        map.set_tile(1, 2, 5);
-        map.set_tile(0, 1, 5);
-        map.set_tile(2, 1, 5);
+        map.set_tile(1, 0, test_tid);
+        map.set_tile(1, 1, test_tid);
+        map.set_tile(1, 2, test_tid);
+        map.set_tile(0, 1, test_tid);
+        map.set_tile(2, 1, test_tid);
         let v = TileBakeView {
             table: &map.table,
             tiles: &map.tiles,
@@ -342,6 +363,99 @@ mod tests {
         assert_eq!(m, 0b1111);
         let cell = bake_tile_display(v, 1, 1, 0);
         assert_eq!(cell.ch, 'p'); // mask 0b1111 = 15 -> 'a' + 15
+    }
+
+    #[test]
+    fn connector_style_double_full_cross() {
+        let mut table = TileTable::default_pack().expect("default terrain pack must load");
+        table.defs[1].connect_mask = 1;
+        table.defs.push(TileDef {
+            id: 0,
+            glyph: '#',
+            blocks_movement: true,
+            blocks_sight: true,
+            name: "double_wall".into(),
+            fg: Color::rgb(100, 100, 100),
+            bg: None,
+            connect_mask: 1,
+            surface: Some(TileSurface::Connector(ConnectorSurface {
+                style: Some(ConnectorLineStyle::DoubleLine),
+                glyphs: None,
+            })),
+        });
+        normalize_tile_def_ids(&mut table.defs);
+        let dw = (table.defs.len() - 1) as TileId;
+        let mut map = MapGrid::filled(3, 3, 0, table);
+        map.set_tile(1, 0, dw);
+        map.set_tile(1, 1, dw);
+        map.set_tile(1, 2, dw);
+        map.set_tile(0, 1, dw);
+        map.set_tile(2, 1, dw);
+        let v = TileBakeView {
+            table: &map.table,
+            tiles: &map.tiles,
+            width: map.width,
+            height: map.height,
+        };
+        let cell = bake_tile_display(v, 1, 1, 0);
+        assert_eq!(cell.ch, '╬');
+    }
+
+    #[test]
+    fn connector_legacy_ron_glyphs_only() {
+        let raw = r#"(
+            kind: "connector",
+            glyphs: [
+                '·','╵','╶','└','╷','│','┌','├','╴','┘','─','┴','┐','┤','┬','┼',
+            ],
+        )"#;
+        let ts: TileSurface = ron::from_str(raw).unwrap();
+        let TileSurface::Connector(c) = ts else {
+            panic!("expected connector");
+        };
+        assert_eq!(c.glyph_table(), CONNECTOR_GLYPHS_SINGLE.as_slice());
+    }
+
+    #[test]
+    fn connector_style_only_ron() {
+        let raw = r#"(
+            kind: "connector",
+            style: "single_line",
+        )"#;
+        let ts: TileSurface = ron::from_str(raw).unwrap();
+        let TileSurface::Connector(c) = ts else {
+            panic!("expected connector");
+        };
+        assert_eq!(c.style, Some(ConnectorLineStyle::SingleLine));
+        assert_eq!(c.glyph_table(), CONNECTOR_GLYPHS_SINGLE.as_slice());
+    }
+
+    #[test]
+    fn connector_style_double_line_ron() {
+        let raw = r#"(
+            kind: "connector",
+            style: "double_line",
+        )"#;
+        let ts: TileSurface = ron::from_str(raw).unwrap();
+        let TileSurface::Connector(c) = ts else {
+            panic!("expected connector");
+        };
+        assert_eq!(c.style, Some(ConnectorLineStyle::DoubleLine));
+        assert_eq!(c.glyph_table()[15], '╬');
+    }
+
+    /// RON parses `double` `-` `line` as subtraction, not the identifier `double_line`.
+    #[test]
+    fn connector_style_bare_double_line_is_subtraction_trap() {
+        let raw = r#"(
+            kind: "connector",
+            style: double_line,
+        )"#;
+        let ts: TileSurface = ron::from_str(raw).unwrap();
+        let TileSurface::Connector(c) = ts else {
+            panic!("expected connector");
+        };
+        assert_eq!(c.style, None, "use quoted style: \"double_line\" in RON");
     }
 
     #[test]

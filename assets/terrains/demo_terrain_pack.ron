@@ -2,7 +2,6 @@
     schema_version: 1,
     tile_defs: [
         (
-            id: 0,
             glyph: '.',
             blocks_movement: false,
             blocks_sight: false,
@@ -21,7 +20,6 @@
             surface: None,
         ),
         (
-            id: 1,
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
@@ -40,7 +38,6 @@
             surface: None,
         ),
         (
-            id: 2,
             glyph: ',',
             blocks_movement: false,
             blocks_sight: false,
@@ -99,7 +96,6 @@
             )),
         ),
         (
-            id: 3,
             glyph: '~',
             blocks_movement: false,
             blocks_sight: false,
@@ -158,7 +154,6 @@
             )),
         ),
         (
-            id: 4,
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
@@ -176,24 +171,28 @@
             connect_mask: 1,
             surface: Some((
                 kind: "connector",
-                glyphs: [
-                    '·',
-                    '╵',
-                    '╶',
-                    '└',
-                    '╷',
-                    '│',
-                    '┌',
-                    '├',
-                    '╴',
-                    '┘',
-                    '─',
-                    '┴',
-                    '┐',
-                    '┤',
-                    '┬',
-                    '┼',
-                ],
+                style: "single_line",
+            )),
+        ),
+        (
+            glyph: '#',
+            blocks_movement: true,
+            blocks_sight: true,
+            name: "thick_stone_wall",
+            fg: (
+                r: 130,
+                g: 128,
+                b: 120,
+            ),
+            bg: Some((
+                r: 36,
+                g: 34,
+                b: 40,
+            )),
+            connect_mask: 1,
+            surface: Some((
+                kind: "connector",
+                style: "double_line",
             )),
         ),
     ],

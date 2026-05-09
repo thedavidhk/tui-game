@@ -26,5 +26,6 @@ pub use tile_surface::{
     TileDisplayCell,
 };
 pub use tiles::{
-    AnimatedFrame, AnimMode, TileDef, TileId, TileSurface, WeightedGlyph,
+    normalize_tile_def_ids, AnimatedFrame, AnimMode, ConnectorLineStyle, ConnectorSurface, TileDef,
+    TileId, TileSurface, WeightedGlyph, CONNECTOR_GLYPHS_DOUBLE, CONNECTOR_GLYPHS_SINGLE,
 };
