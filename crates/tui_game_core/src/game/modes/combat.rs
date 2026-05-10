@@ -9,6 +9,9 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput, state: CombatState) {
     let world_r = GameShellLayout::root_panels(game.viewport_w, game.viewport_h).0;
 
     match ev {
+        GameInput::Command(GameCommand::ToggleDebug) => {
+            game.debug_overlay = !game.debug_overlay;
+        }
         GameInput::Raw(InputEvent::Mouse {
             kind,
             cell,

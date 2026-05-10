@@ -26,6 +26,9 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput) {
     if node.choices.is_empty() {
         if node.auto_next.is_some() {
             match ev {
+                GameInput::Command(GameCommand::ToggleDebug) => {
+                    game.debug_overlay = !game.debug_overlay;
+                }
                 GameInput::Raw(InputEvent::Mouse {
                     kind: MouseEventKind::Down(MouseButton::Left),
                     cell,
@@ -58,6 +61,22 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput) {
     }
 
     match ev {
+        GameInput::Command(GameCommand::ToggleDebug) => {
+            game.debug_overlay = !game.debug_overlay;
+        }
+        GameInput::Raw(InputEvent::Mouse {
+            kind: MouseEventKind::Moved,
+            cell,
+            ..
+        }) => {
+            if let Some(UiHitTarget::DialogueChoice(i)) = game.ui_hits.pick(cell) {
+                if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut()
+                {
+                    let max = visible.len().saturating_sub(1);
+                    *c = i.min(max);
+                }
+            }
+        }
         GameInput::Raw(InputEvent::Mouse {
             kind: MouseEventKind::Down(MouseButton::Left),
             cell,

@@ -158,6 +158,7 @@ pub fn default_game_key_map() -> GameKeyMap {
         (chord(Key::Char('f')), GameCommand::CombatFlee),
     ];
     static CONFIRM_MODAL: &[(KeyChord, GameCommand)] = &[
+        (chord(Key::F(1)), GameCommand::ToggleDebug),
         (chord(Key::Esc), GameCommand::Back),
         (chord(Key::Char('q')), GameCommand::Back),
         (chord(Key::Enter), GameCommand::Confirm),
@@ -168,6 +169,7 @@ pub fn default_game_key_map() -> GameKeyMap {
         (chord(Key::PageDown), GameCommand::ListNext),
     ];
     static BROWSE_MODAL: &[(KeyChord, GameCommand)] = &[
+        (chord(Key::F(1)), GameCommand::ToggleDebug),
         (chord(Key::Esc), GameCommand::Back),
         (chord(Key::Char('q')), GameCommand::Back),
         (chord(Key::Up), GameCommand::ListPrev),
@@ -178,6 +180,7 @@ pub fn default_game_key_map() -> GameKeyMap {
         (chord(Key::Char('e')), GameCommand::InventoryEquip),
     ];
     static TRANSFER: &[(KeyChord, GameCommand)] = &[
+        (chord(Key::F(1)), GameCommand::ToggleDebug),
         (chord(Key::Esc), GameCommand::Back),
         (chord(Key::Char('q')), GameCommand::Back),
         (chord(Key::Enter), GameCommand::Confirm),

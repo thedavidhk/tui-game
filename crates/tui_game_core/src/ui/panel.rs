@@ -1,6 +1,8 @@
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, Style};
 
+use super::theme::GameUiPalette;
+
 pub fn draw_bordered_panel(fb: &mut FrameBuffer, r: Rect, title: &str) {
     let fg = Color::rgb(180, 170, 140);
     let bg = Color::rgb(25, 22, 30);
@@ -79,6 +81,33 @@ pub fn draw_text_block(fb: &mut FrameBuffer, inner: Rect, lines: &[String]) {
                     ch,
                     fg,
                     bg,
+                    style: Style::default(),
+                },
+            );
+            x = x.saturating_add(1);
+        }
+    }
+}
+
+/// Same layout as [`draw_text_block`], using [`GameUiPalette`] game-chrome colors.
+pub fn draw_text_block_theme(fb: &mut FrameBuffer, inner: Rect, lines: &[String], palette: &GameUiPalette) {
+    for (row, line) in lines.iter().enumerate() {
+        let y = inner.y + row as u16;
+        if y >= inner.bottom() {
+            break;
+        }
+        let mut x = inner.x;
+        for ch in line.chars() {
+            if x >= inner.right() {
+                break;
+            }
+            fb.set(
+                x,
+                y,
+                Cell {
+                    ch,
+                    fg: palette.text,
+                    bg: palette.panel_bg,
                     style: Style::default(),
                 },
             );

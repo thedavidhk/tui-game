@@ -21,7 +21,7 @@ pub use combat::AttackStyle;
 pub use content::{EntityBlueprint, QuestJournalStatus};
 pub use game::Game;
 pub use item::{
-    EquipSlot, Inventory, ItemCatalog, ItemCategory, ItemDef, ItemStack, WeaponKind,
+    EquipSlot, Inventory, ItemCatalog, ItemCategory, ItemDef, ItemStack, StackEquipped, WeaponKind,
 };
 pub use narrative::{JournalEntry, JournalQuestRecord, NarrativeState};
 

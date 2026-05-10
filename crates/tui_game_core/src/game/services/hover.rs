@@ -48,14 +48,68 @@ fn tile_label(map: &MapGrid, pos: GridPos) -> String {
     }
 }
 
-/// Lines appended under the status HUD while exploring (short lines for narrow HUD).
+fn terrain_primary_name(map: &MapGrid, wp: GridPos) -> String {
+    let g = map
+        .ground_at(wp.x, wp.y)
+        .and_then(|id| map.table.def(id))
+        .map(|d| d.name.to_string())
+        .unwrap_or_else(|| "Unknown".into());
+    let p = map
+        .prop_at(wp.x, wp.y)
+        .filter(|&id| id != EMPTY_PROP_ID)
+        .and_then(|id| map.table.def(id))
+        .map(|d| d.name.as_str());
+    match p {
+        Some(pn) if !pn.is_empty() => format!("{pn} ({g})"),
+        _ => g,
+    }
+}
+
+/// Short “Here” lines for the default HUD (`docs/ui_design.md` §4).
 #[must_use]
-pub fn exploration_hover_lines(game: &Game) -> Vec<String> {
+pub fn exploration_here_lines(game: &Game) -> Vec<String> {
     let Some(cell) = game.exploration_hover_cell else {
-        return vec!["Look: —".into()];
+        return vec!["—".into()];
     };
     let Some(wp) = game.screen_cell_to_world(cell) else {
-        return vec!["Look: (outside map)".into()];
+        return vec!["(off map)".into()];
+    };
+    let mut out = vec![terrain_primary_name(&game.map, wp)];
+    let pid = game.player_id();
+    let pp = pid.and_then(|id| game.entities.pos(id));
+    let occupants = game.entities.occupants_at(wp.x, wp.y);
+    for &eid in &occupants {
+        if Some(eid) == pid {
+            continue;
+        }
+        let name = game
+            .entities
+            .name
+            .get(eid.0 as usize)
+            .cloned()
+            .unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(ppos) = pp {
+            let d = manhattan(ppos, wp);
+            out.push(format!("{name} · dist {d}"));
+        } else {
+            out.push(name);
+        }
+        break;
+    }
+    out
+}
+
+/// Verbose hover (tile ids, interaction hints) for the F1 debug overlay only.
+#[must_use]
+pub fn exploration_hover_debug_lines(game: &Game) -> Vec<String> {
+    let Some(cell) = game.exploration_hover_cell else {
+        return vec!["hover: —".into()];
+    };
+    let Some(wp) = game.screen_cell_to_world(cell) else {
+        return vec!["hover: outside world rect".into()];
     };
     let mut out = Vec::new();
     out.push(format!("Tile: {}", tile_label(&game.map, wp)));
@@ -112,14 +166,65 @@ pub fn exploration_hover_lines(game: &Game) -> Vec<String> {
     out
 }
 
-/// Hover text during combat (player's world cursor).
+/// Combat “Target” block for the right HUD (player-facing).
 #[must_use]
-pub fn combat_hover_lines(game: &Game, state: &CombatState) -> Vec<String> {
+pub fn combat_target_lines(game: &Game, state: &CombatState) -> Vec<String> {
     let Some(cell) = game.combat_hover_cell else {
-        return vec!["Look: —".into()];
+        return vec!["—".into()];
     };
     let Some(wp) = game.screen_cell_to_world(cell) else {
-        return vec!["Look: (outside map)".into()];
+        return vec!["(off map)".into()];
+    };
+    let pid = game.player_id();
+    let pp = pid.and_then(|id| game.entities.pos(id));
+    let range = pp.map(|p| manhattan(p, wp));
+
+    let mut foe: Option<(EntityId, String)> = None;
+    for &eid in &game.entities.occupants_at(wp.x, wp.y) {
+        if !state.contains_actor(eid) || Some(eid) == pid {
+            continue;
+        }
+        let n = game
+            .entities
+            .name
+            .get(eid.0 as usize)
+            .cloned()
+            .unwrap_or_default();
+        if !n.is_empty() {
+            foe = Some((eid, n));
+        }
+        break;
+    }
+    let mut out = Vec::new();
+    if let Some((eid, n)) = foe {
+        out.push(n);
+        if let Some(s) = game.entities.stats(eid) {
+            out.push(format!("HP       {}/{}", s.hp, s.max_hp));
+        }
+        if let Some(r) = range {
+            out.push(format!("Range    {r}"));
+        }
+        if crate::game::services::relation::is_hostile_to_player(game, eid) {
+            out.push("Hostile".into());
+        }
+    } else {
+        out.push("—".into());
+        out.push("(no fighter here)".into());
+        if let Some(r) = range {
+            out.push(format!("Range    {r}"));
+        }
+    }
+    out
+}
+
+/// Verbose combat hover for the F1 overlay.
+#[must_use]
+pub fn combat_hover_debug_lines(game: &Game, state: &CombatState) -> Vec<String> {
+    let Some(cell) = game.combat_hover_cell else {
+        return vec!["hover: —".into()];
+    };
+    let Some(wp) = game.screen_cell_to_world(cell) else {
+        return vec!["hover: outside world rect".into()];
     };
     let mut out = vec![format!("Tile: {}", tile_label(&game.map, wp))];
     let pid = game.player_id();

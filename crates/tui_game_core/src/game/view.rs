@@ -1,7 +1,12 @@
+use crate::game::hud;
 use crate::game::{Game, GameMode};
 use crate::rect::Rect;
 use crate::render::FrameBuffer;
 use crate::ui::layout::FloatingPanelLayout;
+use crate::ui::{
+    chrome_inner_rect, draw_log, draw_menu, draw_modal_world_scrim, draw_rounded_panel,
+    draw_text_block_theme, PanelBorderEmphasis, GameUiPalette,
+};
 
 pub(crate) fn compose(
     game: &mut Game,
@@ -10,65 +15,65 @@ pub(crate) fn compose(
     hud_rect: Rect,
     log_rect: Rect,
 ) {
+    let palette = GameUiPalette::DEFAULT;
     game.ui_hits.clear();
-    game.compose_world(fb, world_rect);
-    crate::ui::draw_bordered_panel(fb, hud_rect, "Status");
-    let inner = Rect::new(
-        hud_rect.x + 1,
-        hud_rect.y + 1,
-        hud_rect.w.saturating_sub(2),
-        hud_rect.h.saturating_sub(2),
-    );
-    let mut lines = vec![format!("Mode: {}", game.mode_label())];
-    lines.extend(game.content.runtime_hooks.hud_quest_status_lines(&game.narrative));
-    lines.push(format!("Demo quest line: {:?}", game.narrative.quests));
-    match game.modes.current() {
-        Some(GameMode::Exploration) => {
-            lines.extend(crate::game::services::hover::exploration_hover_lines(game));
-        }
-        Some(GameMode::Combat(c)) => {
-            lines.extend(crate::game::services::hover::combat_hover_lines(game, c));
-        }
-        _ => {}
-    }
-    match game.modes.current() {
-        Some(GameMode::Combat(_)) => {
-            lines.push("Combat: LMB act · RMB march · Enter/Space pass · f flee · Esc or q quit"
-                .into());
-        }
-        Some(GameMode::GameOver) => {
-            lines.push("Enter / Space / Esc / q: main menu".into());
-        }
-        _ => {
-            lines.push("LMB talk · chest · fight · RMB walk · WASD / arrows move".into());
-            lines.push("I/J inventory & journal · F1 debug · F5/F9 save/load".into());
-        }
-    }
-    crate::ui::draw_text_block(fb, inner, &lines);
 
-    crate::ui::draw_bordered_panel(fb, log_rect, "Log");
-    let log_inner = Rect::new(
-        log_rect.x + 1,
-        log_rect.y + 1,
-        log_rect.w.saturating_sub(2),
-        log_rect.h.saturating_sub(2),
+    game.compose_world(fb, world_rect);
+
+    let hud_emphasis = if matches!(game.modes.current(), Some(GameMode::Combat(_))) {
+        PanelBorderEmphasis::Highlighted
+    } else {
+        PanelBorderEmphasis::Subtle
+    };
+    draw_rounded_panel(
+        fb,
+        hud_rect,
+        "Status",
+        hud_emphasis,
+        &palette,
     );
-    // Only as many lines as fit vertically; always the newest entries (bottom of `game.log`).
-    // A fixed `take(6)` with a shorter `log_inner` used to clip the newest lines off-screen.
-    let max_rows = log_inner.h.max(1) as usize;
+    let hud_inner = chrome_inner_rect(hud_rect);
+    let lines: Vec<String> = match game.modes.current() {
+        Some(GameMode::Combat(c)) => hud::combat_status_lines(game, c),
+        _ => hud::exploration_status_lines(game),
+    };
+    draw_text_block_theme(fb, hud_inner, &lines, &palette);
+
+    draw_rounded_panel(
+        fb,
+        log_rect,
+        "Log",
+        PanelBorderEmphasis::Subtle,
+        &palette,
+    );
+    let log_inner = chrome_inner_rect(log_rect);
+    let footer = hud::command_footer(game);
+    // One row reserved for the command footer inside `log_inner`; `draw_log` subtracts it again
+    // from `inner.h` for the scroll region — do not pre-shrink the rect or the newest line is dropped.
+    let body_rows = log_inner.h.saturating_sub(1);
+    let max_rows = body_rows as usize;
     let n = max_rows.min(game.log.len());
     let start = game.log.len().saturating_sub(n);
     let log_lines: Vec<String> = game.log[start..].to_vec();
-    crate::ui::draw_log(fb, log_inner, &log_lines, &mut Vec::new());
+    draw_log(
+        fb,
+        log_inner,
+        &log_lines,
+        Some(footer),
+        &palette,
+        &mut Vec::new(),
+    );
 
     if let Some(GameMode::MainMenu { selected }) = game.modes.current().cloned() {
         let menu_r = FloatingPanelLayout::main_menu();
-        crate::ui::draw_menu(
+        draw_menu(
             fb,
             menu_r,
             "Main menu",
             &game.menu_items,
             selected,
+            &palette,
+            game.last_mouse_cell,
             &mut game.ui_hits,
         );
     }
@@ -89,7 +94,6 @@ pub(crate) fn compose(
             .unwrap_or(game.content.default_dialogue);
         if let Some(node) = tree.nodes.get(node_index) {
             let visible = game.dialogue_visible_choice_indices(node);
-            let visible_labels: Vec<&'static str> = visible.iter().map(|i| node.choices[*i].label).collect();
             let node_text = game
                 .content
                 .runtime_hooks
@@ -104,54 +108,36 @@ pub(crate) fn compose(
             crate::ui::draw_dialogue(
                 fb,
                 dr,
+                &palette,
                 speaker_name,
+                node,
                 node_text.as_str(),
-                &visible_labels,
-                choice_cursor.min(visible_labels.len().saturating_sub(1)),
+                &visible,
+                choice_cursor.min(visible.len().saturating_sub(1)),
                 continue_only,
+                game.last_mouse_cell,
                 &mut game.ui_hits,
             );
         }
     }
 
     if matches!(game.modes.current(), Some(GameMode::GameOver)) {
+        draw_modal_world_scrim(fb, world_rect, &palette);
         let gr = FloatingPanelLayout::game_over(fb.width, fb.height);
-        crate::ui::draw_bordered_panel(fb, gr, "Game over");
-        let inner = crate::ui::layout::panel_inner(gr);
+        draw_rounded_panel(
+            fb,
+            gr,
+            "Game over",
+            PanelBorderEmphasis::Highlighted,
+            &palette,
+        );
+        let inner = chrome_inner_rect(gr);
         let lines = vec![
             "Your journey ends here.".into(),
             String::new(),
-            "Enter · Space · Esc · q — main menu".into(),
+            "Enter · Space · Esc — main menu".into(),
         ];
-        crate::ui::draw_text_block(fb, inner, &lines);
-    }
-
-    if let Some(GameMode::Combat(ref c)) = game.modes.current() {
-        let cr = FloatingPanelLayout::combat_hud();
-        let actor = c.current_actor();
-        let who = actor
-            .map(|id| game.entities.name.get(id.0 as usize).cloned().unwrap_or_default())
-            .unwrap_or_else(|| "n/a".into());
-        let hp_line = actor
-            .and_then(|id| game.entities.stats(id))
-            .map(|s| format!("HP: {}/{}  AP: {}", s.hp, s.max_hp, c.current_ap().unwrap_or(0)))
-            .unwrap_or_else(|| "HP: n/a  AP: n/a".into());
-        let lines = vec![
-            if matches!(
-                c.profile.ruleset,
-                crate::combat::CombatRuleset::NonLethalSpar | crate::combat::CombatRuleset::NonLethalBrawl
-            ) {
-                "Combat (training)".into()
-            } else {
-                "Combat".into()
-            },
-            format!("Turn: {}", who),
-            hp_line,
-            "LMB attack/move · RMB march · Enter/Space pass · f flee · Esc/q quit".into(),
-        ];
-        crate::ui::draw_bordered_panel(fb, cr, "Combat");
-        let inner = Rect::new(cr.x + 1, cr.y + 1, cr.w.saturating_sub(2), cr.h.saturating_sub(2));
-        crate::ui::draw_text_block(fb, inner, &lines);
+        draw_text_block_theme(fb, inner, &lines, &palette);
     }
 
     if let Some(GameMode::Inventory { cursor }) = game.modes.current() {
@@ -167,23 +153,27 @@ pub(crate) fn compose(
         cursor_container,
     }) = game.modes.current()
     {
-        game.compose_item_transfer_overlay(fb, *container, *focus, *cursor_player, *cursor_container);
+        game.compose_item_transfer_overlay(
+            fb,
+            *container,
+            *focus,
+            *cursor_player,
+            *cursor_container,
+        );
     }
 
     if game.debug_overlay {
         let dbg = FloatingPanelLayout::debug_panel(fb.width, fb.height);
+        draw_rounded_panel(
+            fb,
+            dbg,
+            "Debug (F1)",
+            PanelBorderEmphasis::Highlighted,
+            &palette,
+        );
+        let inner = chrome_inner_rect(dbg);
         let dirty = fb.dirty_count();
-        let enc = game
-            .last_perf
-            .map(|p| format!("encode_us {}", p.encode_nanos / 1000))
-            .unwrap_or_else(|| "encode_us —".into());
-        let lines = vec![
-            format!("debug: dirty_cells(prev) ~{}", dirty),
-            format!("map {}x{}", game.map.width, game.map.height),
-            enc,
-        ];
-        crate::ui::draw_bordered_panel(fb, dbg, "Debug");
-        let inner = Rect::new(dbg.x + 1, dbg.y + 1, dbg.w.saturating_sub(2), dbg.h.saturating_sub(2));
-        crate::ui::draw_text_block(fb, inner, &lines);
+        let lines = hud::debug_overlay_lines(game, dirty);
+        draw_text_block_theme(fb, inner, &lines, &palette);
     }
 }

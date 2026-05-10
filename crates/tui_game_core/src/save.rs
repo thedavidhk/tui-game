@@ -5,7 +5,7 @@ use crate::game::GameModeStack;
 use crate::narrative::NarrativeState;
 use crate::world::{normalize_tile_def_ids, MapGrid};
 
-pub const SAVE_SCHEMA_VERSION: u32 = 7;
+pub const SAVE_SCHEMA_VERSION: u32 = 8;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct WorldSnapshot {
@@ -42,6 +42,9 @@ pub fn save_from_ron(s: &str) -> Result<SaveGameV1, ron::de::SpannedError> {
     let mut sg: SaveGameV1 = ron::from_str(s)?;
     normalize_tile_def_ids(&mut sg.world.map.table.defs);
     sg.world.map.normalize_layer_sizes();
+    if sg.schema_version < 8 {
+        sg.world.narrative.migrate_legacy_equipment_into_stacks();
+    }
     Ok(sg)
 }
 
@@ -50,7 +53,7 @@ mod tests {
     use super::*;
     use crate::entity::EntityId;
     use crate::game::GameMode;
-    use crate::item::{EquipSlot, Inventory};
+    use crate::item::{EquipSlot, Inventory, ItemStack};
     use crate::world::TileTable;
 
     #[test]
@@ -118,8 +121,9 @@ mod tests {
             c
         });
         narrative
-            .equipment
-            .insert(EquipSlot::Ring, "brass_ring".into());
+            .inventory
+            .stacks
+            .push(ItemStack::worn("brass_ring", EquipSlot::Ring));
         narrative.quest_stages.insert("side_quest".into(), 2);
         let world = WorldSnapshot {
             map,
@@ -130,7 +134,7 @@ mod tests {
         let modes = GameModeStack {
             stack: vec![GameMode::ItemTransfer {
                 container: EntityId(7),
-                focus: crate::game::TransferFocus::Player,
+                focus: crate::game::TransferFocus::Container,
                 cursor_player: 0,
                 cursor_container: 0,
             }],

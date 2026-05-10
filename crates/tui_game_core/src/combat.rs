@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entity::{EntityArena, EntityId, GridPos};
+use crate::item::StackEquipped;
 use crate::narrative::NarrativeState;
 use crate::world::{MapGrid, projectile_sight_clear};
 
@@ -279,8 +280,7 @@ impl CombatState {
                     }
                     let has_arrow = narrative
                         .as_ref()
-                        .and_then(|n| n.equipped_ammo.as_ref())
-                        .is_some_and(|s| s.id == "arrow" && s.count > 0);
+                        .is_some_and(|n| n.quiver_count_for_ranged("arrow") > 0);
                     if !has_arrow {
                         return CombatActionReport {
                             applied: false,
@@ -398,15 +398,16 @@ fn chebyshev(a: GridPos, b: GridPos) -> i32 {
 }
 
 fn consume_one_arrow(n: &mut NarrativeState) {
-    let Some(am) = n.equipped_ammo.as_mut() else {
+    let Some(i) = n.inventory.stacks.iter().position(|s| {
+        s.id == "arrow"
+            && matches!(s.equipped, Some(StackEquipped::Quiver))
+            && s.count > 0
+    }) else {
         return;
     };
-    if am.id != "arrow" {
-        return;
-    }
-    am.count = am.count.saturating_sub(1);
-    if am.count == 0 {
-        n.equipped_ammo = None;
+    n.inventory.stacks[i].count = n.inventory.stacks[i].count.saturating_sub(1);
+    if n.inventory.stacks[i].count == 0 {
+        n.inventory.stacks.remove(i);
     }
 }
 

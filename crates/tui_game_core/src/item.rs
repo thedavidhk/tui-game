@@ -41,6 +41,13 @@ impl Display for EquipSlot {
     }
 }
 
+/// Where a stack “lives” when tied to equipment or the ranged ammo bandolier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StackEquipped {
+    Wear(EquipSlot),
+    Quiver,
+}
+
 /// Weapon behavior when equipped in [`EquipSlot::MainHand`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WeaponKind {
@@ -61,7 +68,7 @@ pub enum ItemCategory {
     Mundane,
     Consumable,
     Equippable(EquipSlot),
-    /// Ammunition (arrows); press **e** in inventory to load the quiver (`NarrativeState::equipped_ammo`).
+    /// Ammunition (arrows); press **e** in inventory to load/unload the quiver ([`StackEquipped::Quiver`]).
     Ammo,
 }
 
@@ -120,6 +127,8 @@ pub struct ItemDef {
 pub struct ItemStack {
     pub id: String,
     pub count: u32,
+    #[serde(default)]
+    pub equipped: Option<StackEquipped>,
 }
 
 impl ItemStack {
@@ -127,6 +136,30 @@ impl ItemStack {
         Self {
             id: id.into(),
             count: count.max(1),
+            equipped: None,
+        }
+    }
+
+    #[must_use]
+    pub fn loose(id: impl Into<String>, count: u32) -> Self {
+        Self::new(id, count)
+    }
+
+    #[must_use]
+    pub fn worn(id: impl Into<String>, slot: EquipSlot) -> Self {
+        Self {
+            id: id.into(),
+            count: 1,
+            equipped: Some(StackEquipped::Wear(slot)),
+        }
+    }
+
+    #[must_use]
+    pub fn quiver(id: impl Into<String>, count: u32) -> Self {
+        Self {
+            id: id.into(),
+            count: count.max(1),
+            equipped: Some(StackEquipped::Quiver),
         }
     }
 }
@@ -156,46 +189,103 @@ impl Inventory {
         self.count_of(id) >= n
     }
 
+    /// Adds loose items, merging into an existing **loose** stack, then the **quiver** stack for
+    /// that id (pickups funnel into the quiver when loaded).
     pub fn add(&mut self, id: impl Into<String>, n: u32) {
         if n == 0 {
             return;
         }
         let id = id.into();
-        if let Some(s) = self.stacks.iter_mut().find(|s| s.id == id) {
+        if let Some(s) = self.stacks.iter_mut().find(|s| {
+            s.id == id && matches!(s.equipped, Some(StackEquipped::Quiver))
+        }) {
             s.count = s.count.saturating_add(n);
             return;
         }
-        self.stacks.push(ItemStack { id, count: n });
+        if let Some(s) = self
+            .stacks
+            .iter_mut()
+            .find(|s| s.id == id && s.equipped.is_none())
+        {
+            s.count = s.count.saturating_add(n);
+            return;
+        }
+        self.stacks.push(ItemStack {
+            id,
+            count: n,
+            equipped: None,
+        });
     }
 
+    /// Removes `n` copies of `id`, consuming **loose** stacks first, then worn/quiver stacks.
     pub fn try_remove(&mut self, id: &str, n: u32) -> Result<(), InventoryError> {
         if n == 0 {
             return Ok(());
         }
         let mut rem = n;
         let mut i = 0;
-        while i < self.stacks.len() {
+        while rem > 0 && i < self.stacks.len() {
             if self.stacks[i].id != id {
                 i += 1;
                 continue;
             }
-            let c = self.stacks[i].count;
-            if c < rem {
-                return Err(InventoryError::NotEnough);
+            if self.stacks[i].equipped.is_some() {
+                i += 1;
+                continue;
             }
-            let left = c - rem;
+            let c = self.stacks[i].count;
+            let take = rem.min(c);
+            let left = c - take;
             if left == 0 {
                 self.stacks.remove(i);
             } else {
                 self.stacks[i].count = left;
+                i += 1;
             }
-            rem = 0;
-            break;
+            rem -= take;
+        }
+        i = 0;
+        while rem > 0 && i < self.stacks.len() {
+            if self.stacks[i].id != id {
+                i += 1;
+                continue;
+            }
+            if self.stacks[i].equipped.is_none() {
+                i += 1;
+                continue;
+            }
+            let c = self.stacks[i].count;
+            let take = rem.min(c);
+            let left = c - take;
+            if left == 0 {
+                self.stacks.remove(i);
+            } else {
+                self.stacks[i].count = left;
+                i += 1;
+            }
+            rem -= take;
         }
         if rem > 0 {
-            return Err(InventoryError::NotEnough);
+            Err(InventoryError::NotEnough)
+        } else {
+            Ok(())
         }
-        Ok(())
+    }
+
+    /// Collapses all **loose** stacks for `id` into one row (stable order).
+    pub fn consolidate_loose(&mut self, id: &str) {
+        let mut total = 0u32;
+        self.stacks.retain(|s| {
+            if s.id == id && s.equipped.is_none() {
+                total = total.saturating_add(s.count);
+                false
+            } else {
+                true
+            }
+        });
+        if total > 0 {
+            self.stacks.push(ItemStack::loose(id.to_string(), total));
+        }
     }
 
     /// Move up to `n` items from `other` into `self`.
@@ -210,20 +300,41 @@ impl Inventory {
         Ok(())
     }
 
-    /// Move the entire stack at `idx` from `from` into `to`.
+    /// Move the entire stack at `idx` from `from` into `to` (preserves equipped / quiver flags).
     pub fn try_move_stack_index(
         from: &mut Inventory,
         to: &mut Inventory,
         idx: usize,
     ) -> Result<(), InventoryError> {
-        let (id, n) = from
+        let stack = from
             .stacks
             .get(idx)
-            .map(|s| (s.id.clone(), s.count))
+            .cloned()
             .ok_or(InventoryError::UnknownItem)?;
-        from.try_remove(&id, n)?;
-        to.add(id, n);
+        from.stacks.remove(idx);
+        to.absorb_stack(stack);
         Ok(())
+    }
+
+    /// Inserts `stack`, merging into quiver or loose rows as appropriate.
+    pub fn absorb_stack(&mut self, stack: ItemStack) {
+        match stack.equipped {
+            Some(StackEquipped::Quiver) => {
+                if let Some(s) = self.stacks.iter_mut().find(|t| {
+                    t.id == stack.id && matches!(t.equipped, Some(StackEquipped::Quiver))
+                }) {
+                    s.count = s.count.saturating_add(stack.count);
+                    return;
+                }
+                self.stacks.push(stack);
+            }
+            Some(StackEquipped::Wear(_)) => {
+                self.stacks.push(stack);
+            }
+            None => {
+                self.add(stack.id.clone(), stack.count);
+            }
+        }
     }
 }
 

@@ -8,6 +8,14 @@ pub enum UiHitTarget {
     MainMenuItem(usize),
     DialogueChoice(usize),
     DialogueContinue,
+    /// Row index into [`crate::narrative::NarrativeState::inventory`] stacks.
+    InventoryStack(usize),
+    /// Row index into the quest journal list (left column).
+    JournalQuest(usize),
+    /// Player inventory column in the transfer overlay.
+    TransferPlayerStack(usize),
+    /// Container column in the transfer overlay.
+    TransferContainerStack(usize),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

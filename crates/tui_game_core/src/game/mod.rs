@@ -1,5 +1,6 @@
 //! Top-level game state, mode stack, and stepping.
 
+mod hud;
 mod key_commands;
 mod modes;
 mod overlay_layout;
@@ -27,7 +28,7 @@ use crate::content::{
 use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, MouseCell};
-use crate::item::{EquipSlot, Inventory, ItemStack, WeaponKind};
+use crate::item::{EquipSlot, Inventory, ItemStack, StackEquipped, WeaponKind};
 use crate::level::{
     derive_visual_seed, derive_visual_seed_from_map, level_from_ron, materialize_tile_defs_from_pack,
     LevelFile,
@@ -35,8 +36,12 @@ use crate::level::{
 use crate::narrative::NarrativeState;
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
-use crate::ui::hit::UiHitState;
+use crate::ui::chrome::{
+    chrome_inner_rect, draw_clipped_line, draw_rounded_panel, PanelBorderEmphasis,
+};
+use crate::ui::hit::{UiHitState, UiHitTarget};
 use crate::ui::layout::GameShellLayout;
+use crate::ui::GameUiPalette;
 use crate::ui::viewport_scroll::{
     edge_scroll_pan_delta, map_larger_than_view, screen_cell_to_world, world_view_origin,
     EDGE_SCROLL_COOLDOWN_TICKS,
@@ -133,6 +138,16 @@ pub enum GameMode {
     GameOver,
 }
 
+#[inline]
+fn inventory_stack_display_line(cat: &crate::item::ItemCatalog, s: &ItemStack) -> String {
+    let label = cat.display_name(s.id.as_str());
+    match s.equipped {
+        Some(StackEquipped::Wear(slot)) => format!("{label} ({slot})"),
+        Some(StackEquipped::Quiver) => format!("{label} x{} (Quiver)", s.count),
+        None => format!("{label} x{}", s.count),
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameModeStack {
     pub stack: Vec<GameMode>,
@@ -174,6 +189,8 @@ pub struct Game {
     pub quit_requested: bool,
     /// Last-frame mouse hit targets (menu rows, dialogue choices, …).
     pub ui_hits: UiHitState,
+    /// Last reported pointer cell (used for hover highlights during `compose`).
+    pub last_mouse_cell: Option<MouseCell>,
     pub last_perf: Option<FrameSample>,
     /// Seed for baked static tile variants (grass); stable for the loaded level / save.
     pub map_visual_seed: u64,
@@ -246,7 +263,8 @@ impl Game {
             stack: vec![GameMode::MainMenu { selected: 0 }],
         };
         game.rng_seed = 1;
-        game.log = vec!["Welcome. LMB on entities, WASD/arrows move, I/J inventory & journal, F1 debug. Main menu: Esc or q quits.".into()];
+        game.log = vec!["Welcome. LMB interact, WASD move, I/J inventory & journal, F1 debug.".into()];
+        game.refresh_fow();
         game
     }
 
@@ -356,6 +374,7 @@ impl Game {
             menu_items: vec!["Start game", "Quit"],
             quit_requested: false,
             ui_hits: UiHitState::default(),
+            last_mouse_cell: None,
             last_perf: None,
             map_visual_seed,
             surface_tick: 0,
@@ -800,6 +819,9 @@ impl Game {
 
     pub fn step(&mut self, input: &InputBatch) {
         for ev in &input.events {
+            if let InputEvent::Mouse { cell, .. } = ev {
+                self.last_mouse_cell = Some(*cell);
+            }
             if let Some(gi) = self.resolve_game_input(ev) {
                 modes::route(self, gi);
             }
@@ -1439,10 +1461,10 @@ impl Game {
         if self.player_id() != Some(actor) {
             return AttackStyle::Unarmed;
         }
-        let Some(id) = self.narrative.equipment.get(&EquipSlot::MainHand).cloned() else {
+        let Some(id) = self.narrative.main_hand_item_id() else {
             return AttackStyle::Unarmed;
         };
-        let Some(def) = self.content.item_catalog().get(id.as_str()) else {
+        let Some(def) = self.content.item_catalog().get(id) else {
             return AttackStyle::Unarmed;
         };
         match def.weapon {
@@ -1459,11 +1481,7 @@ impl Game {
                 damage_bonus,
                 range,
             }) => {
-                let has_arrows = self
-                    .narrative
-                    .equipped_ammo
-                    .as_ref()
-                    .is_some_and(|s| s.id == "arrow" && s.count > 0);
+                let has_arrows = self.narrative.quiver_count_for_ranged("arrow") > 0;
                 if has_arrows {
                     AttackStyle::Bow {
                         to_hit,
@@ -1813,25 +1831,11 @@ impl Game {
         view::compose(self, fb, world_rect, hud_rect, log_rect);
     }
 
-    fn mode_label(&self) -> &'static str {
-        match self.modes.current() {
-            Some(GameMode::MainMenu { .. }) => "menu",
-            Some(GameMode::Exploration) => "explore",
-            Some(GameMode::Dialogue { .. }) => "dialogue",
-            Some(GameMode::Inventory { .. }) => "inventory",
-            Some(GameMode::Journal { .. }) => "journal",
-            Some(GameMode::ItemTransfer { .. }) => "transfer",
-            Some(GameMode::Combat(_)) => "combat",
-            Some(GameMode::GameOver) => "game over",
-            None => "none",
-        }
-    }
-
     pub(crate) fn handle_game_over(&mut self, ev: GameInput) {
         modes::game_over::handle(self, ev);
     }
 
-    fn compose_journal_overlay(&self, fb: &mut FrameBuffer, quest_cursor: usize) {
+    fn compose_journal_overlay(&mut self, fb: &mut FrameBuffer, quest_cursor: usize) {
         fn status_label(s: QuestJournalStatus) -> &'static str {
             match s {
                 QuestJournalStatus::InProgress => "In progress",
@@ -1840,32 +1844,116 @@ impl Game {
             }
         }
 
+        let palette = GameUiPalette::DEFAULT;
         let (left, right) = overlay_layout::two_column_relaxed(fb.width, fb.height);
-        crate::ui::draw_bordered_panel(fb, left, "Quests");
-        let inner_l = crate::ui::layout::panel_inner(left);
+
+        draw_rounded_panel(
+            fb,
+            left,
+            "Quests",
+            PanelBorderEmphasis::Subtle,
+            &palette,
+        );
+        let inner_l = chrome_inner_rect(left);
         let journals = &self.narrative.quest_journal;
         let n = journals.len();
-        let mut rows: Vec<String> = Vec::new();
+        let mut y = inner_l.y;
         if n == 0 {
-            rows.push("(no entries yet)".into());
+            if y < inner_l.bottom().saturating_sub(2) {
+                draw_clipped_line(
+                    fb,
+                    inner_l.x,
+                    y,
+                    inner_l.w,
+                    "(no entries yet)",
+                    palette.text_dim,
+                    palette.panel_bg,
+                    Style {
+                        dim: true,
+                        ..Default::default()
+                    },
+                );
+            }
         } else {
             for (i, q) in journals.iter().enumerate() {
-                let mark = if i == quest_cursor.min(n.saturating_sub(1)) {
-                    "> "
-                } else {
-                    "  "
-                };
+                if y >= inner_l.bottom().saturating_sub(2) {
+                    break;
+                }
+                let row = Rect::new(inner_l.x, y, inner_l.w, 1);
+                let hot = self
+                    .last_mouse_cell
+                    .is_some_and(|m| row.contains(m.x, m.y));
+                let keyboard_sel = i == quest_cursor.min(n.saturating_sub(1));
+                let sel = keyboard_sel || hot;
                 let tag = status_label(q.status);
-                rows.push(format!("{}{} [{}]", mark, q.title, tag));
+                let line = if sel {
+                    format!("› {} [{}]", q.title, tag)
+                } else {
+                    format!("  {} [{}]", q.title, tag)
+                };
+                let fg = if sel {
+                    palette.selected_fg
+                } else {
+                    palette.text
+                };
+                let bg = if sel {
+                    palette.selected_bg
+                } else {
+                    palette.panel_bg
+                };
+                let st = Style {
+                    bold: sel,
+                    dim: !sel,
+                    underline: false,
+                };
+                draw_clipped_line(fb, inner_l.x, y, inner_l.w, &line, fg, bg, st);
+                self.ui_hits.push(UiHitTarget::JournalQuest(i), row);
+                y = y.saturating_add(1);
             }
         }
-        rows.push("---".into());
-        rows.push("Up/Down · PgUp/PgDn · Esc or q back".into());
-        crate::ui::draw_text_block(fb, inner_l, &rows);
 
-        crate::ui::draw_bordered_panel(fb, right, "Entries");
-        let inner_r = crate::ui::layout::panel_inner(right);
-        let line_w = inner_r.w.saturating_sub(2) as usize;
+        let hint_y = inner_l.bottom().saturating_sub(2);
+        if hint_y >= inner_l.y && hint_y < inner_l.bottom() {
+            draw_clipped_line(
+                fb,
+                inner_l.x,
+                hint_y,
+                inner_l.w,
+                "—",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
+        }
+        let hint_y2 = inner_l.bottom().saturating_sub(1);
+        if hint_y2 >= inner_l.y && hint_y2 < inner_l.bottom() {
+            draw_clipped_line(
+                fb,
+                inner_l.x,
+                hint_y2,
+                inner_l.w,
+                "Up/Down  PgUp/PgDn  Esc back",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        draw_rounded_panel(
+            fb,
+            right,
+            "Entries",
+            PanelBorderEmphasis::Subtle,
+            &palette,
+        );
+        let inner_r = chrome_inner_rect(right);
+        let line_w = inner_r.w.max(1) as usize;
         let mut detail: Vec<String> = Vec::new();
         if n == 0 {
             detail.push("Quest lines appear when you talk,".into());
@@ -1886,82 +1974,181 @@ impl Game {
                 detail.push("(no log lines yet)".into());
             }
         }
-        crate::ui::draw_text_block(fb, inner_r, &detail);
+        crate::ui::draw_text_block_theme(fb, inner_r, &detail, &palette);
     }
 
-    fn compose_inventory_overlay(&self, fb: &mut FrameBuffer, cursor: usize) {
-        let (bags, equipment, detail) = overlay_layout::three_column_relaxed(fb.width, fb.height);
+    fn compose_inventory_overlay(&mut self, fb: &mut FrameBuffer, cursor: usize) {
+        let palette = GameUiPalette::DEFAULT;
+        let (bags, equipment, detail) =
+            overlay_layout::three_column_inventory(fb.width, fb.height);
         let cat = self.content.item_catalog();
         let stacks = &self.narrative.inventory.stacks;
         let n = stacks.len();
 
-        crate::ui::draw_bordered_panel(fb, bags, "Inventory");
-        let mut rows: Vec<String> = Vec::new();
+        draw_rounded_panel(
+            fb,
+            bags,
+            "Inventory",
+            PanelBorderEmphasis::Subtle,
+            &palette,
+        );
+        let inner_b = chrome_inner_rect(bags);
+        let mut y = inner_b.y;
         for (i, s) in stacks.iter().enumerate() {
-            let mark = if n > 0 && i == cursor.min(n.saturating_sub(1)) {
-                "> "
+            if y >= inner_b.bottom().saturating_sub(2) {
+                break;
+            }
+            let row = Rect::new(inner_b.x, y, inner_b.w, 1);
+            let hot = self
+                .last_mouse_cell
+                .is_some_and(|m| row.contains(m.x, m.y));
+            let keyboard_sel = n > 0 && i == cursor.min(n.saturating_sub(1));
+            let sel = keyboard_sel || hot;
+            let body = inventory_stack_display_line(&cat, s);
+            let line = if sel {
+                format!("› {body}")
             } else {
-                "  "
+                format!("  {body}")
             };
-            let label = cat.display_name(s.id.as_str());
-            rows.push(format!("{}{} x{}", mark, label, s.count));
+            let fg = if sel {
+                palette.selected_fg
+            } else {
+                palette.text
+            };
+            let bg = if sel {
+                palette.selected_bg
+            } else {
+                palette.panel_bg
+            };
+            let st = Style {
+                bold: sel,
+                dim: !sel,
+                underline: false,
+            };
+            draw_clipped_line(fb, inner_b.x, y, inner_b.w, &line, fg, bg, st);
+            self.ui_hits.push(UiHitTarget::InventoryStack(i), row);
+            y = y.saturating_add(1);
         }
-        if rows.is_empty() {
-            rows.push("(empty)".into());
+        if stacks.is_empty() && y < inner_b.bottom().saturating_sub(2) {
+            draw_clipped_line(
+                fb,
+                inner_b.x,
+                y,
+                inner_b.w,
+                "(empty)",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
         }
-        rows.push("---".into());
-        rows.push("u use · e equip · Esc or q back".into());
-        crate::ui::draw_text_block(fb, crate::ui::layout::panel_inner(bags), &rows);
+        let hint_y = inner_b.bottom().saturating_sub(2);
+        if hint_y >= inner_b.y && hint_y < inner_b.bottom() {
+            draw_clipped_line(
+                fb,
+                inner_b.x,
+                hint_y,
+                inner_b.w,
+                "—",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
+        }
+        let hint_y2 = inner_b.bottom().saturating_sub(1);
+        if hint_y2 >= inner_b.y && hint_y2 < inner_b.bottom() {
+            draw_clipped_line(
+                fb,
+                inner_b.x,
+                hint_y2,
+                inner_b.w,
+                "click row · u/e · Esc back",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
+        }
 
-        crate::ui::draw_bordered_panel(fb, equipment, "Equipped");
+        draw_rounded_panel(
+            fb,
+            equipment,
+            "Equipped",
+            PanelBorderEmphasis::Subtle,
+            &palette,
+        );
+        let inner_e = chrome_inner_rect(equipment);
         let mut eq_lines: Vec<String> = Vec::new();
         for slot in EquipSlot::VARIANTS {
             let title = slot.to_string();
-            let line = match self.narrative.equipment.get(&slot) {
+            let line = match self.narrative.worn_item_id_in_slot(slot) {
                 None => format!("{title}: —"),
-                Some(id) => format!("{title}: {}", cat.display_name(id.as_str())),
+                Some(id) => format!("{title}: {}", cat.display_name(id)),
             };
             eq_lines.push(line);
         }
         eq_lines.push(String::new());
-        match &self.narrative.equipped_ammo {
-            None => eq_lines.push("Quiver: (empty)".into()),
-            Some(a) => eq_lines.push(format!(
-                "Quiver: {} x{}",
-                cat.display_name(a.id.as_str()),
-                a.count
-            )),
-        }
-        eq_lines.push("---".into());
-        eq_lines.push("e from list".into());
-        crate::ui::draw_text_block(fb, crate::ui::layout::panel_inner(equipment), &eq_lines);
+        let quiver_line = self
+            .narrative
+            .inventory
+            .stacks
+            .iter()
+            .find(|s| matches!(s.equipped, Some(StackEquipped::Quiver)))
+            .map(|s| {
+                format!(
+                    "Quiver: {} x{}",
+                    cat.display_name(s.id.as_str()),
+                    s.count
+                )
+            })
+            .unwrap_or_else(|| "Quiver: (empty)".into());
+        eq_lines.push(quiver_line);
+        crate::ui::draw_text_block_theme(fb, inner_e, &eq_lines, &palette);
 
-        crate::ui::draw_bordered_panel(fb, detail, "Detail");
-        let line_w = detail.w.saturating_sub(2) as usize;
+        draw_rounded_panel(
+            fb,
+            detail,
+            "Detail",
+            PanelBorderEmphasis::Subtle,
+            &palette,
+        );
+        let inner_d = chrome_inner_rect(detail);
+        let line_w = inner_d.w.max(1) as usize;
         let mut detail_lines: Vec<String> = Vec::new();
         if let Some(s) = stacks.get(cursor.min(n.saturating_sub(1))) {
             if let Some(def) = cat.get(s.id.as_str()) {
                 detail_lines.push(def.name.to_string());
                 detail_lines.push(cat.category_line(s.id.as_str()));
                 detail_lines.push(String::new());
-                detail_lines.extend(crate::ui::wrap::wrap_words(def.description, line_w.max(12)));
+                detail_lines.extend(crate::ui::wrap::wrap_words(
+                    def.description,
+                    line_w.max(12),
+                ));
             } else {
                 detail_lines.push(s.id.clone());
             }
         } else {
             detail_lines.push("(no stacks)".into());
         }
-        crate::ui::draw_text_block(fb, crate::ui::layout::panel_inner(detail), &detail_lines);
+        crate::ui::draw_text_block_theme(fb, inner_d, &detail_lines, &palette);
     }
 
     fn compose_item_transfer_overlay(
-        &self,
+        &mut self,
         fb: &mut FrameBuffer,
         container: EntityId,
         focus: TransferFocus,
         cursor_player: usize,
         cursor_container: usize,
     ) {
+        let palette = GameUiPalette::DEFAULT;
         let (left, right) = overlay_layout::two_column_tight(fb.width, fb.height);
         let cat = self.content.item_catalog();
         let cname = self
@@ -1970,16 +2157,18 @@ impl Game {
             .get(container.0 as usize)
             .cloned()
             .unwrap_or_else(|| "Chest".into());
-        let left_title = match focus {
-            TransferFocus::Player => "You (*)",
-            TransferFocus::Container => "You",
+        let left_emphasis = if matches!(focus, TransferFocus::Player) {
+            PanelBorderEmphasis::Highlighted
+        } else {
+            PanelBorderEmphasis::Subtle
         };
-        let right_title = match focus {
-            TransferFocus::Container => format!("{cname} (*)"),
-            TransferFocus::Player => cname,
+        let right_emphasis = if matches!(focus, TransferFocus::Container) {
+            PanelBorderEmphasis::Highlighted
+        } else {
+            PanelBorderEmphasis::Subtle
         };
-        crate::ui::draw_bordered_panel(fb, left, left_title);
-        crate::ui::draw_bordered_panel(fb, right, right_title.as_str());
+        draw_rounded_panel(fb, left, "You", left_emphasis, &palette);
+        draw_rounded_panel(fb, right, cname.as_str(), right_emphasis, &palette);
 
         let pn = self.narrative.inventory.stacks.len();
         let cont_stacks = self
@@ -1990,51 +2179,181 @@ impl Game {
             .unwrap_or(&[]);
         let cn = cont_stacks.len();
 
-        let mut pr: Vec<String> = Vec::new();
+        let li = chrome_inner_rect(left);
+        let mut y = li.y;
         for (i, s) in self.narrative.inventory.stacks.iter().enumerate() {
-            let sel = if pn == 0 {
+            if y >= li.bottom().saturating_sub(2) {
+                break;
+            }
+            let sel_p = if pn == 0 {
                 0
             } else {
                 cursor_player.min(pn.saturating_sub(1))
             };
-            let mark = if matches!(focus, TransferFocus::Player) && i == sel {
-                "> "
+            let row = Rect::new(li.x, y, li.w, 1);
+            let hot = self.last_mouse_cell.is_some_and(|m| row.contains(m.x, m.y));
+            let keyboard_sel = matches!(focus, TransferFocus::Player) && i == sel_p;
+            let sel = keyboard_sel || hot;
+            let body = inventory_stack_display_line(&cat, s);
+            let line = if sel {
+                format!("› {body}")
             } else {
-                "  "
+                format!("  {body}")
             };
-            let label = cat.display_name(s.id.as_str());
-            pr.push(format!("{}{} x{}", mark, label, s.count));
+            let fg = if sel {
+                palette.selected_fg
+            } else {
+                palette.text
+            };
+            let bg = if sel {
+                palette.selected_bg
+            } else {
+                palette.panel_bg
+            };
+            let st = Style {
+                bold: sel,
+                dim: !sel,
+                underline: false,
+            };
+            draw_clipped_line(fb, li.x, y, li.w, &line, fg, bg, st);
+            self.ui_hits.push(UiHitTarget::TransferPlayerStack(i), row);
+            y = y.saturating_add(1);
         }
-        if pr.is_empty() {
-            pr.push("(empty)".into());
+        if self.narrative.inventory.stacks.is_empty() && y < li.bottom().saturating_sub(2) {
+            draw_clipped_line(
+                fb,
+                li.x,
+                y,
+                li.w,
+                "(empty)",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
         }
-        let mut cr: Vec<String> = Vec::new();
+        let hint_y = li.bottom().saturating_sub(2);
+        if hint_y >= li.y && hint_y < li.bottom() {
+            draw_clipped_line(
+                fb,
+                li.x,
+                hint_y,
+                li.w,
+                "—",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
+        }
+        let hint_y2 = li.bottom().saturating_sub(1);
+        if hint_y2 >= li.y && hint_y2 < li.bottom() {
+            draw_clipped_line(
+                fb,
+                li.x,
+                hint_y2,
+                li.w,
+                "click row move · Tab · Enter · Esc close",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        let ri = chrome_inner_rect(right);
+        y = ri.y;
         for (i, s) in cont_stacks.iter().enumerate() {
-            let sel = if cn == 0 {
+            if y >= ri.bottom().saturating_sub(2) {
+                break;
+            }
+            let sel_c = if cn == 0 {
                 0
             } else {
                 cursor_container.min(cn.saturating_sub(1))
             };
-            let mark = if matches!(focus, TransferFocus::Container) && i == sel {
-                "> "
-            } else {
-                "  "
-            };
+            let row = Rect::new(ri.x, y, ri.w, 1);
+            let hot = self.last_mouse_cell.is_some_and(|m| row.contains(m.x, m.y));
+            let keyboard_sel = matches!(focus, TransferFocus::Container) && i == sel_c;
+            let sel = keyboard_sel || hot;
             let label = cat.display_name(s.id.as_str());
-            cr.push(format!("{}{} x{}", mark, label, s.count));
+            let line = if sel {
+                format!("› {label} x{}", s.count)
+            } else {
+                format!("  {label} x{}", s.count)
+            };
+            let fg = if sel {
+                palette.selected_fg
+            } else {
+                palette.text
+            };
+            let bg = if sel {
+                palette.selected_bg
+            } else {
+                palette.panel_bg
+            };
+            let st = Style {
+                bold: sel,
+                dim: !sel,
+                underline: false,
+            };
+            draw_clipped_line(fb, ri.x, y, ri.w, &line, fg, bg, st);
+            self.ui_hits.push(UiHitTarget::TransferContainerStack(i), row);
+            y = y.saturating_add(1);
         }
-        if cr.is_empty() {
-            cr.push("(empty)".into());
+        if cont_stacks.is_empty() && y < ri.bottom().saturating_sub(2) {
+            draw_clipped_line(
+                fb,
+                ri.x,
+                y,
+                ri.w,
+                "(empty)",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
         }
-        pr.push("---".into());
-        pr.push("Tab pane · Enter/Space move stack · Esc or q close".into());
-        cr.push("---".into());
-        cr.push("Tab pane · Enter/Space move stack · Esc or q close".into());
-
-        let li = crate::ui::layout::panel_inner(left);
-        let ri = crate::ui::layout::panel_inner(right);
-        crate::ui::draw_text_block(fb, li, &pr);
-        crate::ui::draw_text_block(fb, ri, &cr);
+        let hint_y = ri.bottom().saturating_sub(2);
+        if hint_y >= ri.y && hint_y < ri.bottom() {
+            draw_clipped_line(
+                fb,
+                ri.x,
+                hint_y,
+                ri.w,
+                "—",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
+        }
+        let hint_y2 = ri.bottom().saturating_sub(1);
+        if hint_y2 >= ri.y && hint_y2 < ri.bottom() {
+            draw_clipped_line(
+                fb,
+                ri.x,
+                hint_y2,
+                ri.w,
+                "click row move · Tab · Enter · Esc close",
+                palette.text_dim,
+                palette.panel_bg,
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
+            );
+        }
     }
 
     fn compose_world(&self, fb: &mut FrameBuffer, area: Rect) {
@@ -2169,9 +2488,16 @@ impl Game {
         ))
     }
 
-    pub fn apply_save(&mut self, s: crate::save::SaveGameV1) -> Result<(), String> {
-        if s.schema_version != crate::save::SAVE_SCHEMA_VERSION {
-            return Err(format!("unsupported save version {}", s.schema_version));
+    pub fn apply_save(&mut self, mut s: crate::save::SaveGameV1) -> Result<(), String> {
+        if s.schema_version > crate::save::SAVE_SCHEMA_VERSION {
+            return Err(format!(
+                "unsupported save version {} (max {})",
+                s.schema_version,
+                crate::save::SAVE_SCHEMA_VERSION
+            ));
+        }
+        if s.schema_version < 8 {
+            s.world.narrative.migrate_legacy_equipment_into_stacks();
         }
         self.map = s.world.map;
         self.map_visual_seed = derive_visual_seed_from_map(&self.map);

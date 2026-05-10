@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::content::{Condition, DemoQuestPhase, Effect, QuestJournalStatus};
-use crate::item::{EquipSlot, Inventory, InventoryError, ItemStack};
+use crate::item::{EquipSlot, Inventory, InventoryError, ItemStack, StackEquipped};
 
 /// One timestamped line under a quest in the journal (ordering uses `seq`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,9 +41,11 @@ pub struct NarrativeState {
     pub met_npcs: HashSet<String>,
     pub inventory: Inventory,
     pub container_inventories: HashMap<u32, Inventory>,
+    /// Legacy only (save schema &lt; 8); migrated into [`Inventory`] stacks with [`StackEquipped`].
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub equipment: HashMap<EquipSlot, String>,
-    /// Arrows (or other ammo) committed for ranged attacks; press **e** on ammo in inventory to load.
-    #[serde(default)]
+    /// Legacy only; migrated into a quiver [`ItemStack`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub equipped_ammo: Option<ItemStack>,
 }
 
@@ -54,6 +56,115 @@ pub enum NarrativeApplyError {
 }
 
 impl NarrativeState {
+    /// Imports legacy `equipment` / `equipped_ammo` into [`ItemStack::equipped`] rows. Idempotent.
+    pub fn migrate_legacy_equipment_into_stacks(&mut self) {
+        if self.equipment.is_empty() && self.equipped_ammo.is_none() {
+            return;
+        }
+        let legacy_eq = std::mem::take(&mut self.equipment);
+        let legacy_ammo = self.equipped_ammo.take();
+        for (slot, item_id) in legacy_eq {
+            self.inventory.stacks.push(ItemStack::worn(item_id, slot));
+        }
+        if let Some(am) = legacy_ammo {
+            if am.count > 0 {
+                self.inventory
+                    .absorb_stack(ItemStack::quiver(am.id, am.count));
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn worn_item_id_in_slot(&self, slot: EquipSlot) -> Option<&str> {
+        self.inventory.stacks.iter().find_map(|s| {
+            if matches!(s.equipped, Some(StackEquipped::Wear(sl)) if sl == slot) {
+                Some(s.id.as_str())
+            } else {
+                None
+            }
+        })
+    }
+
+    #[must_use]
+    pub fn main_hand_item_id(&self) -> Option<&str> {
+        self.worn_item_id_in_slot(EquipSlot::MainHand)
+    }
+
+    /// Count of arrows in the quiver stack (any ammo id currently flagged [`StackEquipped::Quiver`]).
+    #[must_use]
+    pub fn quiver_count_for_ranged(&self, ammo_id: &str) -> u32 {
+        self.inventory
+            .stacks
+            .iter()
+            .find(|s| {
+                s.id == ammo_id && matches!(s.equipped, Some(StackEquipped::Quiver))
+            })
+            .map(|s| s.count)
+            .unwrap_or(0)
+    }
+
+    /// Toggle **wear** for equippable items: splits a stack when needed; toggle again on the worn
+    /// row unequips.
+    pub fn equip_wear_stack(&mut self, idx: usize, slot: EquipSlot) {
+        let Some(stack) = self.inventory.stacks.get(idx).cloned() else {
+            return;
+        };
+        if matches!(stack.equipped, Some(StackEquipped::Quiver)) {
+            return;
+        }
+        if matches!(stack.equipped, Some(StackEquipped::Wear(s)) if s == slot) {
+            self.inventory.stacks[idx].equipped = None;
+            self.inventory.consolidate_loose(&stack.id);
+            return;
+        }
+        for (i, s) in self.inventory.stacks.iter_mut().enumerate() {
+            if i != idx && matches!(s.equipped, Some(StackEquipped::Wear(sl)) if sl == slot) {
+                s.equipped = None;
+            }
+        }
+        if matches!(stack.equipped, Some(StackEquipped::Wear(_))) {
+            self.inventory.stacks[idx].equipped = None;
+        }
+        let Some(stack) = self.inventory.stacks.get(idx).cloned() else {
+            return;
+        };
+        if stack.count == 1 {
+            self.inventory.stacks[idx].equipped = Some(StackEquipped::Wear(slot));
+            self.inventory.consolidate_loose(&stack.id);
+        } else {
+            self.inventory.stacks[idx].count -= 1;
+            self.inventory.stacks.push(ItemStack::worn(stack.id.clone(), slot));
+            self.inventory.consolidate_loose(&stack.id);
+        }
+    }
+
+    /// Load / unload ammo quiver: at most one quiver stack; pickups merge into it via [`Inventory::add`].
+    pub fn toggle_ammo_quiver(&mut self, idx: usize) {
+        let Some(stack) = self.inventory.stacks.get(idx).cloned() else {
+            return;
+        };
+        if matches!(stack.equipped, Some(StackEquipped::Quiver)) {
+            self.inventory.stacks[idx].equipped = None;
+            self.inventory.consolidate_loose(&stack.id);
+            return;
+        }
+        let id = stack.id.clone();
+        for s in self.inventory.stacks.iter_mut() {
+            if matches!(s.equipped, Some(StackEquipped::Quiver)) {
+                s.equipped = None;
+            }
+        }
+        self.inventory.consolidate_loose(&id);
+        if let Some(i) = self
+            .inventory
+            .stacks
+            .iter()
+            .position(|s| s.id == id && s.equipped.is_none())
+        {
+            self.inventory.stacks[i].equipped = Some(StackEquipped::Quiver);
+        }
+    }
+
     #[must_use]
     pub fn quest_status(&self, quest_id: &str) -> Option<QuestJournalStatus> {
         self.quest_journal

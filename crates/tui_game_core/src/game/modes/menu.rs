@@ -4,7 +4,15 @@ use crate::ui::hit::UiHitTarget;
 
 pub(crate) fn handle(game: &mut Game, ev: GameInput, selected: usize) {
     match ev {
+        GameInput::Command(GameCommand::ToggleDebug) => {
+            game.debug_overlay = !game.debug_overlay;
+        }
         GameInput::Raw(InputEvent::Mouse {
+            kind: MouseEventKind::Moved,
+            cell,
+            ..
+        })
+        | GameInput::Raw(InputEvent::Mouse {
             kind: MouseEventKind::Down(MouseButton::Left),
             cell,
             ..

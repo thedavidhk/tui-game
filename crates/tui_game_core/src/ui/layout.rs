@@ -17,12 +17,13 @@ pub struct GameShellLayout;
 
 impl GameShellLayout {
     /// Width of the right-hand status column (clamped so the map keeps [`Self::MIN_WORLD_WIDTH`]).
-    pub const HUD_WIDTH: u16 = 32;
+    pub const HUD_WIDTH: u16 = 26;
     /// Minimum number of columns left for the world view when clamping HUD width.
     pub const MIN_WORLD_WIDTH: u16 = 10;
 
     /// Height of the bottom log strip in terminal rows (full [`Rect::h`], including borders).
-    pub const LOG_HEIGHT: u16 = 8;
+    /// Includes borders; body fits roughly 3–5 log lines plus an optional footer row.
+    pub const LOG_HEIGHT: u16 = 7;
     /// Minimum number of rows left for the world view above the log when clamping log height.
     pub const MIN_WORLD_HEIGHT: u16 = 3;
 
@@ -43,6 +44,33 @@ impl GameShellLayout {
     }
 }
 
+/// Width of centered overlay bands (dialogue, inventory, journal, chest transfer).
+///
+/// Tune **`WIDTH_FRAC_NUM`** / **`WIDTH_FRAC_DEN`** for fraction of the terminal (default **1/2**).
+/// [`MIN_WIDTH`] prevents unreadably narrow panels on small terminals.
+#[derive(Clone, Copy, Debug)]
+pub struct OverlayBandLayout;
+
+impl OverlayBandLayout {
+    pub const WIDTH_FRAC_NUM: u32 = 1;
+    pub const WIDTH_FRAC_DEN: u32 = 2;
+    pub const MIN_WIDTH: u16 = 28;
+
+    #[must_use]
+    pub fn band_width(terminal_w: u16) -> u16 {
+        let raw =
+            u32::from(terminal_w).saturating_mul(Self::WIDTH_FRAC_NUM) / Self::WIDTH_FRAC_DEN;
+        let w = (raw as u16).max(Self::MIN_WIDTH).min(terminal_w);
+        w.max(1)
+    }
+
+    /// Left column for a [`band_width`] panel centered in `terminal_w`.
+    #[must_use]
+    pub fn band_left_x(terminal_w: u16, band_w: u16) -> u16 {
+        terminal_w.saturating_sub(band_w) / 2
+    }
+}
+
 /// Small anchored panels drawn on top of the world in `game::view::compose`.
 pub struct FloatingPanelLayout;
 
@@ -52,8 +80,6 @@ impl FloatingPanelLayout {
     pub const MAIN_MENU_W: u16 = 30;
     pub const MAIN_MENU_H: u16 = 10;
 
-    /// Horizontal inset from each screen edge for the dialogue band.
-    pub const DIALOGUE_MARGIN_X: u16 = 2;
     /// Distance from the **top** of the dialogue [`Rect`] to the bottom of the framebuffer (`y = h - value`).
     pub const DIALOGUE_FROM_BOTTOM: u16 = 12;
     pub const DIALOGUE_HEIGHT: u16 = 10;
@@ -66,7 +92,7 @@ impl FloatingPanelLayout {
     pub const DEBUG_MARGIN_X: u16 = 2;
     /// Same convention as [`Self::DIALOGUE_FROM_BOTTOM`]: `y = fb_h - value`.
     pub const DEBUG_FROM_BOTTOM: u16 = 8;
-    pub const DEBUG_HEIGHT: u16 = 6;
+    pub const DEBUG_HEIGHT: u16 = 10;
 
     pub const GAME_OVER_W: u16 = 38;
     pub const GAME_OVER_H: u16 = 8;
@@ -83,11 +109,12 @@ impl FloatingPanelLayout {
 
     #[must_use]
     pub fn dialogue_band(fb_w: u16, fb_h: u16) -> Rect {
-        let w = fb_w.saturating_sub(Self::DIALOGUE_MARGIN_X.saturating_mul(2));
+        let w = OverlayBandLayout::band_width(fb_w);
+        let x = OverlayBandLayout::band_left_x(fb_w, w);
         Rect::new(
-            Self::DIALOGUE_MARGIN_X,
+            x,
             fb_h.saturating_sub(Self::DIALOGUE_FROM_BOTTOM),
-            w,
+            w.max(1),
             Self::DIALOGUE_HEIGHT,
         )
     }
@@ -168,7 +195,15 @@ pub fn split_horizontal_columns(
 
 #[cfg(test)]
 mod tests {
-    use super::{split_horizontal_columns, GameShellLayout, Rect};
+    use super::{split_horizontal_columns, GameShellLayout, OverlayBandLayout, Rect};
+
+    #[test]
+    fn overlay_band_default_is_half_width_centered() {
+        assert_eq!(OverlayBandLayout::band_width(80), 40);
+        assert_eq!(OverlayBandLayout::band_left_x(80, 40), 20);
+        assert_eq!(OverlayBandLayout::band_width(100), 50);
+        assert_eq!(OverlayBandLayout::band_left_x(100, 50), 25);
+    }
 
     #[test]
     fn split_horizontal_columns_two_matches_legacy_outer_split() {
@@ -196,8 +231,8 @@ mod tests {
         let h = 40u16;
         let (world, hud, log) = GameShellLayout::root_panels(w, h);
         let hud_w = GameShellLayout::HUD_WIDTH.min(w.saturating_sub(GameShellLayout::MIN_WORLD_WIDTH));
-        let log_h =
-            GameShellLayout::LOG_HEIGHT.min(h.saturating_sub(GameShellLayout::MIN_WORLD_HEIGHT));
+        let log_h = GameShellLayout::LOG_HEIGHT
+            .min(h.saturating_sub(GameShellLayout::MIN_WORLD_HEIGHT));
         assert_eq!(hud.w, hud_w);
         assert_eq!(log.h, log_h);
         assert_eq!(
