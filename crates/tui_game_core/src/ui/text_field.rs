@@ -193,11 +193,16 @@ pub fn draw_text_field(
     }
 }
 
+/// Centered rectangle within a `screen_w` × `screen_h` cell grid (clipped).
+pub fn centered_rect_dims(screen_w: u16, screen_h: u16, w: u16, h: u16) -> Rect {
+    let w = w.min(screen_w);
+    let h = h.min(screen_h);
+    let x = screen_w.saturating_sub(w) / 2;
+    let y = screen_h.saturating_sub(h) / 2;
+    Rect::new(x, y, w, h)
+}
+
 /// Centered modal panel rect (clipped to framebuffer).
 pub fn centered_rect(fb: &FrameBuffer, w: u16, h: u16) -> Rect {
-    let w = w.min(fb.width);
-    let h = h.min(fb.height);
-    let x = fb.width.saturating_sub(w) / 2;
-    let y = fb.height.saturating_sub(h) / 2;
-    Rect::new(x, y, w, h)
+    centered_rect_dims(fb.width, fb.height, w, h)
 }

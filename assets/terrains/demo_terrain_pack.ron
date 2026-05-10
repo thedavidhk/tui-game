@@ -41,9 +41,9 @@
             blocks_sight: false,
             name: "grass",
             fg: (
-                r: 111,
-                g: 168,
-                b: 91,
+                r: 96,
+                g: 146,
+                b: 84,
             ),
             bg: Some((
                 r: 29,
@@ -55,39 +55,39 @@
                 kind: "static_variants",
                 entries: [
                     (
-                        weight: 4,
+                        weight: 5,
                         ch: ',',
                         fg: (
-                            r: 101,
-                            g: 150,
-                            b: 82,
+                            r: 88,
+                            g: 132,
+                            b: 76,
                         ),
                     ),
                     (
                         weight: 3,
                         ch: '.',
                         fg: (
-                            r: 92,
-                            g: 138,
-                            b: 77,
+                            r: 82,
+                            g: 122,
+                            b: 72,
                         ),
                     ),
                     (
                         weight: 1,
                         ch: ';',
                         fg: (
-                            r: 132,
-                            g: 162,
-                            b: 86,
+                            r: 105,
+                            g: 140,
+                            b: 80,
                         ),
                     ),
                     (
-                        weight: 2,
+                        weight: 1,
                         ch: '`',
                         fg: (
-                            r: 124,
-                            g: 184,
-                            b: 112,
+                            r: 104,
+                            g: 150,
+                            b: 94,
                         ),
                     ),
                 ],
@@ -100,9 +100,9 @@
             blocks_sight: false,
             name: "water",
             fg: (
-                r: 92,
-                g: 181,
-                b: 204,
+                r: 41,
+                g: 91,
+                b: 111,
             ),
             bg: Some((
                 r: 17,
@@ -116,33 +116,33 @@
                     (
                         ch: '~',
                         fg: (
-                            r: 82,
-                            g: 166,
-                            b: 190,
+                            r: 38,
+                            g: 84,
+                            b: 104,
                         ),
                     ),
                     (
                         ch: '≈',
                         fg: (
-                            r: 104,
-                            g: 194,
-                            b: 216,
+                            r: 46,
+                            g: 99,
+                            b: 118,
                         ),
                     ),
                     (
                         ch: '~',
                         fg: (
-                            r: 92,
-                            g: 181,
-                            b: 204,
+                            r: 41,
+                            g: 91,
+                            b: 111,
                         ),
                     ),
                     (
                         ch: '-',
                         fg: (
-                            r: 72,
-                            g: 150,
-                            b: 178,
+                            r: 34,
+                            g: 77,
+                            b: 98,
                         ),
                     ),
                 ],
@@ -226,14 +226,14 @@
         ),
 
         (
-            glyph: '♣',
+            glyph: 'Y',
             blocks_movement: true,
             blocks_sight: true,
             name: "tree",
             fg: (
-                r: 116,
-                g: 184,
-                b: 98,
+                r: 166,
+                g: 112,
+                b: 66,
             ),
             bg: None,
             connect_mask: 0,
@@ -457,9 +457,9 @@
             blocks_sight: false,
             name: "sand",
             fg: (
-                r: 202,
-                g: 171,
-                b: 107,
+                r: 188,
+                g: 160,
+                b: 105,
             ),
             bg: Some((
                 r: 88,
@@ -607,9 +607,9 @@
             blocks_sight: false,
             name: "deep_water",
             fg: (
-                r: 54,
-                g: 129,
-                b: 156,
+                r: 25,
+                g: 64,
+                b: 84,
             ),
             bg: Some((
                 r: 11,
@@ -623,33 +623,33 @@
                     (
                         ch: '~',
                         fg: (
-                            r: 48,
-                            g: 117,
-                            b: 145,
+                            r: 23,
+                            g: 59,
+                            b: 78,
                         ),
                     ),
                     (
                         ch: '≈',
                         fg: (
-                            r: 61,
-                            g: 141,
-                            b: 166,
+                            r: 29,
+                            g: 71,
+                            b: 91,
                         ),
                     ),
                     (
                         ch: '~',
                         fg: (
-                            r: 54,
-                            g: 129,
-                            b: 156,
+                            r: 25,
+                            g: 64,
+                            b: 84,
                         ),
                     ),
                     (
                         ch: '-',
                         fg: (
-                            r: 42,
-                            g: 105,
-                            b: 133,
+                            r: 21,
+                            g: 54,
+                            b: 73,
                         ),
                     ),
                 ],
@@ -666,9 +666,9 @@
             blocks_sight: false,
             name: "shallow_water",
             fg: (
-                r: 113,
-                g: 199,
-                b: 211,
+                r: 49,
+                g: 105,
+                b: 119,
             ),
             bg: Some((
                 r: 24,
@@ -682,33 +682,92 @@
                     (
                         ch: '~',
                         fg: (
-                            r: 101,
-                            g: 184,
-                            b: 198,
+                            r: 45,
+                            g: 97,
+                            b: 112,
                         ),
                     ),
                     (
                         ch: '≈',
                         fg: (
-                            r: 127,
-                            g: 213,
-                            b: 222,
+                            r: 56,
+                            g: 115,
+                            b: 127,
                         ),
                     ),
                     (
                         ch: '~',
                         fg: (
-                            r: 113,
-                            g: 199,
-                            b: 211,
+                            r: 49,
+                            g: 105,
+                            b: 119,
                         ),
                     ),
                     (
                         ch: '-',
                         fg: (
-                            r: 91,
-                            g: 169,
-                            b: 186,
+                            r: 41,
+                            g: 89,
+                            b: 106,
+                        ),
+                    ),
+                ],
+                mode: "cycle",
+                ticks_per_frame: 6,
+                p_step_num: 0,
+                p_step_den: 60,
+            )),
+        ),
+
+        (
+            glyph: '~',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "shallow_water",
+            fg: (
+                r: 74,
+                g: 143,
+                b: 154,
+            ),
+            bg: Some((
+                r: 24,
+                g: 72,
+                b: 82,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "animated",
+                frames: [
+                    (
+                        ch: '~',
+                        fg: (
+                            r: 68,
+                            g: 132,
+                            b: 145,
+                        ),
+                    ),
+                    (
+                        ch: '≈',
+                        fg: (
+                            r: 84,
+                            g: 156,
+                            b: 165,
+                        ),
+                    ),
+                    (
+                        ch: '~',
+                        fg: (
+                            r: 74,
+                            g: 143,
+                            b: 154,
+                        ),
+                    ),
+                    (
+                        ch: '-',
+                        fg: (
+                            r: 61,
+                            g: 121,
+                            b: 137,
                         ),
                     ),
                 ],

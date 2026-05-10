@@ -38,7 +38,7 @@ fn infer_ground(i: usize, orig: &[u16], w: usize, h: usize, prop_ids: &HashSet<u
         }
     }
     for &p in PREFER {
-        if seen.iter().any(|&t| t == p) {
+        if seen.contains(&p) {
             return p;
         }
     }

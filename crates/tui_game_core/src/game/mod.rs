@@ -396,7 +396,7 @@ impl Game {
         };
         let vw = self.viewport_w;
         let vh = self.viewport_h;
-        let pack_base = stored_path.as_ref().map(|p| Path::new(p.as_str()).parent()).flatten();
+        let pack_base = stored_path.as_ref().and_then(|p| Path::new(p.as_str()).parent());
         let mut g = Self::from_level_file(&level, vw, vh, self.key_map, pack_base)?;
         g.restart_level_ron_path = stored_path;
         g.modes.stack = vec![GameMode::Exploration];

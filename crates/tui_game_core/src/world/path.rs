@@ -197,8 +197,8 @@ fn euclidean_distance_sq(a: (i32, i32), b: (i32, i32)) -> i64 {
 }
 
 fn octile_cost(a: (i32, i32), b: (i32, i32)) -> u32 {
-    let dx = (a.0 - b.0).abs() as u32;
-    let dy = (a.1 - b.1).abs() as u32;
+    let dx = (a.0 - b.0).unsigned_abs();
+    let dy = (a.1 - b.1).unsigned_abs();
     let diag = dx.min(dy);
     let straight = dx.max(dy) - diag;
     DIAGONAL_COST * diag + ORTHOGONAL_COST * straight

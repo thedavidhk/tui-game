@@ -13,6 +13,7 @@ pub mod palette;
 pub mod viewport_scroll;
 mod panel;
 mod text_field;
+mod search_list_picker;
 pub mod wrap;
 
 pub use dialogue::draw_dialogue;
@@ -29,4 +30,7 @@ pub use log::draw_log;
 pub use menu::draw_menu;
 pub use palette::PRESET_COLORS;
 pub use panel::{draw_bordered_panel, draw_text_block};
-pub use text_field::{centered_rect, draw_text_field, TextField, TextFieldOutput, TextFilter};
+pub use text_field::{
+    centered_rect, centered_rect_dims, draw_text_field, TextField, TextFieldOutput, TextFilter,
+};
+pub use search_list_picker::{SearchListPicker, SearchListPickerHit, SearchListPickerOutput};

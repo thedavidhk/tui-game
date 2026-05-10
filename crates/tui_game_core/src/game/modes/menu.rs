@@ -36,7 +36,7 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput, selected: usize) {
         GameInput::Command(GameCommand::Confirm) => {
             match selected {
                 0 => {
-                    let needs_full_reset = game.player_id().map_or(true, |pid| {
+                    let needs_full_reset = game.player_id().is_none_or(|pid| {
                         !game.entities.is_alive(pid) || game.entities.pos(pid).is_none()
                     });
                     if needs_full_reset {
