@@ -25,6 +25,12 @@ cargo run -p tui_level_editor -- assets/levels/other_level.ron
 
 Saves written from the game use **`save.ron`** in the current working directory (see in-game keys below).
 
+## Screenshots
+
+![Demo Level Exploration](./assets/screenshots/demo_exploration_2026_05_11.png)
+![Demo Level Dialogue](./assets/screenshots/demo_dialogue_2026_05_11.png)
+![Demo Level Inventory](./assets/screenshots/demo_dialogue_2026_05_11.png)
+
 ## Tests
 
 ```bash
