@@ -33,12 +33,8 @@ pub fn command_footer(game: &Game) -> &'static str {
         Some(GameMode::Inventory { .. }) => {
             "u use   e equip   Up/Down browse   Esc back   F1 debug"
         }
-        Some(GameMode::Journal { .. }) => {
-            "Up/Down browse   PgUp/PgDn scroll   Esc back   F1 debug"
-        }
-        Some(GameMode::ItemTransfer { .. }) => {
-            "Enter move stack   Tab side   Esc close   F1 debug"
-        }
+        Some(GameMode::Journal { .. }) => "Up/Down browse   PgUp/PgDn scroll   Esc back   F1 debug",
+        Some(GameMode::ItemTransfer { .. }) => "Enter move stack   Tab side   Esc close   F1 debug",
         Some(GameMode::Dialogue { .. }) => "Enter confirm   Esc leave   F1 debug",
         Some(GameMode::MainMenu { .. }) => "Enter confirm   Esc quit   F1 debug",
         Some(GameMode::GameOver) => "Enter / Esc — main menu",
@@ -57,9 +53,6 @@ pub fn exploration_status_lines(game: &Game) -> Vec<String> {
             lines.push(format!("Speed    {}", s.speed));
         }
     }
-    lines.push(String::new());
-    lines.push("Quest".into());
-    lines.extend(player_quest_summary(game));
     lines.push(String::new());
     lines.push("Here".into());
     lines.extend(hover::exploration_here_lines(game));
@@ -100,25 +93,11 @@ pub fn combat_status_lines(game: &Game, state: &CombatState) -> Vec<String> {
     lines
 }
 
-fn player_quest_summary(game: &Game) -> Vec<String> {
-    let mut v = game
-        .content
-        .runtime_hooks
-        .hud_quest_status_lines(&game.narrative);
-    if v.is_empty() {
-        v.push("(no active objective)".into());
-    }
-    v
-}
-
 /// Lines appended to the F1 debug overlay (encoding stats, internal quest phase, verbose hover).
 #[must_use]
 pub fn debug_overlay_lines(game: &Game, dirty_cells_prev: usize) -> Vec<String> {
     let mut lines = vec![
-        format!(
-            "Demo quest phase (internal): {:?}",
-            game.narrative.quests
-        ),
+        format!("Demo quest phase (internal): {:?}", game.narrative.quests),
         format!(
             "viewport {}×{} · map {}×{}",
             game.viewport_w, game.viewport_h, game.map.width, game.map.height

@@ -224,7 +224,7 @@ fn top_border_inner_title(title: &str, inner_w: usize) -> String {
     out.push_str(&title_part);
 
     let pad = inner_w.saturating_sub(out.chars().count());
-    out.extend(std::iter::repeat('─').take(pad));
+    out.extend(std::iter::repeat_n('─', pad));
 
     if out.chars().count() > inner_w {
         return out.chars().take(inner_w).collect();

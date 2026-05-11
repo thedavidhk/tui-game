@@ -5,9 +5,7 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput) {
         GameInput::Command(GameCommand::ToggleDebug) => {
             game.debug_overlay = !game.debug_overlay;
         }
-        GameInput::Command(cmd)
-            if matches!(cmd, GameCommand::Confirm | GameCommand::Back) =>
-        {
+        GameInput::Command(GameCommand::Confirm | GameCommand::Back) => {
             game.modes.stack = vec![GameMode::MainMenu { selected: 0 }];
             game.log.push("Main menu.".into());
         }

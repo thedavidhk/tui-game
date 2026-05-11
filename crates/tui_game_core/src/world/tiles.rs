@@ -271,8 +271,11 @@ pub struct TileDef {
     pub glyph: char,
     pub blocks_movement: bool,
     pub blocks_sight: bool,
-    /// Display name for editor / debug.
+    /// Stable id for tools, tests, and search (often snake_case).
     pub name: String,
+    /// Short immersive line for the in-game HUD; when empty, [`Self::name`] is shown.
+    #[serde(default)]
+    pub description: String,
     /// Glyph foreground when the tile is drawn in truecolor terminals.
     #[serde(default)]
     pub fg: Color,
@@ -296,6 +299,16 @@ impl TileDef {
             .unwrap_or_else(|| Color::terrain_bg_from_fg(self.fg))
     }
 
+    /// Text shown in exploration HUD etc.; falls back to [`Self::name`] if empty.
+    #[must_use]
+    pub fn description(&self) -> &str {
+        if self.description.is_empty() {
+            self.name.as_str()
+        } else {
+            self.description.as_str()
+        }
+    }
+
     pub fn floor(id: TileId, glyph: char, name: impl Into<String>) -> Self {
         Self {
             id,
@@ -303,6 +316,7 @@ impl TileDef {
             blocks_movement: false,
             blocks_sight: false,
             name: name.into(),
+            description: String::new(),
             fg: Color::rgb(190, 188, 175),
             bg: None,
             connect_mask: 0,
@@ -317,6 +331,7 @@ impl TileDef {
             blocks_movement: true,
             blocks_sight: true,
             name: name.into(),
+            description: String::new(),
             fg: Color::rgb(140, 135, 125),
             bg: None,
             connect_mask: 0,

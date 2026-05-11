@@ -89,36 +89,6 @@ pub fn dialogue_start_node(
     0
 }
 
-#[must_use]
-pub fn hud_quest_status_lines(narrative: &NarrativeState) -> Vec<String> {
-    fn qstage(map: &std::collections::HashMap<String, u32>, key: &str) -> u32 {
-        *map.get(key).unwrap_or(&0)
-    }
-    let gf = qstage(&narrative.quest_stages, "guide_fetch");
-    let guide = match gf {
-        0 => "Guide fetch: —",
-        1 => "Guide fetch: listened",
-        2 => "Guide fetch: hold key",
-        3 => "Guide fetch: returned ✓",
-        _ => "Guide fetch: ?",
-    };
-    let hd = qstage(&narrative.quest_stages, "healer_delivery");
-    let healer = match hd {
-        0 => "Healer tonic: —",
-        1 => "Healer tonic: pledged",
-        n if n >= 2 => "Healer tonic: delivered ✓",
-        _ => "Healer tonic: ?",
-    };
-    let sr = qstage(&narrative.quest_stages, "scholar_ring");
-    let scholar = match sr {
-        0 => "Scholar ring: —",
-        1 => "Scholar ring: clue heard",
-        n if n >= 3 => "Scholar ring: donated ✓",
-        _ => "Scholar ring: ?",
-    };
-    vec![guide.into(), healer.into(), scholar.into()]
-}
-
 /// When a villager errand completes while `villager_help` is in progress, advance its stage once.
 pub(super) fn try_bump_villager_help_stage(
     narrative: &mut NarrativeState,

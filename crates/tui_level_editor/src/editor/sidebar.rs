@@ -113,7 +113,11 @@ impl Editor {
             &mut y,
             &format!(
                 "{} Paint tiles",
-                if self.mode == Mode::PaintTiles { '>' } else { ' ' }
+                if self.mode == Mode::PaintTiles {
+                    '>'
+                } else {
+                    ' '
+                }
             ),
             SidebarHit::ModePaint,
             self.mode == Mode::PaintTiles,
@@ -124,7 +128,11 @@ impl Editor {
             &mut y,
             &format!(
                 "{} Place entities",
-                if self.mode == Mode::PlaceSpawns { '>' } else { ' ' }
+                if self.mode == Mode::PlaceSpawns {
+                    '>'
+                } else {
+                    ' '
+                }
             ),
             SidebarHit::ModePlace,
             self.mode == Mode::PlaceSpawns,
@@ -135,7 +143,11 @@ impl Editor {
             &mut y,
             &format!(
                 "{} Erase spawns",
-                if self.mode == Mode::EraseSpawns { '>' } else { ' ' }
+                if self.mode == Mode::EraseSpawns {
+                    '>'
+                } else {
+                    ' '
+                }
             ),
             SidebarHit::ModeErase,
             self.mode == Mode::EraseSpawns,
@@ -146,7 +158,11 @@ impl Editor {
             &mut y,
             &format!(
                 "{} Player spawn",
-                if self.mode == Mode::SetPlayerSpawn { '>' } else { ' ' }
+                if self.mode == Mode::SetPlayerSpawn {
+                    '>'
+                } else {
+                    ' '
+                }
             ),
             SidebarHit::ModePlayer,
             self.mode == Mode::SetPlayerSpawn,
@@ -157,7 +173,11 @@ impl Editor {
             &mut y,
             &format!(
                 "{} Atmosphere zones",
-                if self.mode == Mode::AtmosphereZones { '>' } else { ' ' }
+                if self.mode == Mode::AtmosphereZones {
+                    '>'
+                } else {
+                    ' '
+                }
             ),
             SidebarHit::ModeAtmos,
             self.mode == Mode::AtmosphereZones,
@@ -212,12 +232,7 @@ impl Editor {
             } else {
                 String::new()
             };
-            Self::sidebar_plain(
-                fb,
-                inner,
-                &mut y,
-                &row(&format!("Painting {layer}.{sp}")),
-            );
+            Self::sidebar_plain(fb, inner, &mut y, &row(&format!("Painting {layer}.{sp}")));
             if self.paint_layer == PaintLayer::Prop && self.current_tile == EMPTY_PROP_ID {
                 Self::sidebar_plain(
                     fb,
@@ -226,10 +241,8 @@ impl Editor {
                     &row("Prop brush clears overlay (see preview above)."),
                 );
             }
-        } else if self.mode == Mode::PlaceSpawns {
-            if self.current_spawn_blueprint().is_none() {
-                Self::sidebar_plain(fb, inner, &mut y, "(no blueprints)");
-            }
+        } else if self.mode == Mode::PlaceSpawns && self.current_spawn_blueprint().is_none() {
+            Self::sidebar_plain(fb, inner, &mut y, "(no blueprints)");
         }
         Self::sidebar_plain(fb, inner, &mut y, "");
         Self::sidebar_plain(fb, inner, &mut y, "-- Player --");
@@ -264,7 +277,7 @@ impl Editor {
                 " {} id{} {}",
                 if d.solid() { "solid" } else { "open " },
                 d.id,
-                trunc_visual(&d.name, wlim.saturating_sub(12))
+                trunc_visual(d.description(), wlim.saturating_sub(12))
             );
             let mut x = inner.x.saturating_add(2);
             for ch in rest.chars() {
@@ -448,7 +461,8 @@ impl Editor {
             x = x.saturating_add(1);
         }
         let row_w = inner.w.min(right.saturating_sub(inner.x));
-        self.sidebar_hits.push((hit, Rect::new(inner.x, row_y, row_w, 1)));
+        self.sidebar_hits
+            .push((hit, Rect::new(inner.x, row_y, row_w, 1)));
         *y = y.saturating_add(1);
     }
 

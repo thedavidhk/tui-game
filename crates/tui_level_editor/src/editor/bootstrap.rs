@@ -11,7 +11,7 @@ use tui_game_core::level::{
     EntitySpawn, LevelFile, PlayerSpawn,
 };
 use tui_game_core::ui::SearchListPicker;
-use tui_game_core::world::{EMPTY_PROP_ID, TileDef};
+use tui_game_core::world::{TileDef, EMPTY_PROP_ID};
 use tui_game_core::EntityBlueprint;
 
 use super::disk::FileFingerprint;
@@ -71,9 +71,7 @@ impl Editor {
                 Ok(s) => match level_from_ron(&s) {
                     Ok(mut l) => {
                         let st = format!("Loaded {}", path.display());
-                        if let Err(e) =
-                            materialize_tile_defs_from_pack(&mut l, path.parent())
-                        {
+                        if let Err(e) = materialize_tile_defs_from_pack(&mut l, path.parent()) {
                             (
                                 Self::default_level(),
                                 format!("Terrain pack: {e}; new level"),
@@ -161,7 +159,12 @@ impl Editor {
         self.refresh_disk_fingerprint();
         if self.level.tile_defs.is_empty() {
             self.current_tile = 0;
-        } else if !self.level.tile_defs.iter().any(|d| d.id == self.current_tile) {
+        } else if !self
+            .level
+            .tile_defs
+            .iter()
+            .any(|d| d.id == self.current_tile)
+        {
             self.current_tile = self.level.tile_defs[0].id;
         }
         self.sync_brush_memory_from_level();
@@ -194,9 +197,12 @@ impl Editor {
             .iter()
             .enumerate()
             .map(|(i, d)| {
-                let line = format!("{:>3}  {}  {}", i, d.glyph, d.name);
+                let line = format!("{:>3}  {}  {}", i, d.glyph, d.description());
                 let solid_txt = if d.solid() { "solid" } else { "open" };
-                let hay = format!("{i} {} {} {} {}", d.name, d.glyph, d.id, solid_txt);
+                let hay = format!(
+                    "{i} {} {} {} {} {}",
+                    d.name, d.description, d.glyph, d.id, solid_txt
+                );
                 (i, line, hay)
             })
             .collect()

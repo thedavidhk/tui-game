@@ -33,10 +33,12 @@ pub(crate) fn compose(
         &palette,
     );
     let hud_inner = chrome_inner_rect(hud_rect);
-    let lines: Vec<String> = match game.modes.current() {
+    let raw_lines: Vec<String> = match game.modes.current() {
         Some(GameMode::Combat(c)) => hud::combat_status_lines(game, c),
         _ => hud::exploration_status_lines(game),
     };
+    let line_w = hud_inner.w.max(1) as usize;
+    let lines = crate::ui::wrap::wrap_panel_lines(&raw_lines, line_w);
     draw_text_block_theme(fb, hud_inner, &lines, &palette);
 
     draw_rounded_panel(
@@ -163,7 +165,7 @@ pub(crate) fn compose(
     }
 
     if game.debug_overlay {
-        let dbg = FloatingPanelLayout::debug_panel(fb.width, fb.height);
+        let dbg = FloatingPanelLayout::debug_panel(fb.width);
         draw_rounded_panel(
             fb,
             dbg,

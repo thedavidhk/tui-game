@@ -47,10 +47,6 @@ impl ContentRuntimeHooks for GameContentRuntimeHooks {
         npcs::dialogue_start_node(dialogue_id, tree, narrative)
     }
 
-    fn hud_quest_status_lines(&self, narrative: &NarrativeState) -> Vec<String> {
-        npcs::hud_quest_status_lines(narrative)
-    }
-
     fn training_spar_epilogue_node(&self, player_hp: u16, trainer_hp: u16) -> &'static str {
         npcs::training_spar_epilogue_node(player_hp, trainer_hp)
     }

@@ -4,7 +4,7 @@ use crate::input::{Key, KeyChord};
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, Style};
 
-use super::{draw_text_field, draw_text_block, TextField, TextFieldOutput, TextFilter};
+use super::{draw_text_block, draw_text_field, TextField, TextFieldOutput, TextFilter};
 
 #[derive(Clone, Debug)]
 struct Entry {
@@ -60,10 +60,7 @@ impl SearchListPicker {
 
     /// Replace catalog entries. Each item is `(id, display_line, search_blob)`; matching is
     /// ASCII case-insensitive substring on `search_blob`.
-    pub fn set_entries(
-        &mut self,
-        items: impl IntoIterator<Item = (usize, String, String)>,
-    ) {
+    pub fn set_entries(&mut self, items: impl IntoIterator<Item = (usize, String, String)>) {
         self.entries.clear();
         for (id, line, search_blob) in items {
             self.entries.push(Entry {
@@ -231,7 +228,7 @@ impl SearchListPicker {
             };
             let sel = i == self.list_cursor;
             let mut x = panel.x.saturating_add(2);
-            for (_i, ch) in text.chars().enumerate() {
+            for ch in text.chars() {
                 if x >= panel.right().saturating_sub(2) {
                     break;
                 }
@@ -329,7 +326,10 @@ mod tests {
     fn down_moves_selection() {
         let mut p = SearchListPicker::new(5, 16);
         p.set_entries((0..4).map(|i| (i, format!("id {i}"), format!("id {i}"))));
-        assert_eq!(p.apply_key(&chord_key(Key::Down)), SearchListPickerOutput::Continue);
+        assert_eq!(
+            p.apply_key(&chord_key(Key::Down)),
+            SearchListPickerOutput::Continue
+        );
         assert_eq!(p.list_cursor, 1);
         assert_eq!(
             p.apply_key(&chord_key(Key::Enter)),

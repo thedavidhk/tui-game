@@ -140,7 +140,11 @@ impl Editor {
         };
         self.current_tile = d.id;
         self.last_terrain_tile_id = d.id;
-        self.status = format!("Terrain brush: {} (def {})", d.name, def_index);
+        self.status = format!(
+            "Terrain brush: {} (def {})",
+            d.description(),
+            def_index
+        );
         if self.mode != Mode::PaintTiles {
             self.set_mode(Mode::PaintTiles);
         }

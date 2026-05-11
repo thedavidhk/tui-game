@@ -81,7 +81,7 @@ impl FloatingPanelLayout {
     pub const MAIN_MENU_H: u16 = 10;
 
     /// Distance from the **top** of the dialogue [`Rect`] to the bottom of the framebuffer (`y = h - value`).
-    pub const DIALOGUE_FROM_BOTTOM: u16 = 12;
+    pub const DIALOGUE_FROM_BOTTOM: u16 = 18;
     pub const DIALOGUE_HEIGHT: u16 = 10;
 
     pub const COMBAT_X: u16 = 2;
@@ -89,9 +89,8 @@ impl FloatingPanelLayout {
     pub const COMBAT_W: u16 = 40;
     pub const COMBAT_H: u16 = 6;
 
-    pub const DEBUG_MARGIN_X: u16 = 2;
-    /// Same convention as [`Self::DIALOGUE_FROM_BOTTOM`]: `y = fb_h - value`.
-    pub const DEBUG_FROM_BOTTOM: u16 = 8;
+    pub const DEBUG_WIDTH: u16 = 64;
+    pub const DEBUG_FROM_TOP: u16 = 0;
     pub const DEBUG_HEIGHT: u16 = 10;
 
     pub const GAME_OVER_W: u16 = 38;
@@ -125,11 +124,12 @@ impl FloatingPanelLayout {
     }
 
     #[must_use]
-    pub fn debug_panel(fb_w: u16, fb_h: u16) -> Rect {
-        let w = fb_w.saturating_sub(Self::DEBUG_MARGIN_X.saturating_mul(2));
+    pub fn debug_panel(fb_w: u16) -> Rect {
+        let w = Self::DEBUG_WIDTH;
+        let x = fb_w.saturating_sub(Self::DEBUG_WIDTH) / 2;
         Rect::new(
-            Self::DEBUG_MARGIN_X,
-            fb_h.saturating_sub(Self::DEBUG_FROM_BOTTOM),
+            x,
+            Self::DEBUG_FROM_TOP,
             w,
             Self::DEBUG_HEIGHT,
         )

@@ -35,13 +35,13 @@ fn tile_label(map: &MapGrid, pos: GridPos) -> String {
     let g = map
         .ground_at(pos.x, pos.y)
         .and_then(|id| map.table.def(id))
-        .map(|d| d.name.as_str())
+        .map(|d| d.description())
         .unwrap_or("?");
     let p = map
         .prop_at(pos.x, pos.y)
         .filter(|&id| id != EMPTY_PROP_ID)
         .and_then(|id| map.table.def(id))
-        .map(|d| d.name.as_str());
+        .map(|d| d.description());
     match p {
         Some(pn) => format!("{g} / {pn}"),
         None => g.into(),
@@ -52,13 +52,13 @@ fn terrain_primary_name(map: &MapGrid, wp: GridPos) -> String {
     let g = map
         .ground_at(wp.x, wp.y)
         .and_then(|id| map.table.def(id))
-        .map(|d| d.name.to_string())
+        .map(|d| d.description().to_string())
         .unwrap_or_else(|| "Unknown".into());
     let p = map
         .prop_at(wp.x, wp.y)
         .filter(|&id| id != EMPTY_PROP_ID)
         .and_then(|id| map.table.def(id))
-        .map(|d| d.name.as_str());
+        .map(|d| d.description());
     match p {
         Some(pn) if !pn.is_empty() => format!("{pn} ({g})"),
         _ => g,

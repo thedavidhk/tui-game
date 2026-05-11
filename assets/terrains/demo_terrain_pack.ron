@@ -6,6 +6,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "floor",
+            description: "Packed earth and worn stone underfoot.",
             fg: (
                 r: 178,
                 g: 176,
@@ -25,6 +26,7 @@
             blocks_movement: true,
             blocks_sight: true,
             name: "wall",
+            description: "Cold masonry blocks your path.",
             fg: (
                 r: 154,
                 g: 150,
@@ -40,6 +42,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "grass",
+            description: "Soft turf springs beneath your boots.",
             fg: (
                 r: 96,
                 g: 146,
@@ -99,6 +102,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "water",
+            description: "Dark water shifts and glimmers.",
             fg: (
                 r: 41,
                 g: 91,
@@ -158,6 +162,7 @@
             blocks_movement: true,
             blocks_sight: true,
             name: "stone_wall",
+            description: "Mortared stone, damp with age.",
             fg: (
                 r: 162,
                 g: 162,
@@ -176,6 +181,7 @@
             blocks_movement: true,
             blocks_sight: true,
             name: "thick_stone_wall",
+            description: "Massive fortifications of cut stone.",
             fg: (
                 r: 176,
                 g: 174,
@@ -194,6 +200,7 @@
             blocks_movement: true,
             blocks_sight: true,
             name: "plank_wall",
+            description: "Weathered boards, nailed tight.",
             fg: (
                 r: 176,
                 g: 119,
@@ -212,6 +219,7 @@
             blocks_movement: true,
             blocks_sight: true,
             name: "log_wall",
+            description: "Stacked timber, rough and solid.",
             fg: (
                 r: 148,
                 g: 91,
@@ -230,6 +238,7 @@
             blocks_movement: true,
             blocks_sight: true,
             name: "tree",
+            description: "A gnarled trunk; branches whisper overhead.",
             fg: (
                 r: 166,
                 g: 112,
@@ -247,6 +256,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "dirt",
+            description: "Dry soil and scattered grit.",
             fg: (
                 r: 139,
                 g: 104,
@@ -297,6 +307,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "path",
+            description: "A harder strip where many feet have passed.",
             fg: (
                 r: 166,
                 g: 124,
@@ -347,6 +358,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "dark_grass",
+            description: "Shadowed blades, cool and damp.",
             fg: (
                 r: 82,
                 g: 126,
@@ -406,6 +418,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "moss",
+            description: "Velvet moss cushions each step.",
             fg: (
                 r: 126,
                 g: 169,
@@ -456,6 +469,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "sand",
+            description: "Fine sand shifts underfoot.",
             fg: (
                 r: 188,
                 g: 160,
@@ -506,6 +520,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "gravel",
+            description: "Loose stones crunch softly.",
             fg: (
                 r: 150,
                 g: 146,
@@ -556,6 +571,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "mud",
+            description: "Thick mud clings and pulls.",
             fg: (
                 r: 111,
                 g: 91,
@@ -606,6 +622,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "deep_water",
+            description: "Only darkness returns your gaze from below.",
             fg: (
                 r: 25,
                 g: 64,
@@ -665,6 +682,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "shallow_water",
+            description: "Clear ripples dance over pale stone.",
             fg: (
                 r: 49,
                 g: 105,
@@ -724,6 +742,7 @@
             blocks_movement: false,
             blocks_sight: false,
             name: "shallow_water",
+            description: "Sunlit shallows, pleasantly cool.",
             fg: (
                 r: 74,
                 g: 143,
