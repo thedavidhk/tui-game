@@ -5,7 +5,7 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "trainer",
     display_name: "Trainer",
     description: "Friendly sparring NPC (dialogue \"trainer\").",
-    default_glyph: '♟',
+    default_glyph: '🨾',
     default_fg: Rgb24::new(240, 227, 227),
     default_label: "Trainer",
     is_actor: true,

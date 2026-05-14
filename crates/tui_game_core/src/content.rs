@@ -332,6 +332,7 @@ impl ContentPack {
 
     /// Check that a level only references known tiles and entity [`EntityBlueprint::kind`] values.
     pub fn validate_level(&self, level: &LevelFile) -> Result<(), String> {
+        crate::level::validate_unique_terrain_ids(&level.tile_defs)?;
         let n_defs = level.tile_defs.len();
         let expected = (level.width as usize) * (level.height as usize);
         for (i, tid) in level.tiles.iter().enumerate() {
@@ -392,13 +393,13 @@ impl ContentPack {
             let g_blocks = level
                 .tile_defs
                 .iter()
-                .find(|d| d.id == g_tid)
+                .find(|d| d.idx == g_tid)
                 .is_some_and(|d| d.blocks_movement);
             let p_blocks = p_tid != crate::world::EMPTY_PROP_ID
                 && level
                     .tile_defs
                     .iter()
-                    .find(|d| d.id == p_tid)
+                    .find(|d| d.idx == p_tid)
                     .is_some_and(|d| d.blocks_movement);
             if g_blocks || p_blocks {
                 return Err(format!(

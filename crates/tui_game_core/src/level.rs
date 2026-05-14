@@ -1,5 +1,6 @@
 //! Serializable level files (RON), atmosphere recipes, and terrain pack merging.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -85,7 +86,7 @@ pub struct TerrainPack {
 }
 
 impl TerrainPack {
-    pub const SCHEMA: u32 = 1;
+    pub const SCHEMA: u32 = 2;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -107,7 +108,7 @@ pub struct LevelFile {
     pub name: String,
     pub width: u16,
     pub height: u16,
-    /// Ground terrain indices into [`Self::tile_defs`] (RON field `tiles`).
+    /// Ground terrain indices into the resolved [`Self::tile_defs`] slice (RON field `tiles`).
     pub tiles: Vec<TileId>,
     /// Prop overlay per cell; [`EMPTY_PROP_ID`] = none. Omitted from RON when empty or all-clear.
     #[serde(default, skip_serializing_if = "level_props_omittable")]
@@ -116,8 +117,13 @@ pub struct LevelFile {
     /// When empty, [`Self::tile_defs`] must be populated (tests / legacy).
     #[serde(default)]
     pub terrain_pack: String,
-    /// Inline tile definitions when [`Self::terrain_pack`] is empty.
-    #[serde(default)]
+    /// When set together with [`Self::terrain_pack`], each entry is a [`TileDef::terrain_id`]
+    /// from the pack. Numeric [`Self::tiles`] / [`Self::props`] indices refer to this list’s order,
+    /// so tile definitions may be listed in any order inside the pack file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terrain_palette: Vec<String>,
+    /// Inline tile definitions when [`Self::terrain_pack`] is empty; omitted when empty on save.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tile_defs: Vec<TileDef>,
     pub spawns: Vec<EntitySpawn>,
     #[serde(default)]
@@ -130,6 +136,54 @@ pub struct LevelFile {
     pub atmosphere_zones: Vec<AtmosphereZone>,
 }
 
+pub(crate) fn validate_unique_terrain_ids(defs: &[TileDef]) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    for d in defs {
+        if d.terrain_id.is_empty() {
+            return Err("tile_defs entry has empty id".into());
+        }
+        if !seen.insert(d.terrain_id.as_str()) {
+            return Err(format!("duplicate terrain id {:?}", d.terrain_id));
+        }
+    }
+    Ok(())
+}
+
+pub fn apply_terrain_pack_to_level(level: &mut LevelFile, pack: TerrainPack) -> Result<(), String> {
+    if pack.tile_defs.is_empty() {
+        return Err("terrain pack has no tile_defs".into());
+    }
+    validate_unique_terrain_ids(&pack.tile_defs)?;
+    if level.terrain_palette.is_empty() {
+        level.tile_defs = pack.tile_defs;
+    } else {
+        let mut by_key: HashMap<String, TileDef> = HashMap::new();
+        for mut d in pack.tile_defs {
+            d.idx = 0;
+            by_key.insert(d.terrain_id.clone(), d);
+        }
+        let mut out = Vec::with_capacity(level.terrain_palette.len());
+        let mut seen_palette = HashSet::new();
+        for k in &level.terrain_palette {
+            if k.is_empty() {
+                return Err("terrain_palette contains empty string".into());
+            }
+            if !seen_palette.insert(k.as_str()) {
+                return Err(format!("terrain_palette has duplicate id {k:?}"));
+            }
+            let Some(d) = by_key.get(k) else {
+                return Err(format!(
+                    "terrain_palette references unknown id {k:?} (not in pack)"
+                ));
+            };
+            out.push(d.clone());
+        }
+        level.tile_defs = out;
+    }
+    normalize_tile_def_ids(&mut level.tile_defs);
+    Ok(())
+}
+
 /// Load a [`TerrainPack`] from disk and assign [`LevelFile::tile_defs`].
 pub fn materialize_tile_defs_from_pack(
     level: &mut LevelFile,
@@ -140,6 +194,7 @@ pub fn materialize_tile_defs_from_pack(
         if level.tile_defs.is_empty() {
             return Err("level has empty terrain_pack and no inline tile_defs".into());
         }
+        validate_unique_terrain_ids(&level.tile_defs)?;
         normalize_tile_def_ids(&mut level.tile_defs);
         return Ok(());
     }
@@ -157,12 +212,8 @@ pub fn materialize_tile_defs_from_pack(
             TerrainPack::SCHEMA
         ));
     }
-    if pack.tile_defs.is_empty() {
-        return Err(format!("terrain pack {} has no tile_defs", full.display()));
-    }
-    level.tile_defs = pack.tile_defs;
-    normalize_tile_def_ids(&mut level.tile_defs);
-    Ok(())
+    apply_terrain_pack_to_level(level, pack)
+        .map_err(|e| format!("terrain pack {}: {e}", full.display()))
 }
 
 /// Default `visual_seed` when [`LevelFile::visual_seed`] is `None`.
@@ -175,7 +226,10 @@ pub fn derive_visual_seed(level: &LevelFile) -> u64 {
     }
     h ^= (level.width as u64) << 32 | level.height as u64;
     for d in &level.tile_defs {
-        h ^= (d.id as u64).wrapping_mul(0x9e3779b97f4a7c15);
+        for b in d.terrain_id.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
     }
     mix64(h)
 }
@@ -196,13 +250,16 @@ pub fn derive_visual_seed_from_map(map: &MapGrid) -> u64 {
         }
     }
     for d in &map.table.defs {
-        h ^= (d.id as u64).rotate_left(11);
+        h ^= (d.idx as u64).rotate_left(11);
+        for b in d.terrain_id.as_bytes() {
+            h = h.wrapping_add(*b as u64).rotate_left(5);
+        }
     }
     mix64(h)
 }
 
 impl LevelFile {
-    pub const SCHEMA: u32 = 1;
+    pub const SCHEMA: u32 = 2;
 
     pub fn to_map(&self) -> Result<MapGrid, String> {
         let expected = (self.width as usize) * (self.height as usize);
@@ -251,6 +308,7 @@ impl LevelFile {
             tiles: map.ground.clone(),
             props,
             terrain_pack: String::new(),
+            terrain_palette: Vec::new(),
             tile_defs,
             spawns,
             player_spawn: None,
@@ -267,7 +325,9 @@ pub fn level_to_ron(level: &LevelFile) -> Result<String, ron::Error> {
 
 pub fn level_from_ron(s: &str) -> Result<LevelFile, ron::de::SpannedError> {
     let mut level: LevelFile = ron::from_str(s)?;
-    normalize_tile_def_ids(&mut level.tile_defs);
+    if level.terrain_pack.trim().is_empty() {
+        normalize_tile_def_ids(&mut level.tile_defs);
+    }
     Ok(level)
 }
 
@@ -275,8 +335,9 @@ pub fn terrain_pack_to_ron(pack: &TerrainPack) -> Result<String, ron::Error> {
     ron::ser::to_string_pretty(pack, ron::ser::PrettyConfig::new())
 }
 
-pub fn terrain_pack_from_ron(s: &str) -> Result<TerrainPack, ron::de::SpannedError> {
-    let mut pack: TerrainPack = ron::from_str(s)?;
+pub fn terrain_pack_from_ron(s: &str) -> Result<TerrainPack, String> {
+    let mut pack: TerrainPack = ron::from_str(s).map_err(|e| e.to_string())?;
+    validate_unique_terrain_ids(&pack.tile_defs)?;
     normalize_tile_def_ids(&mut pack.tile_defs);
     Ok(pack)
 }

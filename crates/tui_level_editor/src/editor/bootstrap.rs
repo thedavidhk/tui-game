@@ -23,11 +23,11 @@ impl Editor {
         let floor_tile = tile_defs
             .iter()
             .find(|d| !d.blocks_movement)
-            .map_or(0, |d| d.id);
+            .map_or(0, |d| d.idx);
         let wall_tile = tile_defs
             .iter()
             .find(|d| d.blocks_movement)
-            .map_or(floor_tile, |d| d.id);
+            .map_or(floor_tile, |d| d.idx);
         let w = 24u16;
         let h = 16u16;
         let n = (w as usize) * (h as usize);
@@ -49,6 +49,7 @@ impl Editor {
             tiles,
             props,
             terrain_pack: String::new(),
+            terrain_palette: Vec::new(),
             tile_defs,
             spawns: vec![EntitySpawn {
                 kind: "guide".into(),
@@ -163,9 +164,9 @@ impl Editor {
             .level
             .tile_defs
             .iter()
-            .any(|d| d.id == self.current_tile)
+            .any(|d| d.idx == self.current_tile)
         {
-            self.current_tile = self.level.tile_defs[0].id;
+            self.current_tile = self.level.tile_defs[0].idx;
         }
         self.sync_brush_memory_from_level();
         self.clamp_editor_view();
@@ -200,8 +201,13 @@ impl Editor {
                 let line = format!("{:>3}  {}  {}", i, d.glyph, d.description());
                 let solid_txt = if d.solid() { "solid" } else { "open" };
                 let hay = format!(
-                    "{i} {} {} {} {} {}",
-                    d.name, d.description, d.glyph, d.id, solid_txt
+                    "{i} {} {} {} {} {} {}",
+                    d.terrain_id,
+                    d.name,
+                    d.description,
+                    d.glyph,
+                    d.idx,
+                    solid_txt
                 );
                 (i, line, hay)
             })
@@ -243,7 +249,7 @@ impl Editor {
         self.level
             .tile_defs
             .iter()
-            .find(|d| d.id == self.current_tile)
+            .find(|d| d.idx == self.current_tile)
     }
 
     pub fn current_spawn_blueprint(&self) -> Option<&'static EntityBlueprint> {

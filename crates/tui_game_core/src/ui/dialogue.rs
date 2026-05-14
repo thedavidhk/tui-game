@@ -8,7 +8,9 @@ use crate::input::MouseCell;
 use crate::rect::Rect;
 use crate::render::{FrameBuffer, Style};
 
-use super::chrome::{chrome_inner_rect, draw_clipped_line, draw_rounded_panel, PanelBorderEmphasis};
+use super::chrome::{
+    chrome_inner_rect, draw_clipped_line, draw_rounded_panel, PanelBorderEmphasis,
+};
 use super::hit::{UiHitState, UiHitTarget};
 use super::theme::GameUiPalette;
 use super::wrap::wrap_words;
@@ -69,7 +71,10 @@ pub fn draw_dialogue(
                 hint,
                 palette.text_dim,
                 palette.panel_bg,
-                Style { dim: true, ..Default::default() },
+                Style {
+                    dim: true,
+                    ..Default::default()
+                },
             );
             hits.push(
                 UiHitTarget::DialogueContinue,
@@ -108,25 +113,18 @@ pub fn draw_dialogue(
         if y >= inner.bottom() {
             break;
         }
-        let available = visible_set.contains(&i);
+        if !visible_set.contains(&i) {
+            continue;
+        }
         let vis_pos = visible_choice_indices.iter().position(|&g| g == i);
         let row_rect = Rect::new(inner.x, y, inner.w, 1);
         let mouse_hot = last_mouse.is_some_and(|m| row_rect.contains(m.x, m.y));
-        let selected = available && vis_pos == Some(cur);
-        let highlight = selected || (available && mouse_hot);
+        let selected = vis_pos == Some(cur);
+        let highlight = selected || mouse_hot;
 
         let prefix = if highlight { "› " } else { "  " };
         let label = format!("{prefix}{}", choice.label);
-        let (fg, bg, st) = if !available {
-            (
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            )
-        } else if highlight {
+        let (fg, bg, st) = if highlight {
             (
                 palette.selected_fg,
                 palette.selected_bg,

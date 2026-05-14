@@ -68,26 +68,31 @@ mod anim_mode_ron {
     }
 }
 
-/// Stable tile type id; properties resolved via `TileDef` table.
+/// Runtime tile index; properties resolved via `TileDef` table.
 ///
-/// For levels and terrain packs, numeric tile ids in `tiles` / maps match **`tile_defs` index**
-/// (first def is `0`, etc.). RON omits per-def `id`; see [`normalize_tile_def_ids`].
+/// In memory and in serialized `tiles` / map grids, values are **indices** into the resolved
+/// `tile_defs` slice (first def is `0`, etc.). The slice order comes from either the terrain pack
+/// file order (legacy, no palette) or [`crate::level::LevelFile::terrain_palette`] (stable string ids).
+///
+/// RON stores a stable string key per def in field `id` (see [`TileDef::terrain_id`]); the numeric
+/// [`TileDef::idx`] is assigned by [`normalize_tile_def_ids`] and is not written to RON.
 pub type TileId = u16;
 
 /// Sentinel for [`crate::world::MapGrid::props`]: no prop overlay on that cell.
 ///
-/// This value is never assigned to [`TileDef::id`] by [`normalize_tile_def_ids`] (indices only).
+/// This value is never assigned to [`TileDef::idx`] by [`normalize_tile_def_ids`] (indices only).
 pub const EMPTY_PROP_ID: TileId = u16::MAX;
 
-/// Assign `defs[i].id = i as u16` for every entry. Call after deserializing `tile_defs` / `TileTable.defs`
-/// so runtime ids match placement data (`tiles` stores indices into this slice).
+/// Assign `defs[i].idx = i as u16` for every entry. Call after deserializing `tile_defs` /
+/// [`TileTable::defs`] so runtime ids match placement data (`tiles` stores indices into this slice).
 ///
-/// **Caveat:** reordering `tile_defs` changes every numeric id — keep the same order as when the
-/// level grid was authored (or renumber `tiles` accordingly).
+/// **Palette caveat:** when a level uses [`crate::level::LevelFile::terrain_palette`], that slice
+/// defines the index order; reordering entries in the terrain **pack** file alone does not remap
+/// indices. Without a palette, indices follow the pack file order (legacy).
 #[inline]
 pub fn normalize_tile_def_ids(defs: &mut [TileDef]) {
     for (i, d) in defs.iter_mut().enumerate() {
-        d.id = TileId::try_from(i).expect("tile_defs length must fit u16");
+        d.idx = TileId::try_from(i).expect("tile_defs length must fit u16");
     }
 }
 
@@ -265,13 +270,16 @@ pub enum TileSurface {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TileDef {
-    /// Implicit index in `tile_defs` / `TileTable.defs`; not written to RON (see [`normalize_tile_def_ids`]).
+    /// Stable unique key (RON field `id`). Used with [`crate::level::LevelFile::terrain_palette`].
+    #[serde(rename = "id")]
+    pub terrain_id: String,
+    /// Runtime index in `tile_defs` / `TileTable.defs`; not written to RON (see [`normalize_tile_def_ids`]).
     #[serde(default, skip_serializing)]
-    pub id: TileId,
+    pub idx: TileId,
     pub glyph: char,
     pub blocks_movement: bool,
     pub blocks_sight: bool,
-    /// Stable id for tools, tests, and search (often snake_case).
+    /// Human-readable label (e.g. title case) for HUD and editor lists.
     pub name: String,
     /// Short immersive line for the in-game HUD; when empty, [`Self::name`] is shown.
     #[serde(default)]
@@ -309,9 +317,15 @@ impl TileDef {
         }
     }
 
-    pub fn floor(id: TileId, glyph: char, name: impl Into<String>) -> Self {
+    pub fn floor(
+        idx: TileId,
+        glyph: char,
+        terrain_id: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Self {
         Self {
-            id,
+            terrain_id: terrain_id.into(),
+            idx,
             glyph,
             blocks_movement: false,
             blocks_sight: false,
@@ -324,9 +338,10 @@ impl TileDef {
         }
     }
 
-    pub fn wall(id: TileId, glyph: char, name: impl Into<String>) -> Self {
+    pub fn wall(idx: TileId, glyph: char, terrain_id: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
-            id,
+            terrain_id: terrain_id.into(),
+            idx,
             glyph,
             blocks_movement: true,
             blocks_sight: true,

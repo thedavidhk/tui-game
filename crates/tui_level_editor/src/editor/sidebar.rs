@@ -276,7 +276,7 @@ impl Editor {
             let rest = format!(
                 " {} id{} {}",
                 if d.solid() { "solid" } else { "open " },
-                d.id,
+                d.idx,
                 trunc_visual(d.description(), wlim.saturating_sub(12))
             );
             let mut x = inner.x.saturating_add(2);

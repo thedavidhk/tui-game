@@ -25,11 +25,11 @@ impl TileTable {
     }
 
     pub fn def(&self, id: TileId) -> Option<&TileDef> {
-        self.defs.iter().find(|d| d.id == id)
+        self.defs.iter().find(|d| d.idx == id)
     }
 
     pub fn index_of(&self, id: TileId) -> Option<usize> {
-        self.defs.iter().position(|d| d.id == id)
+        self.defs.iter().position(|d| d.idx == id)
     }
 }
 

@@ -87,7 +87,7 @@ pub const BLUEPRINT_WOLF: EntityBlueprint = EntityBlueprint {
     kind: "wolf",
     display_name: "Wolf",
     description: "Wildlife enemy that roams near its den and attacks close targets.",
-    default_glyph: 'w',
+    default_glyph: '𓃫',
     default_fg: Rgb24::new(190, 190, 190),
     default_label: "Wolf",
     is_actor: true,

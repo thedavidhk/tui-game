@@ -8,7 +8,7 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "healer",
     display_name: "Healer",
     description: "Simple tonic fetch quest (dialogue \"healer\").",
-    default_glyph: '♟',
+    default_glyph: '🨾',
     default_fg: Rgb24::new(220, 243, 230),
     default_label: "Healer",
     is_actor: true,

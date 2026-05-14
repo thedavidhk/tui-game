@@ -270,7 +270,7 @@ pub fn resolve_animated(
         return cell_from_def(def.glyph, def.fg, def);
     }
     let n = frames.len();
-    let phase = hash_cell(visual_seed, wx, wy, def.id as u32) as usize % n;
+    let phase = hash_cell(visual_seed, wx, wy, def.idx as u32) as usize % n;
     let idx = match mode {
         AnimMode::Cycle => {
             let tpf = (*ticks_per_frame).max(1) as u64;
@@ -310,11 +310,12 @@ mod tests {
     fn static_variant_deterministic_per_cell() {
         let mut table = TileTable::default_pack().expect("default terrain pack must load");
         table.defs.push(TileDef {
-            id: 0,
+            terrain_id: "test_grass".into(),
+            idx: 0,
             glyph: ',',
             blocks_movement: false,
             blocks_sight: false,
-            name: "grass".into(),
+            name: "Grass".into(),
             description: String::new(),
             fg: Color::rgb(100, 200, 100),
             bg: None,
@@ -358,11 +359,12 @@ mod tests {
         // id 1 wall with connect 1
         table.defs[1].connect_mask = 1;
         table.defs.push(TileDef {
-            id: 0,
+            terrain_id: "test_stone".into(),
+            idx: 0,
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
-            name: "stone".into(),
+            name: "Stone".into(),
             description: String::new(),
             fg: Color::rgb(120, 120, 120),
             bg: None,
@@ -401,11 +403,12 @@ mod tests {
         let mut table = TileTable::default_pack().expect("default terrain pack must load");
         table.defs[1].connect_mask = 1;
         table.defs.push(TileDef {
-            id: 0,
+            terrain_id: "test_double_wall".into(),
+            idx: 0,
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
-            name: "double_wall".into(),
+            name: "Double Wall".into(),
             description: String::new(),
             fg: Color::rgb(100, 100, 100),
             bg: None,
@@ -493,11 +496,12 @@ mod tests {
     #[test]
     fn animated_cycle_advances() {
         let def = TileDef {
-            id: 7,
+            terrain_id: "test_water".into(),
+            idx: 7,
             glyph: '~',
             blocks_movement: false,
             blocks_sight: false,
-            name: "water".into(),
+            name: "Water".into(),
             description: String::new(),
             fg: Color::rgb(50, 80, 200),
             bg: None,

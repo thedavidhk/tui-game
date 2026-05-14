@@ -20,13 +20,14 @@ const EMBEDDED_DEMO_TERRAIN_PACK_RON: &str = include_str!("../../../../assets/te
 /// Parsed embedded demo level with inline `tile_defs` (pack merged at compile time; `terrain_pack` cleared).
 #[must_use]
 pub fn embedded_demo_level() -> crate::level::LevelFile {
-    use crate::level::{terrain_pack_from_ron, LevelFile};
+    use crate::level::{apply_terrain_pack_to_level, terrain_pack_from_ron, LevelFile};
     let mut level: LevelFile =
         crate::level::level_from_ron(EMBEDDED_DEMO_LEVEL_RON).expect("embedded demo_level.ron");
     let pack = terrain_pack_from_ron(EMBEDDED_DEMO_TERRAIN_PACK_RON)
         .expect("embedded demo_terrain_pack.ron must parse");
-    level.tile_defs = pack.tile_defs;
+    apply_terrain_pack_to_level(&mut level, pack).expect("apply embedded terrain pack");
     level.terrain_pack.clear();
+    level.terrain_palette.clear();
     level
 }
 
@@ -123,7 +124,7 @@ mod tests {
         let thick = level
             .tile_defs
             .iter()
-            .find(|d| d.name == "thick_stone_wall")
+            .find(|d| d.terrain_id == "thick_stone_wall")
             .expect("thick_stone_wall in embedded pack");
         let Some(TileSurface::Connector(c)) = &thick.surface else {
             panic!("expected connector surface: {:?}", thick.surface);

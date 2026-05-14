@@ -12,12 +12,12 @@ impl Editor {
 
     /// After hot-reload or external level replace, keep remembered ids consistent with the new tables.
     pub fn sync_brush_memory_from_level(&mut self) {
-        if self.level.tile_defs.iter().any(|d| d.id == self.current_tile)
+        if self.level.tile_defs.iter().any(|d| d.idx == self.current_tile)
             && self.current_tile != EMPTY_PROP_ID
         {
             self.last_terrain_tile_id = self.current_tile;
         } else if let Some(d) = self.level.tile_defs.first() {
-            self.last_terrain_tile_id = d.id;
+            self.last_terrain_tile_id = d.idx;
         } else {
             self.last_terrain_tile_id = 0;
         }
@@ -91,13 +91,13 @@ impl Editor {
             .level
             .tile_defs
             .iter()
-            .any(|d| d.id == self.last_terrain_tile_id)
+            .any(|d| d.idx == self.last_terrain_tile_id)
         {
             return self.last_terrain_tile_id;
         }
         if let Some(d) = self.level.tile_defs.first() {
-            self.last_terrain_tile_id = d.id;
-            return d.id;
+            self.last_terrain_tile_id = d.idx;
+            return d.idx;
         }
         0
     }
@@ -138,8 +138,8 @@ impl Editor {
         let Some(d) = self.level.tile_defs.get(def_index) else {
             return;
         };
-        self.current_tile = d.id;
-        self.last_terrain_tile_id = d.id;
+        self.current_tile = d.idx;
+        self.last_terrain_tile_id = d.idx;
         self.status = format!(
             "Terrain brush: {} (def {})",
             d.description(),

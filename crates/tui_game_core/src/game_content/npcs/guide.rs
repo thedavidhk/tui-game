@@ -9,7 +9,7 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "guide",
     display_name: "Guide",
     description: "Demo NPC; dialogue id \"guide\".",
-    default_glyph: '♟',
+    default_glyph: '𐂀',
     default_fg: Rgb24::new(240, 233, 220),
     default_label: "Guide",
     is_actor: true,

@@ -8,7 +8,7 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "scholar",
     display_name: "Scholar",
     description: "Ring hand-in quest (dialogue \"scholar\").",
-    default_glyph: '♟',
+    default_glyph: '🨾',
     default_fg: Rgb24::new(233, 225, 241),
     default_label: "Scholar",
     is_actor: true,

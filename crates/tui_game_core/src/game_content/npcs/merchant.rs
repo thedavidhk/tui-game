@@ -10,7 +10,7 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "merchant",
     display_name: "Merchant",
     description: "Flavor NPC (dialogue \"merchant\").",
-    default_glyph: '♟',
+    default_glyph: '🨾',
     default_fg: Rgb24::new(220, 233, 243),
     default_label: "Merchant",
     is_actor: true,

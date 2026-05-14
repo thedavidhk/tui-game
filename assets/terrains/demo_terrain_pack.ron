@@ -1,11 +1,12 @@
 (
-    schema_version: 1,
+    schema_version: 2,
     tile_defs: [
         (
+            id: "floor",
             glyph: '.',
             blocks_movement: false,
             blocks_sight: false,
-            name: "floor",
+            name: "Floor",
             description: "Packed earth and worn stone underfoot.",
             fg: (
                 r: 178,
@@ -22,10 +23,11 @@
         ),
 
         (
+            id: "wall",
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
-            name: "wall",
+            name: "Wall",
             description: "Cold masonry blocks your path.",
             fg: (
                 r: 154,
@@ -38,10 +40,11 @@
         ),
 
         (
+            id: "grass",
             glyph: ',',
             blocks_movement: false,
             blocks_sight: false,
-            name: "grass",
+            name: "Grass",
             description: "Soft turf springs beneath your boots.",
             fg: (
                 r: 96,
@@ -98,10 +101,11 @@
         ),
 
         (
+            id: "water",
             glyph: '~',
             blocks_movement: false,
             blocks_sight: false,
-            name: "water",
+            name: "Water",
             description: "Dark water shifts and glimmers.",
             fg: (
                 r: 41,
@@ -158,10 +162,11 @@
         ),
 
         (
+            id: "stone_wall",
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
-            name: "stone_wall",
+            name: "Stone Wall",
             description: "Mortared stone, damp with age.",
             fg: (
                 r: 162,
@@ -177,10 +182,11 @@
         ),
 
         (
+            id: "thick_stone_wall",
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
-            name: "thick_stone_wall",
+            name: "Thick Stone Wall",
             description: "Massive fortifications of cut stone.",
             fg: (
                 r: 176,
@@ -196,10 +202,11 @@
         ),
 
         (
+            id: "plank_wall",
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
-            name: "plank_wall",
+            name: "Plank Wall",
             description: "Weathered boards, nailed tight.",
             fg: (
                 r: 176,
@@ -215,10 +222,11 @@
         ),
 
         (
+            id: "log_wall",
             glyph: '#',
             blocks_movement: true,
             blocks_sight: true,
-            name: "log_wall",
+            name: "Log Wall",
             description: "Stacked timber, rough and solid.",
             fg: (
                 r: 148,
@@ -234,10 +242,11 @@
         ),
 
         (
+            id: "tree",
             glyph: 'Y',
             blocks_movement: true,
             blocks_sight: true,
-            name: "tree",
+            name: "Tree",
             description: "A gnarled trunk; branches whisper overhead.",
             fg: (
                 r: 166,
@@ -252,10 +261,11 @@
         // --- New optional ground terrains ---
 
         (
+            id: "dirt",
             glyph: '.',
             blocks_movement: false,
             blocks_sight: false,
-            name: "dirt",
+            name: "Dirt",
             description: "Dry soil and scattered grit.",
             fg: (
                 r: 139,
@@ -303,10 +313,11 @@
         ),
 
         (
+            id: "path",
             glyph: '.',
             blocks_movement: false,
             blocks_sight: false,
-            name: "path",
+            name: "Path",
             description: "A harder strip where many feet have passed.",
             fg: (
                 r: 166,
@@ -354,10 +365,11 @@
         ),
 
         (
+            id: "dark_grass",
             glyph: ',',
             blocks_movement: false,
             blocks_sight: false,
-            name: "dark_grass",
+            name: "Dark Grass",
             description: "Shadowed blades, cool and damp.",
             fg: (
                 r: 82,
@@ -414,10 +426,11 @@
         ),
 
         (
+            id: "moss",
             glyph: ',',
             blocks_movement: false,
             blocks_sight: false,
-            name: "moss",
+            name: "Moss",
             description: "Velvet moss cushions each step.",
             fg: (
                 r: 126,
@@ -465,10 +478,11 @@
         ),
 
         (
+            id: "sand",
             glyph: '.',
             blocks_movement: false,
             blocks_sight: false,
-            name: "sand",
+            name: "Sand",
             description: "Fine sand shifts underfoot.",
             fg: (
                 r: 188,
@@ -516,10 +530,11 @@
         ),
 
         (
+            id: "gravel",
             glyph: '.',
             blocks_movement: false,
             blocks_sight: false,
-            name: "gravel",
+            name: "Gravel",
             description: "Loose stones crunch softly.",
             fg: (
                 r: 150,
@@ -567,10 +582,11 @@
         ),
 
         (
+            id: "mud",
             glyph: '.',
             blocks_movement: false,
             blocks_sight: false,
-            name: "mud",
+            name: "Mud",
             description: "Thick mud clings and pulls.",
             fg: (
                 r: 111,
@@ -618,10 +634,11 @@
         ),
 
         (
+            id: "deep_water",
             glyph: '~',
             blocks_movement: false,
             blocks_sight: false,
-            name: "deep_water",
+            name: "Deep Water",
             description: "Only darkness returns your gaze from below.",
             fg: (
                 r: 25,
@@ -678,10 +695,11 @@
         ),
 
         (
+            id: "shallow_water",
             glyph: '~',
             blocks_movement: false,
             blocks_sight: false,
-            name: "shallow_water",
+            name: "Shallow Water",
             description: "Clear ripples dance over pale stone.",
             fg: (
                 r: 49,
@@ -738,10 +756,11 @@
         ),
 
         (
+            id: "sunlit_shallows",
             glyph: '~',
             blocks_movement: false,
             blocks_sight: false,
-            name: "shallow_water",
+            name: "Sunlit Shallows",
             description: "Sunlit shallows, pleasantly cool.",
             fg: (
                 r: 74,
@@ -795,6 +814,113 @@
                 p_step_num: 0,
                 p_step_den: 60,
             )),
+        ),
+
+        (
+            id: "wildflowers",
+            glyph: '.',
+            blocks_movement: false,
+            blocks_sight: false,
+            name: "Wildflowers",
+            fg: (
+                r: 155,
+                g: 178,
+                b: 104,
+            ),
+            bg: Some((
+                r: 30,
+                g: 53,
+                b: 33,
+            )),
+            connect_mask: 0,
+            surface: Some((
+                kind: "static_variants",
+                entries: [
+                    // Mostly grass texture
+                    (
+                        weight: 8,
+                        ch: ',',
+                        fg: (
+                            r: 88,
+                            g: 132,
+                            b: 76,
+                        ),
+                    ),
+                    (
+                        weight: 5,
+                        ch: '.',
+                        fg: (
+                            r: 82,
+                            g: 122,
+                            b: 72,
+                        ),
+                    ),
+                    (
+                        weight: 3,
+                        ch: '`',
+                        fg: (
+                            r: 104,
+                            g: 150,
+                            b: 94,
+                        ),
+                    ),
+
+                    // Flower flecks: colorful but not neon
+                    (
+                        weight: 1,
+                        ch: '.',
+                        fg: (
+                            r: 207,
+                            g: 177,
+                            b: 103,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: '·',
+                        fg: (
+                            r: 188,
+                            g: 125,
+                            b: 151,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: '\'',
+                        fg: (
+                            r: 151,
+                            g: 159,
+                            b: 214,
+                        ),
+                    ),
+                    (
+                        weight: 1,
+                        ch: '`',
+                        fg: (
+                            r: 218,
+                            g: 210,
+                            b: 154,
+                        ),
+                    ),
+                ],
+            )),
+        ),
+
+        (
+            id: "large_tree",
+            glyph: '⬤',
+            blocks_movement: true,
+            blocks_sight: true,
+            name: "Large Tree",
+            description: "A gnarled trunk; branches whisper overhead.",
+            fg: (
+                r: 156,
+                g: 100,
+                b: 58,
+            ),
+            bg: None,
+            connect_mask: 0,
+            surface: None,
         ),
     ],
 )

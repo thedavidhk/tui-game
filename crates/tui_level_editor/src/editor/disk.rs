@@ -110,6 +110,17 @@ impl Editor {
 
     pub fn save(&mut self) -> Result<(), String> {
         normalize_tile_def_ids(&mut self.level.tile_defs);
+        if !self.level.terrain_pack.trim().is_empty() {
+            self.level.terrain_palette = self
+                .level
+                .tile_defs
+                .iter()
+                .map(|d| d.terrain_id.clone())
+                .collect();
+            self.level.tile_defs.clear();
+        } else {
+            self.level.terrain_palette.clear();
+        }
         self.content
             .validate_level(&self.level)
             .map_err(|e| e.to_string())?;
