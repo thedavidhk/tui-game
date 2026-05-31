@@ -19,6 +19,7 @@ pub struct NpcBrainState {
     pub roam_wait_ticks: u16,
     pub patrol_next_stop: u16,
     pub patrol_wait_ticks: u16,
+    pub investigation_goal: Option<GridPos>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +110,7 @@ impl EntityArena {
             roam_wait_ticks: 0,
             patrol_next_stop: 0,
             patrol_wait_ticks: 0,
+            investigation_goal: None,
         };
         id
     }
@@ -226,3 +228,4 @@ impl EntityArena {
         self.combat_stats.get_mut(id.0 as usize)
     }
 }
+

@@ -132,6 +132,8 @@ pub fn step_npc_combat_ai(game: &mut Game) {
                 entities: &game.entities,
             },
         )
+    } else if let Some(intent) = decide_investigation_intent(game, actor, &next) {
+        intent
     } else {
         decide_routine_intent(game, actor, &next)
     };
@@ -218,6 +220,34 @@ fn decide_routine_intent(game: &mut Game, actor: EntityId, _state: &CombatState)
     } else {
         AiIntent::Wait
     }
+}
+
+fn decide_investigation_intent(game: &mut Game, actor: EntityId, _state: &CombatState) -> Option<AiIntent> {
+    let brain = game.entities.npc_brain.get(actor.0 as usize)?;
+    let goal = brain.investigation_goal?;
+    let from = game.entities.pos(actor)?;
+    
+    if from == goal {
+        if let Some(brain_mut) = game.entities.npc_brain.get_mut(actor.0 as usize) {
+            brain_mut.investigation_goal = None;
+        }
+        return None;
+    }
+
+    let plan = crate::world::plan_path(
+        &game.map,
+        &game.entities,
+        from,
+        goal,
+        Some(actor),
+        true,
+        u32::MAX,
+    ).ok()?;
+    
+    let waypoint = plan.path.get(1).copied()?;
+    let next = crate::world::first_step_on_line(from, waypoint)?;
+    
+    Some(AiIntent::Combat(CombatAction::Move { target: next }))
 }
 
 pub fn toggle_turn_based(game: &mut Game) {

@@ -322,6 +322,11 @@ impl CombatState {
                     if let Some(target_mut) = arena.stats_mut(target) {
                         target_mut.hp = target_mut.hp.saturating_sub(damage);
                     }
+                    if let Some(attacker_pos) = arena.pos(actor) {
+                        if let Some(brain) = arena.npc_brain.get_mut(target.0 as usize) {
+                            brain.investigation_goal = Some(attacker_pos);
+                        }
+                    }
                     if let Some(updated) = arena.stats(target) {
                         let verb = if matches!(style, AttackStyle::Bow { .. }) {
                             "Shot hits"
