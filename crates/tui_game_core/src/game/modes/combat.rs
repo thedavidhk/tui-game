@@ -39,6 +39,10 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput, state: CombatState) {
             );
             game.apply_combat_report(&next, report);
         }
+        GameInput::Command(GameCommand::ToggleTurnBased) => {
+            game.toggle_turn_based();
+            return;
+        }
         GameInput::Command(GameCommand::CombatFlee) => {
             let report = next.apply_action(
                 CombatAction::Flee,

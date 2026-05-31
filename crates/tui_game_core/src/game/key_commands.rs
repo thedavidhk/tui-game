@@ -29,6 +29,7 @@ pub enum GameCommand {
     StepWest,
     StepEast,
     CombatFlee,
+    ToggleTurnBased,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -136,6 +137,7 @@ pub fn default_game_key_map() -> GameKeyMap {
         (chord(Key::Left), GameCommand::StepWest),
         (chord(Key::Char('d')), GameCommand::StepEast),
         (chord(Key::Right), GameCommand::StepEast),
+        (chord(Key::Char('t')), GameCommand::ToggleTurnBased),
     ];
     static COMBAT: &[(KeyChord, GameCommand)] = &[
         (chord(Key::F(1)), GameCommand::ToggleDebug),
@@ -156,6 +158,7 @@ pub fn default_game_key_map() -> GameKeyMap {
         (chord(Key::Esc), GameCommand::Back),
         (chord(Key::Char('q')), GameCommand::Back),
         (chord(Key::Char('f')), GameCommand::CombatFlee),
+        (chord(Key::Char('t')), GameCommand::ToggleTurnBased),
     ];
     static CONFIRM_MODAL: &[(KeyChord, GameCommand)] = &[
         (chord(Key::F(1)), GameCommand::ToggleDebug),

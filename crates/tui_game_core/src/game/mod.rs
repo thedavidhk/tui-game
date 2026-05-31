@@ -16,8 +16,6 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ai::combat::ChaseNearestPolicy;
-use crate::ai::{AiIntent, CombatAiCtx, CombatDecisionPolicy};
 use crate::combat::{
     AttackStyle, CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy,
     EncounterProfile, ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
@@ -826,7 +824,7 @@ impl Game {
                 modes::route(self, gi);
             }
         }
-        self.step_npc_combat_ai();
+        services::combat::step_npc_combat_ai(self);
         self.step_npc_exploration_ai();
         self.step_player_walk();
         self.pump_pending_player_action();
@@ -872,65 +870,6 @@ impl Game {
         });
     }
 
-    fn step_npc_combat_ai(&mut self) {
-        let Some(GameMode::Combat(state)) = self.modes.current().cloned() else {
-            self.npc_combat_ai_tick_cooldown = 0;
-            return;
-        };
-        let Some(actor) = state.current_actor() else {
-            return;
-        };
-        if self.player_id() == Some(actor) {
-            self.npc_combat_ai_tick_cooldown = 0;
-            return;
-        }
-        if self.npc_combat_ai_tick_cooldown > 0 {
-            self.npc_combat_ai_tick_cooldown = self.npc_combat_ai_tick_cooldown.saturating_sub(1);
-            return;
-        }
-        let mut next = state;
-        let ai = ChaseNearestPolicy;
-        let intent = ai.decide(
-            actor,
-            &CombatAiCtx {
-                state: &next,
-                map: &self.map,
-                entities: &self.entities,
-            },
-        );
-        let pace_after_success = matches!(
-            &intent,
-            AiIntent::Combat(CombatAction::Move { .. } | CombatAction::Attack { .. })
-        );
-        let report = match intent {
-            AiIntent::Combat(action) => next.apply_action(
-                action,
-                &mut self.entities,
-                &mut self.rng_seed,
-                |x, y| self.map.blocks_movement(x, y),
-                Some(&self.map),
-                None,
-            ),
-            AiIntent::Wait => next.apply_action(
-                CombatAction::Pass,
-                &mut self.entities,
-                &mut self.rng_seed,
-                |_x, _y| false,
-                None,
-                None,
-            ),
-        };
-        if report.applied && pace_after_success {
-            let speed = self.entities.stats(actor).map_or(1, |stats| stats.speed);
-            self.npc_combat_ai_tick_cooldown =
-                services::pacing::visual_step_cooldown_ticks_from_speed(speed);
-        }
-        self.apply_combat_report(&next, report);
-        if let Some(GameMode::Combat(cs)) = self.modes.current_mut() {
-            *cs = next;
-        }
-    }
-
     fn hostile_trigger_met(&self, eid: EntityId, trigger: HostileTriggerDef) -> bool {
         let Some(pp) = self.player_pos() else {
             return false;
@@ -945,52 +884,12 @@ impl Game {
         }
     }
 
-    fn maybe_start_hostile_encounter(&mut self) -> bool {
-        let Some(pid) = self.player_id() else {
-            return false;
-        };
-        for i in 0..self.entities.alive.len() {
-            if !self.entities.alive[i] {
-                continue;
-            }
-            let eid = EntityId(i as u32);
-            if eid == pid {
-                continue;
-            }
-            let Some(kind) = self.entities.npc_kind.get(i).and_then(|k| k.as_deref()) else {
-                continue;
-            };
-            let Some(bp) = self.content.blueprint(kind) else {
-                continue;
-            };
-            let Some(trigger) = bp.behavior.hostile_trigger else {
-                continue;
-            };
-            if !matches!(self.relation_to_player(eid), Relation::Hostile) {
-                continue;
-            }
-            if !self.hostile_trigger_met(eid, trigger) {
-                continue;
-            }
-            self.start_combat_encounter(
-                vec![pid, eid],
-                EncounterProfile {
-                    ruleset: CombatRuleset::Lethal,
-                    outcome_policy: EncounterOutcomePolicy::None,
-                },
-                "Hostile contact!",
-            );
-            return true;
-        }
-        false
-    }
-
     fn step_npc_exploration_ai(&mut self) {
         if !matches!(self.modes.current(), Some(GameMode::Exploration)) {
             self.npc_exploration_ai_tick_cooldown = 0;
             return;
         }
-        if self.maybe_start_hostile_encounter() {
+        if services::combat::detect_hostile_encounters(self) {
             self.npc_exploration_ai_tick_cooldown = 0;
             return;
         }
@@ -1070,6 +969,10 @@ impl Game {
 
     pub(crate) fn handle_explore(&mut self, ev: GameInput) {
         modes::exploration::handle(self, ev);
+    }
+
+    pub(crate) fn toggle_turn_based(&mut self) {
+        services::combat::toggle_turn_based(self);
     }
 
     fn relation_to_player(&self, target: EntityId) -> Relation {
@@ -1161,7 +1064,8 @@ impl Game {
                 true
             }
             services::actions::ActionCommand::EngageCombat { target, profile } => {
-                self.start_combat_encounter(
+                services::combat::start_combat_encounter(
+                    self,
                     vec![actor, target],
                     profile,
                     "Combat started. LMB attack/move, RMB march, Enter/Space pass, f flee, Esc or q quit.",
@@ -1781,44 +1685,15 @@ impl Game {
             self.log.push(msg);
         }
         if report.end_combat {
-            self.finish_combat(state);
+            services::combat::finish_combat(self, state);
         }
         self.refresh_fow();
-    }
-
-    fn finish_combat(&mut self, state: &CombatState) {
-        self.npc_combat_ai_tick_cooldown = 0;
-        self.combat_hover_cell = None;
-        self.clear_player_walk();
-        if matches!(
-            state.profile.ruleset,
-            CombatRuleset::NonLethalSpar | CombatRuleset::NonLethalBrawl
-        ) {
-            self.schedule_training_spar_epilogue(state);
-            for id in &state.initiative {
-                if let Some(stats) = self.entities.stats_mut(*id) {
-                    stats.hp = stats.max_hp;
-                }
-            }
-            self.log
-                .push("Training fight ends. Everyone catches their breath.".into());
-        }
-        self.log.push("Combat ended.".into());
-        let _ = self.modes.pop();
-        if matches!(state.profile.ruleset, CombatRuleset::Lethal)
-            && self
-                .player_id()
-                .is_some_and(|pid| !self.entities.is_alive(pid))
-        {
-            self.modes.stack = vec![GameMode::GameOver];
-            self.log.push("You have fallen.".into());
-        }
     }
 
     /// Leave combat from the UI (Esc); message is logged before combat state is torn down.
     pub(crate) fn finish_combat_player_quit(&mut self, state: &CombatState) {
         self.log.push("You leave the fight.".into());
-        self.finish_combat(state);
+        services::combat::finish_combat(self, state);
     }
 
     pub fn compose(
@@ -2645,7 +2520,7 @@ mod tests {
                 stats.hp = 1;
             }
         }
-        game.finish_combat(&cs);
+        crate::game::services::combat::finish_combat(&mut game, &cs);
         for id in &cs.initiative {
             let stats = game
                 .entities
@@ -2699,7 +2574,7 @@ mod tests {
         game.modes.stack = vec![GameMode::Exploration];
         game.modes.push(GameMode::Combat(cs.clone()));
         game.entities.despawn(player);
-        game.finish_combat(&cs);
+        crate::game::services::combat::finish_combat(&mut game, &cs);
         assert!(matches!(game.modes.current(), Some(GameMode::GameOver)));
     }
 
@@ -2723,19 +2598,19 @@ mod tests {
     fn npc_combat_ai_attacks_adjacent_player() {
         let mut game = Game::new_bootstrapped(80, 30);
         let player = game.player_id().expect("player must exist");
-        let trainer = game
+        let wolf = game
             .entities
             .npc_kind
             .iter()
             .enumerate()
-            .find(|(_, kind)| kind.as_deref() == Some("trainer"))
+            .find(|(_, kind)| kind.as_deref() == Some("wolf"))
             .map(|(idx, _)| crate::entity::EntityId(idx as u32))
-            .expect("trainer entity should exist");
+            .expect("wolf entity should exist");
         game.entities.set_pos(player, GridPos { x: 10, y: 10 });
-        game.entities.set_pos(trainer, GridPos { x: 11, y: 10 });
+        game.entities.set_pos(wolf, GridPos { x: 11, y: 10 });
         let mut rng = 1;
         let mut cs = CombatState::from_participants(
-            vec![trainer, player],
+            vec![wolf, player],
             &game.entities,
             game.map.width,
             game.map.height,
@@ -2748,8 +2623,8 @@ mod tests {
         cs.turn_index = cs
             .initiative
             .iter()
-            .position(|id| *id == trainer)
-            .expect("trainer should be in initiative");
+            .position(|id| *id == wolf)
+            .expect("wolf should be in initiative");
         cs.ap_remaining[cs.turn_index] = 100;
         game.modes.stack = vec![GameMode::Combat(cs)];
         let before = game.entities.stats(player).expect("player stats").hp;
@@ -2764,19 +2639,19 @@ mod tests {
 
         let mut game = Game::new_bootstrapped(80, 30);
         let player = game.player_id().expect("player must exist");
-        let trainer = game
+        let wolf = game
             .entities
             .npc_kind
             .iter()
             .enumerate()
-            .find(|(_, kind)| kind.as_deref() == Some("trainer"))
+            .find(|(_, kind)| kind.as_deref() == Some("wolf"))
             .map(|(idx, _)| crate::entity::EntityId(idx as u32))
-            .expect("trainer entity should exist");
+            .expect("wolf entity should exist");
         game.entities.set_pos(player, GridPos { x: 10, y: 10 });
-        game.entities.set_pos(trainer, GridPos { x: 11, y: 10 });
+        game.entities.set_pos(wolf, GridPos { x: 11, y: 10 });
         let mut rng = 1;
         let mut cs = CombatState::from_participants(
-            vec![trainer, player],
+            vec![wolf, player],
             &game.entities,
             game.map.width,
             game.map.height,
@@ -2786,13 +2661,13 @@ mod tests {
                 outcome_policy: EncounterOutcomePolicy::None,
             },
         );
-        let trainer_turn = cs
+        let wolf_turn = cs
             .initiative
             .iter()
-            .position(|id| *id == trainer)
-            .expect("trainer should be in initiative");
-        cs.turn_index = trainer_turn;
-        cs.ap_remaining[trainer_turn] = ATTACK_COST_UNITS - 1;
+            .position(|id| *id == wolf)
+            .expect("wolf should be in initiative");
+        cs.turn_index = wolf_turn;
+        cs.ap_remaining[wolf_turn] = ATTACK_COST_UNITS - 1;
         game.modes.stack = vec![GameMode::Combat(cs)];
         let hp_before = game.entities.stats(player).expect("player stats").hp;
         game.step(&InputBatch::default());
@@ -2807,7 +2682,7 @@ mod tests {
         assert_eq!(
             cs2.current_actor(),
             Some(player),
-            "trainer should pass the turn when unable to attack"
+            "wolf should pass the turn when unable to attack"
         );
     }
 
@@ -2815,19 +2690,19 @@ mod tests {
     fn npc_combat_ai_move_pacing_skips_tick_while_cooldown() {
         let mut game = Game::new_bootstrapped(80, 30);
         let player = game.player_id().expect("player must exist");
-        let trainer = game
+        let wolf = game
             .entities
             .npc_kind
             .iter()
             .enumerate()
-            .find(|(_, kind)| kind.as_deref() == Some("trainer"))
+            .find(|(_, kind)| kind.as_deref() == Some("wolf"))
             .map(|(idx, _)| crate::entity::EntityId(idx as u32))
-            .expect("trainer entity should exist");
+            .expect("wolf entity should exist");
         game.entities.set_pos(player, GridPos { x: 10, y: 10 });
-        game.entities.set_pos(trainer, GridPos { x: 14, y: 10 });
+        game.entities.set_pos(wolf, GridPos { x: 14, y: 10 });
         let mut rng = 1;
         let mut cs = CombatState::from_participants(
-            vec![trainer, player],
+            vec![wolf, player],
             &game.entities,
             game.map.width,
             game.map.height,
@@ -2840,19 +2715,19 @@ mod tests {
         cs.turn_index = cs
             .initiative
             .iter()
-            .position(|id| *id == trainer)
-            .expect("trainer should be in initiative");
+            .position(|id| *id == wolf)
+            .expect("wolf should be in initiative");
         cs.ap_remaining[cs.turn_index] = 100;
         game.modes.stack = vec![GameMode::Combat(cs)];
         game.step(&InputBatch::default());
-        let after_first = game.entities.pos(trainer).expect("trainer position");
+        let after_first = game.entities.pos(wolf).expect("wolf position");
         let mut same_ticks = 0u32;
-        while game.entities.pos(trainer) == Some(after_first) {
+        while game.entities.pos(wolf) == Some(after_first) {
             game.step(&InputBatch::default());
             same_ticks += 1;
             assert!(
                 same_ticks < 32,
-                "trainer should take another step after visual pacing cooldown"
+                "wolf should take another step after visual pacing cooldown"
             );
         }
         assert!(

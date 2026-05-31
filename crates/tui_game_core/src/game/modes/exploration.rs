@@ -22,6 +22,9 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput) {
         GameInput::Command(GameCommand::OpenJournal) => {
             game.modes.push(GameMode::Journal { quest_cursor: 0 });
         }
+        GameInput::Command(GameCommand::ToggleTurnBased) => {
+            game.toggle_turn_based();
+        }
         GameInput::Command(GameCommand::StepNorth) if game.world_view_needs_pan() => {
             game.nudge_view_pan(0, -1);
         }
