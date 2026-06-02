@@ -615,7 +615,7 @@ impl Game {
                 let _ = self.player_walk_path.remove(0);
             }
             self.player_walk_tick_cooldown = self.player_stats().map_or(0, |stats| {
-                services::pacing::visual_step_cooldown_ticks_from_speed(stats.speed)
+                services::pacing::visual_step_cooldown_for_move(stats.speed, dx, dy)
             });
             if self.player_walk_path.is_empty() {
                 self.player_walk_goal = None;
@@ -931,7 +931,7 @@ impl Game {
             return;
         }
 
-        let mut moved_any = false;
+        let mut pace_ticks = 0u16;
         for i in 0..self.entities.alive.len() {
             if !self.entities.alive[i] {
                 continue;
@@ -973,15 +973,17 @@ impl Game {
                 target,
                 Some(eid),
             ) {
+                let dx = target.x - from.x;
+                let dy = target.y - from.y;
                 self.entities.set_pos(eid, target);
-                moved_any = true;
+                pace_ticks = pace_ticks.max(services::pacing::scaled_step_cooldown(
+                    NPC_EXPLORATION_AI_COOLDOWN_TICKS,
+                    dx,
+                    dy,
+                ));
             }
         }
-        self.npc_exploration_ai_tick_cooldown = if moved_any {
-            NPC_EXPLORATION_AI_COOLDOWN_TICKS
-        } else {
-            0
-        };
+        self.npc_exploration_ai_tick_cooldown = pace_ticks;
     }
 
     fn resolve_game_input(&self, ev: &InputEvent) -> Option<GameInput> {

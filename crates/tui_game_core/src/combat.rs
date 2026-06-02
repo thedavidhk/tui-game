@@ -9,6 +9,7 @@ use crate::world::{projectile_sight_clear, MapGrid};
 
 pub const ACTION_UNIT: u16 = 10;
 pub const MOVE_ORTHOGONAL_COST_UNITS: u16 = 10;
+/// Classic diagonal cost when [`crate::math::TILE_Y_PER_X`] is `1`; runtime moves use [`move_cost_units`].
 pub const MOVE_DIAGONAL_COST_UNITS: u16 = 14;
 pub const ATTACK_COST_UNITS: u16 = 20;
 
@@ -503,18 +504,7 @@ fn roll_d20(seed: &mut u64) -> u16 {
 }
 
 pub fn move_cost_units(from: GridPos, to: GridPos) -> Option<u16> {
-    let dx = (to.x - from.x).abs();
-    let dy = (to.y - from.y).abs();
-    if dx == 0 && dy == 0 {
-        return None;
-    }
-    if dx > 1 || dy > 1 {
-        return None;
-    }
-    if dx == 1 && dy == 1 {
-        return Some(MOVE_DIAGONAL_COST_UNITS);
-    }
-    Some(MOVE_ORTHOGONAL_COST_UNITS)
+    crate::math::grid_step_cost_units(to.x - from.x, to.y - from.y, MOVE_ORTHOGONAL_COST_UNITS)
 }
 
 pub fn speed_modifier(speed: u16) -> i16 {

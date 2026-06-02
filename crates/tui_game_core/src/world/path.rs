@@ -2,11 +2,11 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
 use crate::entity::{EntityArena, EntityId, GridPos};
+use crate::math;
 
 use super::MapGrid;
 
-const ORTHOGONAL_COST: u32 = 10;
-const DIAGONAL_COST: u32 = 14;
+const ORTHOGONAL_COST: u16 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PathError {
@@ -101,7 +101,7 @@ fn find_path(
     open.push(OpenNode {
         pos: start_key,
         g: 0,
-        f: octile_cost(start_key, (goal.x, goal.y)),
+        f: path_heuristic_cost(start_key, (goal.x, goal.y)),
     });
     came_from.insert(start_key, start_key);
     g_score.insert(start_key, 0);
@@ -176,7 +176,7 @@ fn find_path(
             open.push(OpenNode {
                 pos: key,
                 g: tentative_g,
-                f: tentative_g.saturating_add(octile_cost(key, (goal.x, goal.y))),
+                f: tentative_g.saturating_add(path_heuristic_cost(key, (goal.x, goal.y))),
             });
         }
     }
@@ -199,12 +199,17 @@ fn find_path(
     })
 }
 
-fn octile_cost(a: (i32, i32), b: (i32, i32)) -> u32 {
-    let dx = (a.0 - b.0).unsigned_abs();
-    let dy = (a.1 - b.1).unsigned_abs();
-    let diag = dx.min(dy);
-    let straight = dx.max(dy) - diag;
-    DIAGONAL_COST * diag + ORTHOGONAL_COST * straight
+fn path_heuristic_cost(a: (i32, i32), b: (i32, i32)) -> u32 {
+    let dist_sq = u64::try_from(math::euclidean_dist_sq_coords(a, b)).unwrap_or(u64::MAX);
+    let base = u64::from(ORTHOGONAL_COST);
+    let cost_sq = dist_sq.saturating_mul(base).saturating_mul(base);
+    u32::try_from(math::isqrt_u64(cost_sq)).unwrap_or(u32::MAX)
+}
+
+fn neighbor_step_cost(dx: i32, dy: i32) -> u32 {
+    u32::from(
+        math::grid_step_cost_units(dx, dy, ORTHOGONAL_COST).unwrap_or(ORTHOGONAL_COST),
+    )
 }
 
 fn is_walkable(
@@ -346,16 +351,17 @@ fn bresenham_line(from: GridPos, to: GridPos) -> Vec<GridPos> {
 }
 
 fn neighbors8() -> [(i32, i32, u32); 8] {
-    [
-        (0, -1, ORTHOGONAL_COST),
-        (1, 0, ORTHOGONAL_COST),
-        (0, 1, ORTHOGONAL_COST),
-        (-1, 0, ORTHOGONAL_COST),
-        (1, -1, DIAGONAL_COST),
-        (1, 1, DIAGONAL_COST),
-        (-1, 1, DIAGONAL_COST),
-        (-1, -1, DIAGONAL_COST),
-    ]
+    const DELTAS: [(i32, i32); 8] = [
+        (0, -1),
+        (1, 0),
+        (0, 1),
+        (-1, 0),
+        (1, -1),
+        (1, 1),
+        (-1, 1),
+        (-1, -1),
+    ];
+    DELTAS.map(|(dx, dy)| (dx, dy, neighbor_step_cost(dx, dy)))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

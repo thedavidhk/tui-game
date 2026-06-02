@@ -140,10 +140,16 @@ pub fn step_npc_combat_ai(game: &mut Game) {
         decide_routine_intent(game, actor, &next)
     };
 
+    let actor_pos_before = game.entities.pos(actor);
     let pace_after_success = matches!(
         &intent,
         AiIntent::Combat(CombatAction::Move { .. } | CombatAction::Attack { .. })
     );
+    let move_step = match &intent {
+        AiIntent::Combat(CombatAction::Move { target }) => actor_pos_before
+            .map(|from| (target.x - from.x, target.y - from.y)),
+        _ => None,
+    };
     let report = match intent {
         AiIntent::Combat(action) => next.apply_action(
             action,
@@ -164,7 +170,9 @@ pub fn step_npc_combat_ai(game: &mut Game) {
     };
     if report.applied && pace_after_success {
         let speed = game.entities.stats(actor).map_or(1, |stats| stats.speed);
-        game.npc_combat_ai_tick_cooldown = pacing::visual_step_cooldown_ticks_from_speed(speed);
+        let base = pacing::visual_step_cooldown_ticks_from_speed(speed);
+        game.npc_combat_ai_tick_cooldown = move_step
+            .map_or(base, |(dx, dy)| pacing::scaled_step_cooldown(base, dx, dy));
     }
     game.apply_combat_report(&next, report);
     if let Some(GameMode::Combat(cs)) = game.modes.current_mut() {
