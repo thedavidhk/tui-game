@@ -110,6 +110,10 @@ impl Editor {
 
     pub fn save(&mut self) -> Result<(), String> {
         normalize_tile_def_ids(&mut self.level.tile_defs);
+        // Validate while `tile_defs` is still materialized (indices in `tiles`/`props` map to defs).
+        self.content
+            .validate_level(&self.level)
+            .map_err(|e| e.to_string())?;
         if !self.level.terrain_pack.trim().is_empty() {
             self.level.terrain_palette = self
                 .level
@@ -121,9 +125,6 @@ impl Editor {
         } else {
             self.level.terrain_palette.clear();
         }
-        self.content
-            .validate_level(&self.level)
-            .map_err(|e| e.to_string())?;
         let s = level_to_ron(&self.level).map_err(|e| e.to_string())?;
         fs::write(&self.path, s).map_err(|e| e.to_string())?;
         self.dirty = false;
