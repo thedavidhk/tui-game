@@ -49,16 +49,18 @@ pub(crate) fn compose(
 }
 
 fn compose_hud(game: &Game, fb: &mut FrameBuffer, hud_rect: Rect, palette: &GameUiPalette) {
-    let hud_emphasis = if matches!(game.modes.current(), Some(GameMode::Combat(_))) {
+    let turn_hud = crate::game::services::behavior::active_turn_clock(game);
+    let hud_emphasis = if turn_hud.is_some() {
         PanelBorderEmphasis::Highlighted
     } else {
         PanelBorderEmphasis::Subtle
     };
     draw_rounded_panel(fb, hud_rect, "Status", hud_emphasis, palette);
     let hud_inner = chrome_inner_rect(hud_rect);
-    let raw_lines: Vec<String> = match game.modes.current() {
-        Some(GameMode::Combat(c)) => hud::combat_status_lines(game, c),
-        _ => hud::exploration_status_lines(game),
+    let raw_lines: Vec<String> = if let Some(c) = turn_hud {
+        hud::combat_status_lines(game, c)
+    } else {
+        hud::exploration_status_lines(game)
     };
     let line_w = hud_inner.w.max(1) as usize;
     let lines = crate::ui::wrap::wrap_panel_lines(&raw_lines, line_w);

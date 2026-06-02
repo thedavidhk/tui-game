@@ -146,23 +146,49 @@ pub enum NpcRoutineDef {
     Patrol { stops: &'static [PatrolStopDef] },
 }
 
+/// When an NPC should pull the player into a turn-based encounter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum HostileTriggerDef {
+pub enum EncounterTriggerDef {
     PlayerWithinChebyshev { range: u16 },
+}
+
+/// One entry in an NPC's reaction list (evaluated top to bottom; first match wins).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ReactionDef {
+    /// Step away from a non-allied threat within `range` (Chebyshev).
+    FleeFromThreat { range: u16 },
+    /// During a turn session, chase and attack the nearest valid target.
+    FightNearestInTurn,
+    /// Move toward the last damage source (transient brain state).
+    InvestigateLastHit,
+    /// Roam, patrol, or idle on the exploration map / as a move-only turn action.
+    Routine(NpcRoutineDef),
+    /// Call for allies (stub — no gameplay effect yet).
+    CallForHelp { range: u16 },
+    /// Explicit no-op for this tick.
+    Pass,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NpcBehaviorDef {
-    pub routine: NpcRoutineDef,
-    pub hostile_trigger: Option<HostileTriggerDef>,
+    /// Priority-ordered reactions; first producing an action wins.
+    pub reactions: &'static [ReactionDef],
+    pub encounter: Option<EncounterTriggerDef>,
 }
 
 impl NpcBehaviorDef {
     pub const fn idle() -> Self {
         Self {
-            routine: NpcRoutineDef::Idle,
-            hostile_trigger: None,
+            reactions: &[ReactionDef::Routine(NpcRoutineDef::Idle), ReactionDef::Pass],
+            encounter: None,
         }
+    }
+
+    pub const fn with_reactions(
+        reactions: &'static [ReactionDef],
+        encounter: Option<EncounterTriggerDef>,
+    ) -> Self {
+        Self { reactions, encounter }
     }
 }
 
@@ -271,7 +297,7 @@ pub struct EntityBlueprint {
     pub default_label: &'static str,
     /// Actor entities participate in exploration/combat simulation and can block movement.
     pub is_actor: bool,
-    /// Exploration routine + hostile aggro trigger for actor entities.
+    /// Priority-ordered reaction list + optional encounter trigger for actor entities.
     pub behavior: NpcBehaviorDef,
     /// When set, must exist in `ContentPack::dialogues` and is used as `npc_kind` for talk hooks.
     pub dialogue_id: Option<&'static str>,

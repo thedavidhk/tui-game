@@ -1,4 +1,5 @@
 pub(super) mod actions;
+pub(super) mod behavior;
 pub(super) mod combat;
 pub(super) mod hover;
 pub(super) mod pacing;

@@ -12,6 +12,25 @@ pub struct GridPos {
     pub y: i32,
 }
 
+/// Transient override from damage, flee, or investigation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActiveReaction {
+    #[default]
+    None,
+    Flee {
+        from: GridPos,
+    },
+    Investigate(GridPos),
+}
+
+/// Forced reaction from magic or abilities (checked before blueprint list).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ForcedReaction {
+    Flee {
+        from: GridPos,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NpcBrainState {
     pub home: GridPos,
@@ -19,7 +38,8 @@ pub struct NpcBrainState {
     pub roam_wait_ticks: u16,
     pub patrol_next_stop: u16,
     pub patrol_wait_ticks: u16,
-    pub investigation_goal: Option<GridPos>,
+    pub active: ActiveReaction,
+    pub forced_reaction: Option<ForcedReaction>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,7 +130,8 @@ impl EntityArena {
             roam_wait_ticks: 0,
             patrol_next_stop: 0,
             patrol_wait_ticks: 0,
-            investigation_goal: None,
+            active: ActiveReaction::None,
+            forced_reaction: None,
         };
         id
     }

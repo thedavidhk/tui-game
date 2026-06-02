@@ -1,7 +1,56 @@
 use crate::content::{
-    Disposition, EntityBlueprint, HostileTriggerDef, NpcBehaviorDef, NpcRoutineDef, PatrolStopDef,
-    Rgb24,
+    Disposition, EncounterTriggerDef, EntityBlueprint, NpcBehaviorDef, NpcRoutineDef,
+    PatrolStopDef, ReactionDef, Rgb24,
 };
+
+pub const HOSTILE_WOLF_REACTIONS: &[ReactionDef] = &[
+    ReactionDef::FightNearestInTurn,
+    ReactionDef::Routine(NpcRoutineDef::Roam {
+        radius: 5,
+        wait_ticks: 15,
+    }),
+    ReactionDef::Pass,
+];
+
+pub static BLUEPRINT_BANDIT_PATROL_STOPS: &[PatrolStopDef] = &[
+    PatrolStopDef {
+        dx: 0,
+        dy: 0,
+        wait_ticks: 10,
+    },
+    PatrolStopDef {
+        dx: 4,
+        dy: 0,
+        wait_ticks: 14,
+    },
+    PatrolStopDef {
+        dx: 4,
+        dy: 3,
+        wait_ticks: 10,
+    },
+    PatrolStopDef {
+        dx: 0,
+        dy: 3,
+        wait_ticks: 14,
+    },
+];
+
+pub const HOSTILE_BANDIT_REACTIONS: &[ReactionDef] = &[
+    ReactionDef::FightNearestInTurn,
+    ReactionDef::Routine(NpcRoutineDef::Patrol {
+        stops: BLUEPRINT_BANDIT_PATROL_STOPS,
+    }),
+    ReactionDef::Pass,
+];
+
+pub const SKITTISH_DEER_REACTIONS: &[ReactionDef] = &[
+    ReactionDef::FleeFromThreat { range: 5 },
+    ReactionDef::Routine(NpcRoutineDef::Roam {
+        radius: 4,
+        wait_ticks: 12,
+    }),
+    ReactionDef::Pass,
+];
 
 pub const BLUEPRINT_PROP: EntityBlueprint = EntityBlueprint {
     kind: "prop",
@@ -91,13 +140,10 @@ pub const BLUEPRINT_WOLF: EntityBlueprint = EntityBlueprint {
     default_fg: Rgb24::new(190, 190, 190),
     default_label: "Wolf",
     is_actor: true,
-    behavior: NpcBehaviorDef {
-        routine: NpcRoutineDef::Roam {
-            radius: 5,
-            wait_ticks: 15,
-        },
-        hostile_trigger: Some(HostileTriggerDef::PlayerWithinChebyshev { range: 4 }),
-    },
+    behavior: NpcBehaviorDef::with_reactions(
+        HOSTILE_WOLF_REACTIONS,
+        Some(EncounterTriggerDef::PlayerWithinChebyshev { range: 4 }),
+    ),
     dialogue_id: None,
     world_item: None,
     is_container: false,
@@ -109,29 +155,6 @@ pub const BLUEPRINT_WOLF: EntityBlueprint = EntityBlueprint {
     base_speed: 6,
 };
 
-pub static BLUEPRINT_BANDIT_PATROL_STOPS: &[PatrolStopDef] = &[
-    PatrolStopDef {
-        dx: 0,
-        dy: 0,
-        wait_ticks: 10,
-    },
-    PatrolStopDef {
-        dx: 4,
-        dy: 0,
-        wait_ticks: 14,
-    },
-    PatrolStopDef {
-        dx: 4,
-        dy: 3,
-        wait_ticks: 10,
-    },
-    PatrolStopDef {
-        dx: 0,
-        dy: 3,
-        wait_ticks: 14,
-    },
-];
-
 pub const BLUEPRINT_BANDIT: EntityBlueprint = EntityBlueprint {
     kind: "bandit",
     display_name: "Bandit",
@@ -140,12 +163,10 @@ pub const BLUEPRINT_BANDIT: EntityBlueprint = EntityBlueprint {
     default_fg: Rgb24::new(205, 185, 165),
     default_label: "Bandit",
     is_actor: true,
-    behavior: NpcBehaviorDef {
-        routine: NpcRoutineDef::Patrol {
-            stops: BLUEPRINT_BANDIT_PATROL_STOPS,
-        },
-        hostile_trigger: Some(HostileTriggerDef::PlayerWithinChebyshev { range: 5 }),
-    },
+    behavior: NpcBehaviorDef::with_reactions(
+        HOSTILE_BANDIT_REACTIONS,
+        Some(EncounterTriggerDef::PlayerWithinChebyshev { range: 5 }),
+    ),
     dialogue_id: None,
     world_item: None,
     is_container: false,
@@ -157,6 +178,26 @@ pub const BLUEPRINT_BANDIT: EntityBlueprint = EntityBlueprint {
     base_speed: 5,
 };
 
+pub const BLUEPRINT_DEER: EntityBlueprint = EntityBlueprint {
+    kind: "deer",
+    display_name: "Deer",
+    description: "Skittish wildlife that flees when threatened or hurt.",
+    default_glyph: 'd',
+    default_fg: Rgb24::new(210, 195, 160),
+    default_label: "Deer",
+    is_actor: true,
+    behavior: NpcBehaviorDef::with_reactions(SKITTISH_DEER_REACTIONS, None),
+    dialogue_id: None,
+    world_item: None,
+    is_container: false,
+    faction_id: "wildlife",
+    disposition_to_player: Disposition::Neutral,
+    base_max_hp: 8,
+    base_strength: 2,
+    base_agility: 8,
+    base_speed: 8,
+};
+
 pub static ENTITY_BLUEPRINTS: &[EntityBlueprint] = &[
     BLUEPRINT_PROP,
     BLUEPRINT_HEALTH_TONIC_DROP,
@@ -164,4 +205,5 @@ pub static ENTITY_BLUEPRINTS: &[EntityBlueprint] = &[
     BLUEPRINT_WOODEN_CHEST,
     BLUEPRINT_WOLF,
     BLUEPRINT_BANDIT,
+    BLUEPRINT_DEER,
 ];

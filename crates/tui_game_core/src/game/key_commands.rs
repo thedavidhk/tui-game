@@ -96,6 +96,15 @@ pub enum GameInput {
 }
 
 #[must_use]
+pub fn key_layer_for_game(game: &crate::game::Game) -> KeyMapLayer {
+    if game.turn_clock.is_some() && matches!(game.modes.current(), Some(crate::game::GameMode::Exploration))
+    {
+        return KeyMapLayer::Combat;
+    }
+    key_layer_for_mode(game.modes.current())
+}
+
+#[must_use]
 pub fn key_layer_for_mode(mode: Option<&GameMode>) -> KeyMapLayer {
     match mode {
         None => KeyMapLayer::ConfirmModal,

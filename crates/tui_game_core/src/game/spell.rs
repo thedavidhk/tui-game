@@ -45,8 +45,8 @@ pub struct SpellDef {
 
 pub const FIREBALL: SpellDef = SpellDef {
     name: "Fireball",
-    range: 8,
-    aoe_radius: 2,
+    range: 15,
+    aoe_radius: 5,
     damage_base: 3,
     damage_random: 5, // roll 0..5, so total 3–7
     cooldown_ticks: 90, // ~1.5 s at 60 Hz
@@ -192,11 +192,12 @@ mod tests {
 
     #[test]
     fn in_range_accepts_cells_within_range() {
-        assert!(in_range(pos(0, 0), pos(8, 0), SpellKind::Fireball));
+        let range = def(SpellKind::Fireball).range;
+        assert!(in_range(pos(0, 0), pos(range, 0), SpellKind::Fireball));
         assert!(in_range(pos(0, 0), pos(0, 0), SpellKind::Fireball));
-        assert!(!in_range(pos(0, 0), pos(9, 0), SpellKind::Fireball));
-        // Euclidean range is circular, not square.
-        assert!(!in_range(pos(0, 0), pos(6, 6), SpellKind::Fireball));
+        assert!(!in_range(pos(0, 0), pos(range + 1, 0), SpellKind::Fireball));
+        // Euclidean range is circular, not square (aspect-aware).
+        assert!(!in_range(pos(0, 0), pos(range + 1, range + 1), SpellKind::Fireball));
     }
 
     #[test]

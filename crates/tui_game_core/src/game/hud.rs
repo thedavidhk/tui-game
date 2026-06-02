@@ -4,7 +4,7 @@
 //! are surfaced through [`debug_overlay_lines`] when [`super::Game::debug_overlay`] is enabled.
 
 use crate::combat::CombatState;
-use crate::game::services::hover;
+use crate::game::services::{behavior, hover};
 use crate::game::spell;
 use crate::game::{Game, GameMode};
 
@@ -12,6 +12,7 @@ use crate::game::{Game, GameMode};
 #[must_use]
 pub fn mode_heading(game: &Game) -> &'static str {
     match game.modes.current() {
+        Some(GameMode::Exploration) if behavior::turn_based_active(game) => "Turn-based",
         Some(GameMode::Exploration) => "Explore",
         Some(GameMode::Combat(_)) => "Combat",
         Some(GameMode::SpellTargeting { .. }) => "Aiming",
@@ -29,6 +30,11 @@ pub fn mode_heading(game: &Game) -> &'static str {
 #[must_use]
 pub fn command_footer(game: &Game) -> &'static str {
     match game.modes.current() {
+        Some(GameMode::Combat(_)) | Some(GameMode::Exploration)
+            if behavior::turn_based_active(game) =>
+        {
+            "LMB attack/move   RMB march   Space wait   z fireball   f flee   t realtime   F1 debug"
+        }
         Some(GameMode::Combat(_)) => {
             "LMB attack/move   RMB march   Space wait   z fireball   f flee   Esc cancel   F1 debug"
         }

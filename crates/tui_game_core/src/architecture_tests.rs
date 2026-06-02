@@ -1,16 +1,16 @@
 #[test]
-fn ai_and_magic_do_not_depend_on_render_layer() {
-    let ai_mod = include_str!("ai/mod.rs");
-    let ai_combat = include_str!("ai/combat.rs");
-    let ai_exploration = include_str!("ai/exploration.rs");
+fn behavior_and_magic_do_not_depend_on_render_layer() {
+    let behavior_mod = include_str!("behavior/mod.rs");
+    let behavior_reactions = include_str!("behavior/reactions.rs");
+    let behavior_exploration = include_str!("behavior/exploration.rs");
     let magic_mod = include_str!("magic/mod.rs");
     let magic_combat = include_str!("magic/combat.rs");
     let magic_exploration = include_str!("magic/exploration.rs");
 
     for src in [
-        ai_mod,
-        ai_combat,
-        ai_exploration,
+        behavior_mod,
+        behavior_reactions,
+        behavior_exploration,
         magic_mod,
         magic_combat,
         magic_exploration,
@@ -24,9 +24,6 @@ fn ai_and_magic_do_not_depend_on_render_layer() {
 
 #[test]
 fn screen_effect_renderer_stays_a_pure_post_pass() {
-    // `render::effects` draws self-describing effects over a `FrameBuffer`; deciding *when*
-    // an effect is active belongs to `game::effects`. Keep that split so the renderer never
-    // reaches back into game state.
     let render_effects = include_str!("render/effects.rs");
     assert!(
         !render_effects.contains("crate::game"),

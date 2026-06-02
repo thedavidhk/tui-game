@@ -1,6 +1,6 @@
 //! Core simulation, rendering buffers, save format, and content for the TUI RPG.
 
-pub mod ai;
+pub mod behavior;
 pub mod combat;
 pub mod content;
 pub mod entity;

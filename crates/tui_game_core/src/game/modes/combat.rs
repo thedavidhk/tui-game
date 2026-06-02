@@ -1,13 +1,16 @@
-use crate::combat::{CombatAction, CombatState};
+use crate::combat::CombatAction;
 use crate::entity::GridPos;
+use crate::game::services::behavior;
 use crate::game::services::hover;
 use crate::game::spell::SpellKind;
 use crate::game::{Game, GameCommand, GameInput, GameMode};
 use crate::input::{InputEvent, MouseButton, MouseEventKind};
 use crate::ui::layout::GameShellLayout;
 
-pub(crate) fn handle(game: &mut Game, ev: GameInput, state: CombatState) {
-    let mut next = state.clone();
+pub(crate) fn handle(game: &mut Game, ev: GameInput) {
+    let Some(mut next) = behavior::active_turn_clock(game).cloned() else {
+        return;
+    };
     let world_r = GameShellLayout::root_panels(game.viewport_w, game.viewport_h).0;
 
     match ev {
@@ -34,6 +37,7 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput, state: CombatState) {
                 |_x, _y| false,
                 None,
                 None,
+                Some(&game.content),
             );
             game.apply_combat_report(&next, report);
         }
@@ -49,6 +53,7 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput, state: CombatState) {
                 |_x, _y| false,
                 None,
                 None,
+                Some(&game.content),
             );
             game.apply_combat_report(&next, report);
         }
@@ -82,9 +87,8 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput, state: CombatState) {
         }
         GameInput::Command(GameCommand::CastFireball) => {
             let cursor = game.player_pos().unwrap_or(GridPos { x: 0, y: 0 });
-            // Stash the updated combat state first so it doesn't get overwritten below.
-            if let Some(GameMode::Combat(cs)) = game.modes.current_mut() {
-                *cs = next;
+            if let Some(slot) = behavior::active_turn_clock_mut(game) {
+                *slot = next;
             }
             game.modes.push(GameMode::SpellTargeting {
                 spell: SpellKind::Fireball,
@@ -95,7 +99,7 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput, state: CombatState) {
         GameInput::Command(_) => {}
         GameInput::Raw(_) => {}
     }
-    if let Some(GameMode::Combat(cs)) = game.modes.current_mut() {
-        *cs = next;
+    if let Some(slot) = behavior::active_turn_clock_mut(game) {
+        *slot = next;
     }
 }

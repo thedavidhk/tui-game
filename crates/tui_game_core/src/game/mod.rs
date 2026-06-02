@@ -11,7 +11,7 @@ pub mod spell;
 mod view;
 
 pub use key_commands::{
-    default_game_key_map, key_layer_for_mode, GameCommand, GameInput, GameKeyMap, KeyMapLayer,
+    default_game_key_map, key_layer_for_game, GameCommand, GameInput, GameKeyMap, KeyMapLayer,
 };
 
 use std::fs;
@@ -24,7 +24,7 @@ use crate::combat::{
     EncounterProfile, PendingHit, ATTACK_COST_UNITS, MELEE_HIT_TICKS, MOVE_ORTHOGONAL_COST_UNITS,
     PROJECTILE_MIN_TICKS, PROJECTILE_TICKS_PER_CELL,
 };
-use crate::content::{ContentPack, DialogueAction, HostileTriggerDef, NpcRoutineDef, Relation};
+use crate::content::{ContentPack, DialogueAction, Relation};
 use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, MouseCell};
@@ -48,7 +48,6 @@ use crate::world::{
 };
 
 const FOW_RADIUS: i32 = 20;
-const NPC_EXPLORATION_AI_COOLDOWN_TICKS: u16 = 6;
 
 /// `(weight, glyph)`; weights sum to **256** (lighter / speck glyphs more common than heavy blocks).
 const FOG_GLYPH_WEIGHTS: &[(u16, char)] = &[(166, ' '), (39, '·'), (27, '░'), (16, '▒'), (8, '▓')];
@@ -231,6 +230,8 @@ pub struct Game {
     pub active_area_effects: Vec<effects::ActiveAreaEffect>,
     /// Ticks until the fireball spell can be cast again (`0` = ready).
     pub fireball_cooldown_ticks: u16,
+    /// Overworld turn-based clock (`t` toggle) while still in exploration mode.
+    pub turn_clock: Option<CombatState>,
 }
 
 impl Game {
@@ -407,6 +408,7 @@ impl Game {
             pending_hits: Vec::new(),
             active_area_effects: Vec::new(),
             fireball_cooldown_ticks: 0,
+            turn_clock: None,
         };
         game.seed_demo_weapon_chest();
         game.refresh_fow();
@@ -844,22 +846,12 @@ impl Game {
                 modes::route(self, gi);
             }
         }
-        services::combat::step_npc_combat_ai(self);
-        self.step_npc_exploration_ai();
+        services::behavior::tick_npcs(self);
         self.step_player_walk();
         self.pump_pending_player_action();
         self.pump_pending_forced_dialogue();
         self.tick_viewport_edge_scroll();
-        let combat_state = self
-            .modes
-            .current()
-            .and_then(|m| {
-                if let GameMode::Combat(cs) = m {
-                    Some(cs.clone())
-                } else {
-                    None
-                }
-            });
+        let combat_state = crate::game::services::behavior::active_turn_clock(self).cloned();
         self.tick_effects(combat_state.as_ref());
         self.fireball_cooldown_ticks = self.fireball_cooldown_ticks.saturating_sub(1);
         self.surface_tick = self.surface_tick.wrapping_add(1);
@@ -902,94 +894,10 @@ impl Game {
         });
     }
 
-    fn hostile_trigger_met(&self, eid: EntityId, trigger: HostileTriggerDef) -> bool {
-        let Some(pp) = self.player_pos() else {
-            return false;
-        };
-        let Some(ep) = self.entities.pos(eid) else {
-            return false;
-        };
-        match trigger {
-            HostileTriggerDef::PlayerWithinChebyshev { range } => {
-                crate::math::chebyshev(pp, ep) <= i32::from(range)
-            }
-        }
-    }
-
-    fn step_npc_exploration_ai(&mut self) {
-        if !matches!(self.modes.current(), Some(GameMode::Exploration)) {
-            self.npc_exploration_ai_tick_cooldown = 0;
-            return;
-        }
-        if services::combat::detect_hostile_encounters(self) {
-            self.npc_exploration_ai_tick_cooldown = 0;
-            return;
-        }
-        if self.npc_exploration_ai_tick_cooldown > 0 {
-            self.npc_exploration_ai_tick_cooldown =
-                self.npc_exploration_ai_tick_cooldown.saturating_sub(1);
-            return;
-        }
-
-        let mut pace_ticks = 0u16;
-        for i in 0..self.entities.alive.len() {
-            if !self.entities.alive[i] {
-                continue;
-            }
-            let eid = EntityId(i as u32);
-            if self.player_id() == Some(eid) {
-                continue;
-            }
-            let Some(kind) = self.entities.npc_kind.get(i).and_then(|k| k.as_deref()) else {
-                continue;
-            };
-            let Some(bp) = self.content.blueprint(kind) else {
-                continue;
-            };
-            let Some(from) = self.entities.pos(eid) else {
-                continue;
-            };
-            let mut brain = self.entities.npc_brain.get(i).copied().unwrap_or_default();
-            let next = match bp.behavior.routine {
-                NpcRoutineDef::Idle => None,
-                routine => crate::ai::exploration::next_exploration_step(
-                    eid,
-                    from,
-                    routine,
-                    &mut brain,
-                    &self.map,
-                    &self.entities,
-                    &mut self.rng_seed,
-                ),
-            };
-            if let Some(slot) = self.entities.npc_brain.get_mut(i) {
-                *slot = brain;
-            }
-            let Some(target) = next else {
-                continue;
-            };
-            if self.entities.can_move_to(
-                self.map.blocks_movement(target.x, target.y),
-                target,
-                Some(eid),
-            ) {
-                let dx = target.x - from.x;
-                let dy = target.y - from.y;
-                self.entities.set_pos(eid, target);
-                pace_ticks = pace_ticks.max(services::pacing::scaled_step_cooldown(
-                    NPC_EXPLORATION_AI_COOLDOWN_TICKS,
-                    dx,
-                    dy,
-                ));
-            }
-        }
-        self.npc_exploration_ai_tick_cooldown = pace_ticks;
-    }
-
     fn resolve_game_input(&self, ev: &InputEvent) -> Option<GameInput> {
         match ev {
             InputEvent::Key(ch) => {
-                let layer = key_layer_for_mode(self.modes.current());
+                let layer = key_layer_for_game(self);
                 self.key_map.resolve(layer, *ch).map(GameInput::Command)
             }
             InputEvent::Mouse { .. } => Some(GameInput::Raw(ev.clone())),
@@ -1391,10 +1299,6 @@ impl Game {
         modes::transfer::handle(self, ev);
     }
 
-    pub(crate) fn handle_combat(&mut self, ev: GameInput, state: CombatState) {
-        modes::combat::handle(self, ev, state);
-    }
-
     fn attack_style_for_entity(&self, actor: EntityId) -> AttackStyle {
         if self.player_id() != Some(actor) {
             return AttackStyle::Unarmed;
@@ -1451,6 +1355,7 @@ impl Game {
             map_blocks,
             Some(&self.map),
             narrative,
+            Some(&self.content),
         );
         self.apply_combat_report(state, report);
     }
@@ -1496,6 +1401,7 @@ impl Game {
             map_blocks,
             Some(&self.map),
             None,
+            Some(&self.content),
         );
         self.apply_combat_report(state, report);
     }
@@ -1600,6 +1506,7 @@ impl Game {
                 |x, y| self.map.blocks_movement(x, y),
                 Some(&self.map),
                 None,
+                Some(&self.content),
             );
             let applied = report.applied;
             let ended = report.end_combat;
@@ -1722,7 +1629,12 @@ impl Game {
             self.spawn_attack_effect(hit);
         }
         if report.end_combat {
-            services::combat::finish_combat(self, state);
+            if crate::game::services::behavior::in_encounter(self) {
+                services::combat::finish_combat(self, state);
+            } else {
+                self.turn_clock = None;
+                self.log.push("Turn-based mode ended.".into());
+            }
         }
         self.refresh_fow();
     }
@@ -1732,17 +1644,8 @@ impl Game {
         use projectile::{arrow_glyph, Projectile, ARROW_COLOR, MELEE_FLASH_COLOR};
 
         // Resolve attacker and target positions for the visual.
-        let actor = self
-            .modes
-            .current()
-            .and_then(|m| {
-                if let GameMode::Combat(cs) = m {
-                    cs.current_actor()
-                } else {
-                    None
-                }
-            })
-            // Fall back to the entity the hit originated from (best-effort).
+        let actor = crate::game::services::behavior::active_turn_clock(self)
+            .and_then(|cs| cs.current_actor())
             .unwrap_or(EntityId(0));
 
         let from = self.entities.pos(actor).unwrap_or_default();
@@ -1819,7 +1722,12 @@ impl Game {
 
         if end_combat {
             if let Some(cs) = state.cloned() {
-                services::combat::finish_combat(self, &cs);
+                if crate::game::services::behavior::in_encounter(self) {
+                    services::combat::finish_combat(self, &cs);
+                } else {
+                    self.turn_clock = None;
+                    self.log.push("Turn-based mode ended.".into());
+                }
             }
         }
     }
@@ -1854,8 +1762,13 @@ impl Game {
 
     /// Leave combat from the UI (Esc); message is logged before combat state is torn down.
     pub(crate) fn finish_combat_player_quit(&mut self, state: &CombatState) {
-        self.log.push("You leave the fight.".into());
-        services::combat::finish_combat(self, state);
+        if crate::game::services::behavior::in_encounter(self) {
+            self.log.push("You leave the fight.".into());
+            services::combat::finish_combat(self, state);
+        } else {
+            self.turn_clock = None;
+            self.log.push("Realtime exploration.".into());
+        }
     }
 
     pub fn compose(

@@ -191,6 +191,7 @@ impl CombatState {
         map_blocks_move: impl Fn(i32, i32) -> bool,
         map: Option<&MapGrid>,
         narrative: Option<&mut NarrativeState>,
+        content: Option<&crate::content::ContentPack>,
     ) -> CombatActionReport {
         let Some(actor) = self.current_actor() else {
             return CombatActionReport {
@@ -400,7 +401,14 @@ impl CombatState {
                 // Alert the target's AI about the attacker even before damage lands.
                 if hit {
                     if let Some(brain) = arena.npc_brain.get_mut(target.0 as usize) {
-                        brain.investigation_goal = Some(attacker_pos);
+                        let reactions = arena
+                            .npc_kind
+                            .get(target.0 as usize)
+                            .and_then(|k| k.as_deref())
+                            .and_then(|kind| content.and_then(|c| c.blueprint(kind)))
+                            .map(|bp| bp.behavior.reactions)
+                            .unwrap_or(&[]);
+                        crate::behavior::on_combat_hit_target(brain, reactions, attacker_pos);
                     }
                 }
 
@@ -592,6 +600,7 @@ mod tests {
             |_, _| false,
             None,
             None,
+            None,
         );
 
         assert!(report.applied, "attack must be applied");
@@ -613,6 +622,7 @@ mod tests {
             &mut arena,
             &mut seed,
             |_, _| false,
+            None,
             None,
             None,
         );
@@ -670,6 +680,7 @@ mod tests {
             |_, _| false,
             Some(&map),
             Some(&mut narrative),
+            None,
         );
 
         assert!(report.applied, "ranged attack must apply");
@@ -691,6 +702,7 @@ mod tests {
             &mut arena,
             &mut seed,
             |_, _| false,
+            None,
             None,
             None,
         );
