@@ -7,6 +7,7 @@ pub(super) mod game_over;
 pub(super) mod inventory;
 pub(super) mod journal;
 pub(super) mod menu;
+pub(super) mod spell_targeting;
 pub(super) mod transfer;
 
 use super::{Game, GameInput, GameMode};
@@ -21,6 +22,9 @@ pub fn route(game: &mut Game, ev: GameInput) {
         Some(GameMode::Journal { .. }) => game.handle_journal(ev),
         Some(GameMode::ItemTransfer { .. }) => game.handle_item_transfer(ev),
         Some(GameMode::Combat(ref c)) => game.handle_combat(ev, c.clone()),
+        Some(GameMode::SpellTargeting { spell, cursor }) => {
+            spell_targeting::handle(game, ev, spell, cursor);
+        }
         Some(GameMode::GameOver) => game.handle_game_over(ev),
     }
 }

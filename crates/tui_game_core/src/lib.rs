@@ -10,6 +10,7 @@ pub mod input;
 pub mod item;
 pub mod level;
 pub mod magic;
+pub mod math;
 pub mod narrative;
 pub mod rect;
 pub mod render;

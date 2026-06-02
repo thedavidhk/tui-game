@@ -7,6 +7,7 @@ mod modes;
 mod overlay_layout;
 pub mod projectile;
 pub(crate) mod services;
+pub mod spell;
 mod view;
 
 pub use key_commands::{
@@ -128,6 +129,12 @@ pub enum GameMode {
         cursor_container: usize,
     },
     Combat(CombatState),
+    /// Player is aiming a spell: cursor moves around the world, preview shown, Enter confirms.
+    SpellTargeting {
+        spell: spell::SpellKind,
+        /// Current aim cursor in world coordinates.
+        cursor: GridPos,
+    },
     /// Lethal defeat: world frozen until the player returns to the main menu.
     GameOver,
 }
@@ -219,6 +226,11 @@ pub struct Game {
     pub active_projectiles: Vec<projectile::Projectile>,
     /// Attacks whose damage fires after the animation completes (not saved).
     pub pending_hits: Vec<PendingHit>,
+    /// World-space area effects currently alive (fire, poison cloud, magic aura, …).
+    /// Not serialized; re-triggered by game events or restored from level data on load.
+    pub active_area_effects: Vec<effects::ActiveAreaEffect>,
+    /// Ticks until the fireball spell can be cast again (`0` = ready).
+    pub fireball_cooldown_ticks: u16,
 }
 
 impl Game {
@@ -393,6 +405,8 @@ impl Game {
             key_map,
             active_projectiles: Vec::new(),
             pending_hits: Vec::new(),
+            active_area_effects: Vec::new(),
+            fireball_cooldown_ticks: 0,
         };
         game.seed_demo_weapon_chest();
         game.refresh_fow();
@@ -847,6 +861,7 @@ impl Game {
                 }
             });
         self.tick_effects(combat_state.as_ref());
+        self.fireball_cooldown_ticks = self.fireball_cooldown_ticks.saturating_sub(1);
         self.surface_tick = self.surface_tick.wrapping_add(1);
     }
 
@@ -896,7 +911,7 @@ impl Game {
         };
         match trigger {
             HostileTriggerDef::PlayerWithinChebyshev { range } => {
-                services::hover::chebyshev(pp, ep) <= i32::from(range)
+                crate::math::chebyshev(pp, ep) <= i32::from(range)
             }
         }
     }
@@ -1050,10 +1065,10 @@ impl Game {
         match req.range {
             services::actions::RangeRequirement::Adjacent => self
                 .action_target_pos(command)
-                .is_some_and(|target| services::hover::chebyshev(actor_pos, target) <= 1),
+                .is_some_and(|target| crate::math::chebyshev(actor_pos, target) <= 1),
             services::actions::RangeRequirement::TalkRadius => {
                 self.action_target_pos(command).is_some_and(|target| {
-                    services::hover::manhattan(actor_pos, target)
+                    crate::math::manhattan(actor_pos, target)
                         <= services::hover::TALK_RANGE_MANHATTAN
                 })
             }
@@ -1453,7 +1468,7 @@ impl Game {
         let Some(tp) = self.entities.pos(target) else {
             return false;
         };
-        let d = services::hover::chebyshev(pp, tp);
+        let d = crate::math::chebyshev(pp, tp);
         match self.attack_style_for_entity(player) {
             AttackStyle::Bow { range, .. } => d >= 1 && d <= i32::from(range),
             AttackStyle::Unarmed | AttackStyle::Melee { .. } => d == 1,
@@ -1494,7 +1509,7 @@ impl Game {
             return;
         };
         let style = self.attack_style_for_entity(actor);
-        let dist = services::hover::chebyshev(p, tp);
+        let dist = crate::math::chebyshev(p, tp);
         let in_range = match style {
             AttackStyle::Unarmed | AttackStyle::Melee { .. } => dist == 1,
             AttackStyle::Bow { range, .. } => dist >= 1 && dist <= i32::from(range),
@@ -1549,7 +1564,7 @@ impl Game {
             };
             if let Some((finish_id, max_d)) = stop_near_entity {
                 if let Some(tp) = self.entities.pos(finish_id) {
-                    if services::hover::chebyshev(from, tp) <= max_d {
+                    if crate::math::chebyshev(from, tp) <= max_d {
                         return false;
                     }
                 }
@@ -1757,10 +1772,12 @@ impl Game {
         self.pending_hits.push(hit);
     }
 
-    /// Advance all in-flight projectiles and fire any pending hits whose timers have expired.
+    /// Advance all in-flight projectiles, fire pending hits, and expire area effects.
     ///
     /// Called once per [`Game::step`] tick, unconditionally.
     pub(crate) fn tick_effects(&mut self, state: Option<&CombatState>) {
+        self.tick_area_effects();
+
         // Tick projectiles.
         for p in &mut self.active_projectiles {
             p.ticks_elapsed = p.ticks_elapsed.saturating_add(1);
@@ -1803,6 +1820,34 @@ impl Game {
                 services::combat::finish_combat(self, &cs);
             }
         }
+    }
+
+    // ── Area effects ─────────────────────────────────────────────────────────
+
+    /// Spawn a world-space area effect.
+    ///
+    /// `remaining_ticks = u32::MAX` creates a permanent effect (e.g. level-defined fire);
+    /// any smaller value expires after that many game ticks.
+    pub fn trigger_area_effect(
+        &mut self,
+        effect: crate::render::area_effects::AreaEffect,
+        remaining_ticks: u32,
+    ) {
+        self.active_area_effects.push(effects::ActiveAreaEffect {
+            effect,
+            remaining_ticks,
+        });
+    }
+
+    /// Tick down and expire finite-lifetime area effects. Called from [`Self::tick_effects`].
+    fn tick_area_effects(&mut self) {
+        for ae in &mut self.active_area_effects {
+            if ae.remaining_ticks != u32::MAX {
+                ae.remaining_ticks = ae.remaining_ticks.saturating_sub(1);
+            }
+        }
+        self.active_area_effects
+            .retain(|ae| ae.remaining_ticks > 0);
     }
 
     /// Leave combat from the UI (Esc); message is logged before combat state is torn down.
@@ -1865,6 +1910,8 @@ impl Game {
         self.viewport_edge_scroll_cooldown = 0;
         self.active_projectiles.clear();
         self.pending_hits.clear();
+        self.active_area_effects.clear();
+        self.fireball_cooldown_ticks = 0;
         let n = (self.map.width as usize) * (self.map.height as usize);
         self.explored.resize(n, false);
         self.visible.resize(n, false);
@@ -2222,5 +2269,55 @@ mod tests {
             same_ticks >= 2,
             "expected at least one pacing tick before second move (speed 7 => 3-tick cooldown at ~60 Hz)"
         );
+    }
+
+    #[test]
+    fn area_effect_expires_after_lifetime() {
+        use crate::entity::GridPos;
+        use crate::render::area_effects::{AreaEffect, AreaEffectKind};
+
+        let mut game = Game::new_bootstrapped(80, 30);
+        game.trigger_area_effect(
+            AreaEffect {
+                center: GridPos { x: 5, y: 5 },
+                radius: 2,
+                strength: 150,
+                kind: AreaEffectKind::Fire,
+                phase: 0,
+            },
+            3, // 3 ticks lifetime
+        );
+        assert_eq!(game.active_area_effects.len(), 1, "effect should be present after trigger");
+
+        game.step(&InputBatch::default()); // tick 1 → remaining = 2
+        assert_eq!(game.active_area_effects.len(), 1);
+        game.step(&InputBatch::default()); // tick 2 → remaining = 1
+        assert_eq!(game.active_area_effects.len(), 1);
+        game.step(&InputBatch::default()); // tick 3 → remaining = 0, removed
+        assert_eq!(game.active_area_effects.len(), 0, "effect should be removed after lifetime expires");
+    }
+
+    #[test]
+    fn area_effect_permanent_when_max_ticks() {
+        use crate::entity::GridPos;
+        use crate::render::area_effects::{AreaEffect, AreaEffectKind};
+
+        let mut game = Game::new_bootstrapped(80, 30);
+        game.trigger_area_effect(
+            AreaEffect {
+                center: GridPos { x: 5, y: 5 },
+                radius: 1,
+                strength: 100,
+                kind: AreaEffectKind::MagicAura {
+                    color: crate::render::Color::rgb(100, 50, 200),
+                },
+                phase: 0,
+            },
+            u32::MAX,
+        );
+        for _ in 0..60 {
+            game.step(&InputBatch::default());
+        }
+        assert_eq!(game.active_area_effects.len(), 1, "permanent effect should not expire");
     }
 }

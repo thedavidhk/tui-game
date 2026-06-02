@@ -1,6 +1,7 @@
 //! Mouse helpers: map screen cells to local grids and common brush / fill shapes.
 
 use crate::input::MouseCell;
+use crate::math::chebyshev_dist;
 use crate::rect::Rect;
 
 /// If `cell` lies inside `rect`, return coordinates relative to `rect`'s top-left.
@@ -26,8 +27,7 @@ pub fn map_view_rect(level_w: u16, level_h: u16, fb_w: u16, fb_h: u16) -> Rect {
 /// True if `(tx, ty)` lies in the square **Chebyshev** brush around `(cx, cy)`.
 #[must_use]
 pub fn cell_in_brush(tx: i32, ty: i32, cx: i32, cy: i32, radius: u8) -> bool {
-    let r = i32::from(radius);
-    (tx - cx).abs().max((ty - cy).abs()) <= r
+    chebyshev_dist(tx - cx, ty - cy) <= i32::from(radius)
 }
 
 /// True if `(tx, ty)` lies in the inclusive axis-aligned rectangle between the two corners.

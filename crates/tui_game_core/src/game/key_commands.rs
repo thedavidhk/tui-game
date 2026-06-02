@@ -30,6 +30,8 @@ pub enum GameCommand {
     StepEast,
     CombatFlee,
     ToggleTurnBased,
+    /// Enter fireball targeting mode (usable in both exploration and combat).
+    CastFireball,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -99,6 +101,8 @@ pub fn key_layer_for_mode(mode: Option<&GameMode>) -> KeyMapLayer {
         None => KeyMapLayer::ConfirmModal,
         Some(GameMode::Exploration) => KeyMapLayer::Exploration,
         Some(GameMode::Combat(_)) => KeyMapLayer::Combat,
+        // Targeting reuses exploration navigation (WASD / arrows + Enter/Esc).
+        Some(GameMode::SpellTargeting { .. }) => KeyMapLayer::Exploration,
         Some(GameMode::ItemTransfer { .. }) => KeyMapLayer::ItemTransfer,
         Some(GameMode::MainMenu { .. })
         | Some(GameMode::Dialogue { .. })
@@ -137,6 +141,7 @@ pub fn default_game_key_map() -> GameKeyMap {
         (chord(Key::Char('d')), GameCommand::StepEast),
         (chord(Key::Right), GameCommand::StepEast),
         (chord(Key::Char('t')), GameCommand::ToggleTurnBased),
+        (chord(Key::Char('z')), GameCommand::CastFireball),
     ];
     static COMBAT: &[(KeyChord, GameCommand)] = &[
         (chord(Key::F(1)), GameCommand::ToggleDebug),
@@ -158,6 +163,7 @@ pub fn default_game_key_map() -> GameKeyMap {
         (chord(Key::Char('q')), GameCommand::Back),
         (chord(Key::Char('f')), GameCommand::CombatFlee),
         (chord(Key::Char('t')), GameCommand::ToggleTurnBased),
+        (chord(Key::Char('z')), GameCommand::CastFireball),
     ];
     static CONFIRM_MODAL: &[(KeyChord, GameCommand)] = &[
         (chord(Key::F(1)), GameCommand::ToggleDebug),

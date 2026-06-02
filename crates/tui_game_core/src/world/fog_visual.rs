@@ -1,5 +1,7 @@
 //! Spatial smoothing of discrete fog-of-war luminance for softer color transitions.
 
+use crate::math::chebyshev_dist;
+
 /// Chebyshev (square) neighborhood radius, in **tiles**, for fog color smoothing.
 ///
 /// Change this single constant to tune how far visible / explored / void colors bleed
@@ -8,17 +10,6 @@ pub const FOG_COLOR_SOFTEN_RADIUS_CHEBYSHEV: i32 = 1;
 
 /// Discrete luminance for explored-but-not-visible cells (`fog_luminance_hard`); matches bake midpoint.
 pub const FOG_LUMINANCE_EXPLORED: f32 = 0.5;
-
-#[inline]
-const fn chebyshev_distance(dx: i32, dy: i32) -> i32 {
-    let ax = dx.abs();
-    let ay = dy.abs();
-    if ax > ay {
-        ax
-    } else {
-        ay
-    }
-}
 
 /// Tent kernel weight: full weight at the center, zero outside `radius`.
 #[inline]
@@ -60,7 +51,7 @@ pub fn smooth_fog_luminance(
     let mut wsum = 0.0_f32;
     for dy in -r..=r {
         for dx in -r..=r {
-            let d = chebyshev_distance(dx, dy);
+            let d = chebyshev_dist(dx, dy);
             let kw = kernel_weight(r, d);
             if kw <= 0.0 {
                 continue;

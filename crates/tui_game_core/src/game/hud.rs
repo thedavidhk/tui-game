@@ -5,6 +5,7 @@
 
 use crate::combat::CombatState;
 use crate::game::services::hover;
+use crate::game::spell;
 use crate::game::{Game, GameMode};
 
 /// Short mode label for the status column (`docs/ui_design.md` §4).
@@ -13,6 +14,7 @@ pub fn mode_heading(game: &Game) -> &'static str {
     match game.modes.current() {
         Some(GameMode::Exploration) => "Explore",
         Some(GameMode::Combat(_)) => "Combat",
+        Some(GameMode::SpellTargeting { .. }) => "Aiming",
         Some(GameMode::Dialogue { .. }) => "Dialogue",
         Some(GameMode::Inventory { .. }) => "Inventory",
         Some(GameMode::Journal { .. }) => "Journal",
@@ -28,7 +30,10 @@ pub fn mode_heading(game: &Game) -> &'static str {
 pub fn command_footer(game: &Game) -> &'static str {
     match game.modes.current() {
         Some(GameMode::Combat(_)) => {
-            "LMB attack/move   RMB march   Space wait   f flee   Esc cancel   F1 debug"
+            "LMB attack/move   RMB march   Space wait   z fireball   f flee   Esc cancel   F1 debug"
+        }
+        Some(GameMode::SpellTargeting { .. }) => {
+            "WASD/arrows aim   Enter cast   Esc cancel"
         }
         Some(GameMode::Inventory { .. }) => {
             "u use   e equip   Up/Down browse   Esc back   F1 debug"
@@ -38,7 +43,7 @@ pub fn command_footer(game: &Game) -> &'static str {
         Some(GameMode::Dialogue { .. }) => "Enter confirm   Esc leave   F1 debug",
         Some(GameMode::MainMenu { .. }) => "Enter confirm   Esc quit   F1 debug",
         Some(GameMode::GameOver) => "Enter / Esc — main menu",
-        _ => "LMB interact   RMB move   I inventory   J journal   F1 debug",
+        _ => "LMB interact   RMB move   z fireball   I inventory   J journal   F1 debug",
     }
 }
 
@@ -52,9 +57,22 @@ pub fn exploration_status_lines(game: &Game) -> Vec<String> {
         lines.push(format!("Speed    {}", s.speed));
     }
     lines.push(String::new());
+    lines.push("Spells".into());
+    lines.push(fireball_status_line(game));
+    lines.push(String::new());
     lines.push("Here".into());
     lines.extend(hover::exploration_here_lines(game));
     lines
+}
+
+fn fireball_status_line(game: &Game) -> String {
+    let cd = game.fireball_cooldown_ticks;
+    let name = spell::def(crate::game::spell::SpellKind::Fireball).name;
+    if cd == 0 {
+        format!("  {name}  [z] ready")
+    } else {
+        format!("  {name}  cooldown {cd}")
+    }
 }
 
 /// Combat-focused status for the right column (`docs/ui_design.md` §8).
@@ -85,6 +103,9 @@ pub fn combat_status_lines(game: &Game, state: &CombatState) -> Vec<String> {
             lines.push("AP       (enemy)".into());
         }
     }
+    lines.push(String::new());
+    lines.push("Spells".into());
+    lines.push(fireball_status_line(game));
     lines.push(String::new());
     lines.push("Target".into());
     lines.extend(hover::combat_target_lines(game, state));

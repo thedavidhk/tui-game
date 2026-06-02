@@ -6,21 +6,12 @@ use crate::entity::{EntityArena, EntityId, GridPos};
 use crate::game::Game;
 use crate::game::GameMode;
 use crate::input::MouseCell;
+use crate::math::{chebyshev, manhattan};
 use crate::rect::Rect;
 use crate::world::{MapGrid, EMPTY_PROP_ID};
 
 /// Max Manhattan distance from the player for starting dialogue (after walking into range).
 pub const TALK_RANGE_MANHATTAN: i32 = 4;
-
-#[must_use]
-pub fn manhattan(a: GridPos, b: GridPos) -> i32 {
-    (a.x - b.x).abs() + (a.y - b.y).abs()
-}
-
-#[must_use]
-pub fn chebyshev(a: GridPos, b: GridPos) -> i32 {
-    (a.x - b.x).abs().max((a.y - b.y).abs())
-}
 
 fn blueprint_for<'a>(
     entities: &EntityArena,

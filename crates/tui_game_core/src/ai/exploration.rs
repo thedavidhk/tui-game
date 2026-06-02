@@ -1,22 +1,11 @@
 use crate::content::{NpcRoutineDef, PatrolStopDef};
 use crate::entity::{EntityArena, EntityId, GridPos, NpcBrainState};
+use crate::math::{chebyshev, lcg_next_u32};
 use crate::world::{first_step_on_line, plan_path, MapGrid};
-
-#[must_use]
-pub fn chebyshev(a: GridPos, b: GridPos) -> i32 {
-    (a.x - b.x).abs().max((a.y - b.y).abs())
-}
-
-fn lcg_next(seed: &mut u64) -> u32 {
-    *seed = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    (*seed >> 32) as u32
-}
 
 fn random_inclusive(seed: &mut u64, lo: i32, hi: i32) -> i32 {
     let span = (hi - lo + 1).max(1) as u32;
-    lo + (lcg_next(seed) % span) as i32
+    lo + (lcg_next_u32(seed) % span) as i32
 }
 
 fn step_toward(

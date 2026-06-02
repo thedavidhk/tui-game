@@ -1,5 +1,7 @@
 //! Simple grid FoW: Bresenham ray per target cell from origin (classic roguelike style).
 
+use crate::math::euclidean_dist_sq;
+
 use super::map::MapGrid;
 
 /// Bitset for `width * height` cells: visible this frame.
@@ -20,7 +22,8 @@ pub fn compute_visible(map: &MapGrid, origin_x: i32, origin_y: i32, radius: i32,
         for tx in x0..=x1 {
             let dx = tx - origin_x;
             let dy = ty - origin_y;
-            if dx * dx + dy * dy > r * r {
+            let r_sq = i64::from(r) * i64::from(r);
+            if euclidean_dist_sq(dx, dy) > r_sq {
                 continue;
             }
             if los_clear(map, origin_x, origin_y, tx, ty) {

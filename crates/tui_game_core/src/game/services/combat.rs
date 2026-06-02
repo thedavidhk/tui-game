@@ -307,7 +307,7 @@ fn enter_turn_based_manual(game: &mut Game) {
             continue;
         };
         // FOW_RADIUS is 20
-        if crate::game::services::hover::chebyshev(ppos, epos) <= 20 {
+        if crate::math::chebyshev(ppos, epos) <= 20 {
             participants.push(eid);
         }
     }

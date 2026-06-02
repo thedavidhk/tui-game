@@ -1,5 +1,7 @@
 use crate::combat::{CombatAction, CombatState};
+use crate::entity::GridPos;
 use crate::game::services::hover;
+use crate::game::spell::SpellKind;
 use crate::game::{Game, GameCommand, GameInput, GameMode};
 use crate::input::{InputEvent, MouseButton, MouseEventKind};
 use crate::ui::layout::GameShellLayout;
@@ -76,6 +78,18 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput, state: CombatState) {
         }
         GameInput::Command(GameCommand::Back) => {
             game.finish_combat_player_quit(&next);
+            return;
+        }
+        GameInput::Command(GameCommand::CastFireball) => {
+            let cursor = game.player_pos().unwrap_or(GridPos { x: 0, y: 0 });
+            // Stash the updated combat state first so it doesn't get overwritten below.
+            if let Some(GameMode::Combat(cs)) = game.modes.current_mut() {
+                *cs = next;
+            }
+            game.modes.push(GameMode::SpellTargeting {
+                spell: SpellKind::Fireball,
+                cursor,
+            });
             return;
         }
         GameInput::Command(_) => {}

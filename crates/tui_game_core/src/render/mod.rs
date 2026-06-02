@@ -1,4 +1,5 @@
 mod ansi;
+pub(crate) mod area_effects;
 mod buffer;
 pub(crate) mod effects;
 mod stats;

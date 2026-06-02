@@ -107,7 +107,7 @@ fn find_path(
     g_score.insert(start_key, 0);
 
     let mut best = start_key;
-    let mut best_dist = euclidean_distance_sq(start_key, (goal.x, goal.y));
+    let mut best_dist = crate::math::euclidean_dist_sq_coords(start_key, (goal.x, goal.y));
     let mut best_cost = 0;
 
     while let Some(node) = open.pop() {
@@ -167,7 +167,7 @@ fn find_path(
             came_from.insert(key, node.pos);
             g_score.insert(key, tentative_g);
 
-            let d = euclidean_distance_sq(key, (goal.x, goal.y));
+            let d = crate::math::euclidean_dist_sq_coords(key, (goal.x, goal.y));
             if d < best_dist || (d == best_dist && tentative_g < best_cost) {
                 best_dist = d;
                 best = key;
@@ -197,12 +197,6 @@ fn find_path(
         path,
         reached_goal: best == (goal.x, goal.y),
     })
-}
-
-fn euclidean_distance_sq(a: (i32, i32), b: (i32, i32)) -> i64 {
-    let dx = i64::from(a.0 - b.0);
-    let dy = i64::from(a.1 - b.1);
-    dx * dx + dy * dy
 }
 
 fn octile_cost(a: (i32, i32), b: (i32, i32)) -> u32 {

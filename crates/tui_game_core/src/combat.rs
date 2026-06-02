@@ -299,7 +299,7 @@ impl CombatState {
                         pending_hit: None,
                     };
                 };
-                let dist = chebyshev(attacker_pos, target_pos);
+                let dist = crate::math::chebyshev(attacker_pos, target_pos);
                 let is_ranged = matches!(style, AttackStyle::Bow { .. });
                 let range_ok = match style {
                     AttackStyle::Unarmed | AttackStyle::Melee { .. } => dist == 1,
@@ -482,10 +482,6 @@ impl CombatState {
     }
 }
 
-fn chebyshev(a: GridPos, b: GridPos) -> i32 {
-    (a.x - b.x).abs().max((a.y - b.y).abs())
-}
-
 fn consume_one_arrow(n: &mut NarrativeState) {
     let Some(i) = n.inventory.stacks.iter().position(|s| {
         s.id == "arrow" && matches!(s.equipped, Some(StackEquipped::Quiver)) && s.count > 0
@@ -502,13 +498,8 @@ fn actor_can_act(arena: &EntityArena, id: EntityId) -> bool {
     arena.is_alive(id) && arena.stats(id).is_some_and(|s| s.hp > 0)
 }
 
-fn next_u32(seed: &mut u64) -> u32 {
-    *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-    (*seed >> 32) as u32
-}
-
 fn roll_d20(seed: &mut u64) -> u16 {
-    (next_u32(seed) % 20 + 1) as u16
+    (crate::math::lcg_next_u32(seed) % 20 + 1) as u16
 }
 
 pub fn move_cost_units(from: GridPos, to: GridPos) -> Option<u16> {

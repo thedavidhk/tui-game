@@ -28,6 +28,15 @@ pub(crate) fn compose(
     game.ui_hits.clear();
 
     world::compose_world(game, fb, world_rect);
+
+    // World-space area effects (fire, poison clouds, …) are blended over the world view
+    // before screen-space post-processing, so the vignette sits on top of them.
+    let area_effects = effects::frame_area_effects(game);
+    if !area_effects.is_empty() {
+        let (ox, oy) = game.world_screen_origin();
+        crate::render::area_effects::apply_area_effects(fb, (ox, oy), world_rect, &area_effects);
+    }
+
     // Screen-space effects sit on top of the world view but under HUD/overlays/dialogue,
     // so panels stay legible. Which effects are active is decided in `game::effects`.
     let screen_effects = effects::active_screen_effects(game);

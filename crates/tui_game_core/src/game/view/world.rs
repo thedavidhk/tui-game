@@ -1,7 +1,10 @@
 //! World viewport composition: terrain and fog per cell, then visible entities on top.
 
 use crate::content::Relation;
-use crate::entity::EntityId;
+use crate::entity::{EntityId, GridPos};
+use crate::game::spell;
+use crate::game::GameMode;
+use crate::math::{euclidean_dist_sq, within_euclidean_radius};
 use crate::rect::Rect;
 use crate::render::{Cell, Color, FrameBuffer, Style};
 use crate::world::{compose_fog_from_luminance, smooth_fog_luminance};
@@ -121,6 +124,13 @@ pub(super) fn compose_world(game: &Game, fb: &mut FrameBuffer, area: Rect) {
         fb.set(screen_x, screen_y, c);
     }
 
+    // Spell targeting overlay: range ring, AoE preview, crosshair cursor.
+    if let Some(GameMode::SpellTargeting { spell, cursor }) = game.modes.current().cloned() {
+        let def = spell::def(spell);
+        let player_pos = game.player_pos().unwrap_or(cursor);
+        draw_targeting_overlay(fb, area, ox, oy, cam_w, cam_h, player_pos, cursor, def);
+    }
+
     // Active projectiles / melee flashes on top of everything.
     for proj in &game.active_projectiles {
         let wp = proj.current_pos();
@@ -150,3 +160,65 @@ pub(super) fn compose_world(game: &Game, fb: &mut FrameBuffer, area: Rect) {
         );
     }
 }
+
+/// Draw the spell targeting overlay: subtle range tint, area-of-effect preview circle, and cursor crosshair.
+#[allow(clippy::too_many_arguments, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn draw_targeting_overlay(
+    fb: &mut FrameBuffer,
+    area: Rect,
+    ox: i32,
+    oy: i32,
+    cam_w: i32,
+    cam_h: i32,
+    player_pos: GridPos,
+    cursor: GridPos,
+    def: &spell::SpellDef,
+) {
+    let aoe_r = i64::from(def.aoe_radius);
+    let aoe_r_sq = aoe_r * aoe_r;
+    let cursor_in_range = within_euclidean_radius(player_pos, cursor, def.range);
+
+    // AoE preview: orange tint within explosion radius — only shown when cursor is in range.
+    if cursor_in_range {
+        for row in 0..cam_h {
+            for col in 0..cam_w {
+                let wx = ox + col;
+                let wy = oy + row;
+                if euclidean_dist_sq(wx - cursor.x, wy - cursor.y) > aoe_r_sq {
+                    continue;
+                }
+                let screen_x = area.x + col as u16;
+                let screen_y = area.y + row as u16;
+                if let Some(existing) = fb.get(screen_x, screen_y) {
+                    let tinted = existing.bg.blend_weight(spell::AOE_PREVIEW_COLOR, 55);
+                    fb.set(screen_x, screen_y, Cell { bg: tinted, ..*existing });
+                }
+            }
+        }
+    }
+
+    // Cursor crosshair on top.
+    let csx = cursor.x - ox;
+    let csy = cursor.y - oy;
+    if csx >= 0 && csy >= 0 && csx < cam_w && csy < cam_h {
+        let screen_x = area.x + csx as u16;
+        let screen_y = area.y + csy as u16;
+        let crosshair_fg = if cursor_in_range {
+            Color::rgb(255, 220, 80)
+        } else {
+            Color::rgb(200, 60, 60)
+        };
+        let bg = fb.get(screen_x, screen_y).map_or(Color::rgb(0, 0, 0), |c| c.bg);
+        fb.set(
+            screen_x,
+            screen_y,
+            Cell {
+                ch: '◎',
+                fg: crosshair_fg,
+                bg,
+                style: Style { bold: true, dim: false, underline: false },
+            },
+        );
+    }
+}
+

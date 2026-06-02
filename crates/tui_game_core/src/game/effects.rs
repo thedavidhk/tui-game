@@ -1,22 +1,41 @@
-//! Screen-effect **policy**: derives which [`ScreenEffect`]s are active from current game
-//! state, each frame.
+//! Effect **policy**: derives which [`ScreenEffect`]s and [`ActiveAreaEffect`]s are active
+//! from current game state, each frame.
 //!
-//! This is the single bridge from simulation state (player HP today; magic proximity,
-//! poison, recent damage later) to the presentation-only renderer in
-//! [`crate::render::effects`]. Keeping the mapping here means an effect can be tuned,
-//! added, or removed without touching the compose pipeline:
+//! This is the single bridge from simulation state to the presentation-only renderers in
+//! [`crate::render::effects`] and [`crate::render::area_effects`].
 //!
+//! ## Screen effects (full-viewport post-processing)
 //! - **Tune** the low-health vignette via the `LOW_HEALTH_*` constants below.
-//! - **Add** an effect: write a `fn maybe_<effect>(game) -> Option<ScreenEffect>` and push
-//!   it in [`active_screen_effects`].
-//! - **Remove** an effect: delete its helper and its push; nothing else depends on it.
+//! - **Add**: write `fn maybe_<effect>(game) -> Option<ScreenEffect>` and push it in
+//!   [`active_screen_effects`].
+//! - **Remove**: delete the helper and its push.
 //!
-//! Effects are recomputed from scratch each frame, so time-based variants (e.g. a brief
-//! red flash on taking damage) only need a countdown on [`Game`] plus one branch here.
+//! ## Area effects (world-space radius tints)
+//! - Stored as [`ActiveAreaEffect`] on [`Game`]; managed by [`Game::trigger_area_effect`]
+//!   and ticked down in [`Game::tick_effects`].
+//! - To query the list for rendering, use [`Game::active_area_effects`].
+//!
+//! Effects are recomputed from scratch each frame, so time-based variants only need a
+//! countdown on [`Game`] plus one branch here.
 
 use crate::game::Game;
+use crate::render::area_effects::AreaEffect;
 use crate::render::effects::ScreenEffect;
 use crate::render::Color;
+
+// ── Area-effect policy ────────────────────────────────────────────────────────
+
+/// A persistent world-space area effect stored on [`Game`] between frames.
+///
+/// When `remaining_ticks` reaches 0 the effect is removed; set to `u32::MAX` for permanent
+/// effects (e.g. level-defined burning braziers).
+#[derive(Clone, Debug)]
+pub struct ActiveAreaEffect {
+    /// Rendering descriptor forwarded to [`crate::render::area_effects`] each frame.
+    pub effect: AreaEffect,
+    /// How many more game ticks this effect should live (`u32::MAX` = permanent).
+    pub remaining_ticks: u32,
+}
 
 /// Player HP fraction (`0.0..=1.0`) at or below which the low-health vignette appears.
 pub const LOW_HEALTH_THRESHOLD: f32 = 0.30;
@@ -26,6 +45,20 @@ pub const LOW_HEALTH_TINT: Color = Color::rgb(170, 20, 20);
 pub const LOW_HEALTH_MIN_STRENGTH: u8 = 35;
 /// Vignette strength at `0` HP (most intense).
 pub const LOW_HEALTH_MAX_STRENGTH: u8 = 200;
+
+/// Build the per-frame [`AreaEffect`] slice from the game's active area effects, advancing
+/// the animation `phase` with `surface_tick`.
+#[must_use]
+pub(crate) fn frame_area_effects(game: &Game) -> Vec<AreaEffect> {
+    game.active_area_effects
+        .iter()
+        .map(|ae| {
+            let mut e = ae.effect;
+            e.phase = (game.surface_tick & 0xFF) as u8;
+            e
+        })
+        .collect()
+}
 
 /// All screen-space effects active for the current frame, in draw order.
 #[must_use]

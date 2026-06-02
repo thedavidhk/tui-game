@@ -1,4 +1,6 @@
+use crate::entity::GridPos;
 use crate::game::services::hover;
+use crate::game::spell::SpellKind;
 use crate::game::{Game, GameCommand, GameInput, GameMode};
 use crate::input::{InputEvent, MouseButton, MouseEventKind};
 use crate::ui::layout::GameShellLayout;
@@ -24,6 +26,13 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput) {
         }
         GameInput::Command(GameCommand::ToggleTurnBased) => {
             game.toggle_turn_based();
+        }
+        GameInput::Command(GameCommand::CastFireball) => {
+            let cursor = game.player_pos().unwrap_or(GridPos { x: 0, y: 0 });
+            game.modes.push(GameMode::SpellTargeting {
+                spell: SpellKind::Fireball,
+                cursor,
+            });
         }
         GameInput::Command(GameCommand::StepNorth) if game.world_view_needs_pan() => {
             game.nudge_view_pan(0, -1);
