@@ -5,6 +5,7 @@ mod hud;
 mod key_commands;
 mod modes;
 mod overlay_layout;
+pub mod projectile;
 pub(crate) mod services;
 mod view;
 
@@ -19,7 +20,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::combat::{
     AttackStyle, CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy,
-    EncounterProfile, ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
+    EncounterProfile, PendingHit, ATTACK_COST_UNITS, MELEE_HIT_TICKS, MOVE_ORTHOGONAL_COST_UNITS,
+    PROJECTILE_MIN_TICKS, PROJECTILE_TICKS_PER_CELL,
 };
 use crate::content::{ContentPack, DialogueAction, HostileTriggerDef, NpcRoutineDef, Relation};
 use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
@@ -213,6 +215,10 @@ pub struct Game {
     pub atmosphere_bake: Vec<FogBakedTrio>,
     /// Key chord → [`GameCommand`] tables ([`GameKeyMap`]); normally supplied by the shell binary.
     pub key_map: GameKeyMap,
+    /// In-flight arrows / melee flashes being rendered this frame (not saved).
+    pub active_projectiles: Vec<projectile::Projectile>,
+    /// Attacks whose damage fires after the animation completes (not saved).
+    pub pending_hits: Vec<PendingHit>,
 }
 
 impl Game {
@@ -385,6 +391,8 @@ impl Game {
             restart_level_ron_path: None,
             atmosphere_bake,
             key_map,
+            active_projectiles: Vec::new(),
+            pending_hits: Vec::new(),
         };
         game.seed_demo_weapon_chest();
         game.refresh_fow();
@@ -828,6 +836,17 @@ impl Game {
         self.pump_pending_player_action();
         self.pump_pending_forced_dialogue();
         self.tick_viewport_edge_scroll();
+        let combat_state = self
+            .modes
+            .current()
+            .and_then(|m| {
+                if let GameMode::Combat(cs) = m {
+                    Some(cs.clone())
+                } else {
+                    None
+                }
+            });
+        self.tick_effects(combat_state.as_ref());
         self.surface_tick = self.surface_tick.wrapping_add(1);
     }
 
@@ -1682,10 +1701,108 @@ impl Game {
         if let Some(msg) = report.message {
             self.log.push(msg);
         }
+        if let Some(hit) = report.pending_hit {
+            self.spawn_attack_effect(hit);
+        }
         if report.end_combat {
             services::combat::finish_combat(self, state);
         }
         self.refresh_fow();
+    }
+
+    /// Spawn the visual projectile / melee flash for a pending hit and store the deferred damage.
+    fn spawn_attack_effect(&mut self, hit: PendingHit) {
+        use projectile::{arrow_glyph, Projectile, ARROW_COLOR, MELEE_FLASH_COLOR};
+
+        // Resolve attacker and target positions for the visual.
+        let actor = self
+            .modes
+            .current()
+            .and_then(|m| {
+                if let GameMode::Combat(cs) = m {
+                    cs.current_actor()
+                } else {
+                    None
+                }
+            })
+            // Fall back to the entity the hit originated from (best-effort).
+            .unwrap_or(EntityId(0));
+
+        let from = self.entities.pos(actor).unwrap_or_default();
+        let to = self.entities.pos(hit.target).unwrap_or(from);
+
+        let (glyph, color, is_ranged, total_ticks) = if hit.delay_ticks > MELEE_HIT_TICKS {
+            // Ranged: direction-aware arrow, flight time proportional to distance.
+            let dist = {
+                let dx = (to.x - from.x).abs();
+                let dy = (to.y - from.y).abs();
+                dx.max(dy) as u8
+            };
+            let ticks = PROJECTILE_MIN_TICKS.max(dist.saturating_mul(PROJECTILE_TICKS_PER_CELL));
+            (arrow_glyph(from, to), ARROW_COLOR, true, ticks)
+        } else {
+            // Melee: fixed-position flash at the target cell.
+            ('*', MELEE_FLASH_COLOR, false, MELEE_HIT_TICKS)
+        };
+
+        self.active_projectiles.push(Projectile {
+            from,
+            to,
+            ticks_elapsed: 0,
+            total_ticks,
+            glyph,
+            color,
+            is_ranged,
+        });
+        self.pending_hits.push(hit);
+    }
+
+    /// Advance all in-flight projectiles and fire any pending hits whose timers have expired.
+    ///
+    /// Called once per [`Game::step`] tick, unconditionally.
+    pub(crate) fn tick_effects(&mut self, state: Option<&CombatState>) {
+        // Tick projectiles.
+        for p in &mut self.active_projectiles {
+            p.ticks_elapsed = p.ticks_elapsed.saturating_add(1);
+        }
+        self.active_projectiles.retain(|p| !p.is_expired());
+
+        if self.pending_hits.is_empty() {
+            return;
+        }
+        // Tick pending hits; collect the ones that fire this tick.
+        let mut fired: Vec<PendingHit> = Vec::new();
+        for hit in &mut self.pending_hits {
+            if hit.delay_ticks == 0 {
+                // Already fired on a previous tick (shouldn't happen, but guard anyway).
+                continue;
+            }
+            hit.delay_ticks -= 1;
+            if hit.delay_ticks == 0 {
+                fired.push(hit.clone());
+            }
+        }
+        self.pending_hits.retain(|h| h.delay_ticks > 0);
+
+        let mut end_combat = false;
+        for hit in fired {
+            self.log.push(hit.resolved_message.clone());
+            if hit.hit && hit.damage > 0 {
+                if let Some(stats) = self.entities.stats_mut(hit.target) {
+                    stats.hp = stats.hp.saturating_sub(hit.damage);
+                    if stats.hp == 0 && hit.lethal {
+                        self.entities.despawn(hit.target);
+                        end_combat = true;
+                    }
+                }
+            }
+        }
+
+        if end_combat {
+            if let Some(cs) = state.cloned() {
+                services::combat::finish_combat(self, &cs);
+            }
+        }
     }
 
     /// Leave combat from the UI (Esc); message is logged before combat state is torn down.
@@ -1746,6 +1863,8 @@ impl Game {
         self.view_pan_offset = (0, 0);
         self.last_world_pointer_cell = None;
         self.viewport_edge_scroll_cooldown = 0;
+        self.active_projectiles.clear();
+        self.pending_hits.clear();
         let n = (self.map.width as usize) * (self.map.height as usize);
         self.explored.resize(n, false);
         self.visible.resize(n, false);
@@ -1989,9 +2108,17 @@ mod tests {
         cs.ap_remaining[cs.turn_index] = 100;
         game.modes.stack = vec![GameMode::Combat(cs)];
         let before = game.entities.stats(player).expect("player stats").hp;
+        // First step: NPC commits attack (AP consumed, pending hit queued).
         game.step(&InputBatch::default());
-        let after = game.entities.stats(player).expect("player stats").hp;
-        assert!(after < before, "npc should attack adjacent player");
+        // Drain all pending hits by stepping until none remain.
+        for _ in 0..20 {
+            if game.pending_hits.is_empty() {
+                break;
+            }
+            game.step(&InputBatch::default());
+        }
+        let after = game.entities.stats(player).map(|s| s.hp).unwrap_or(0);
+        assert!(after < before, "npc should attack adjacent player (damage after delay)");
     }
 
     #[test]

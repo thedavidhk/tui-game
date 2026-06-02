@@ -45,7 +45,7 @@ pub static ITEM_DEFS: &[ItemDef] = &[
         weapon: Some(WeaponKind::RangedBow {
             to_hit: 1,
             damage_bonus: 1,
-            range: 5,
+            range: 15,
         }),
     },
     ItemDef {

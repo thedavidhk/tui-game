@@ -120,4 +120,33 @@ pub(super) fn compose_world(game: &Game, fb: &mut FrameBuffer, area: Rect) {
         };
         fb.set(screen_x, screen_y, c);
     }
+
+    // Active projectiles / melee flashes on top of everything.
+    for proj in &game.active_projectiles {
+        let wp = proj.current_pos();
+        let sx = wp.x - ox;
+        let sy = wp.y - oy;
+        if sx < 0 || sy < 0 || sx >= cam_w || sy >= cam_h {
+            continue;
+        }
+        let screen_x = area.x + sx as u16;
+        let screen_y = area.y + sy as u16;
+
+        // Blend the projectile over whatever is already on that cell.
+        let bg = fb.get(screen_x, screen_y).map_or(Color::rgb(0, 0, 0), |c| c.bg);
+        fb.set(
+            screen_x,
+            screen_y,
+            Cell {
+                ch: proj.glyph,
+                fg: proj.color,
+                bg,
+                style: Style {
+                    bold: true,
+                    dim: false,
+                    underline: false,
+                },
+            },
+        );
+    }
 }

@@ -77,6 +77,8 @@ pub fn start_combat_encounter(
 pub fn finish_combat(game: &mut Game, state: &CombatState) {
     game.npc_combat_ai_tick_cooldown = 0;
     game.combat_hover_cell = None;
+    game.active_projectiles.clear();
+    game.pending_hits.clear();
     game.clear_player_walk();
     if matches!(
         state.profile.ruleset,

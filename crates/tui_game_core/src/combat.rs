@@ -65,11 +65,42 @@ pub enum CombatAction {
     Pass,
     Flee,
 }
+/// Ticks per tile of travel for a flying arrow (at ~60 Hz, 3 ticks ≈ 50 ms per cell).
+pub const PROJECTILE_TICKS_PER_CELL: u8 = 1;
+/// Floor for ranged flight time so even close shots have a visible arc.
+pub const PROJECTILE_MIN_TICKS: u8 = 4;
+/// Duration of a melee hit flash (ticks ≈ wall-clock ms / 16).
+pub const MELEE_HIT_TICKS: u8 = 6;
+
+/// A resolved attack whose damage application is deferred until the animation completes.
+///
+/// Stored on [`crate::game::Game`] and ticked down each frame; when `delay_ticks` reaches 0
+/// the damage is applied to the target's HP and [`resolved_message`] is pushed to the log.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingHit {
+    pub target: EntityId,
+    /// Pre-rolled damage to apply (0 on a miss — effect still shows).
+    pub damage: u16,
+    /// Kills the target if lethal ruleset and `damage >= target.hp`.
+    pub lethal: bool,
+    /// Message logged at resolution time.
+    pub resolved_message: String,
+    /// Countdown in game ticks; damage applies when this reaches 0.
+    pub delay_ticks: u8,
+    /// Whether the hit was landed (false = miss — no damage, but animation still plays).
+    pub hit: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CombatActionReport {
     pub applied: bool,
+    /// True only for non-deferred outcomes (Pass / Flee / immediate checks). For attacks with a
+    /// pending hit, the caller checks for combat end after [`PendingHit`] resolves.
     pub end_combat: bool,
+    /// Immediate log message (e.g. validation errors).  Resolution messages live in [`PendingHit`].
     pub message: Option<String>,
+    /// Present when an attack was committed; caller spawns any visual and stores the deferred hit.
+    pub pending_hit: Option<PendingHit>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -165,6 +196,7 @@ impl CombatState {
                 applied: false,
                 end_combat: true,
                 message: Some("Combat has no active participants.".into()),
+                pending_hit: None,
             };
         };
         if !actor_can_act(arena, actor) {
@@ -173,6 +205,7 @@ impl CombatState {
                 applied: false,
                 end_combat: self.should_end_combat(arena),
                 message: Some("Current actor cannot act.".into()),
+                pending_hit: None,
             };
         }
         match action {
@@ -182,6 +215,7 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Actor has no position.".into()),
+                        pending_hit: None,
                     };
                 };
                 let Some(move_cost) = move_cost_units(actor_pos, target) else {
@@ -189,6 +223,7 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Movement target must be adjacent.".into()),
+                        pending_hit: None,
                     };
                 };
                 if self.current_ap_units().unwrap_or(0) < move_cost {
@@ -196,6 +231,7 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Not enough AP to move.".into()),
+                        pending_hit: None,
                     };
                 }
                 if target.x < 0
@@ -207,6 +243,7 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Movement target is out of bounds.".into()),
+                        pending_hit: None,
                     };
                 }
                 let blocked = map_blocks_move(target.x, target.y);
@@ -215,6 +252,7 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Movement target is blocked.".into()),
+                        pending_hit: None,
                     };
                 }
                 arena.set_pos(actor, target);
@@ -224,6 +262,7 @@ impl CombatState {
                     applied: true,
                     end_combat: self.should_end_combat(arena),
                     message: None,
+                    pending_hit: None,
                 }
             }
             CombatAction::Attack { target, style } => {
@@ -232,6 +271,7 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Not enough AP to attack.".into()),
+                        pending_hit: None,
                     };
                 }
                 if target == actor || !self.contains_actor(target) || !actor_can_act(arena, target)
@@ -240,6 +280,7 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Invalid combat target.".into()),
+                        pending_hit: None,
                     };
                 }
                 let Some(attacker_pos) = arena.pos(actor) else {
@@ -247,6 +288,7 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Attacker has no position.".into()),
+                        pending_hit: None,
                     };
                 };
                 let Some(target_pos) = arena.pos(target) else {
@@ -254,9 +296,11 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Target has no position.".into()),
+                        pending_hit: None,
                     };
                 };
                 let dist = chebyshev(attacker_pos, target_pos);
+                let is_ranged = matches!(style, AttackStyle::Bow { .. });
                 let range_ok = match style {
                     AttackStyle::Unarmed | AttackStyle::Melee { .. } => dist == 1,
                     AttackStyle::Bow { range, .. } => {
@@ -269,14 +313,16 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Target is out of weapon range.".into()),
+                        pending_hit: None,
                     };
                 }
-                if matches!(style, AttackStyle::Bow { .. }) {
+                if is_ranged {
                     let Some(m) = map else {
                         return CombatActionReport {
                             applied: false,
                             end_combat: false,
                             message: Some("Ranged attacks require map context.".into()),
+                            pending_hit: None,
                         };
                     };
                     if !projectile_sight_clear(m, attacker_pos, target_pos) {
@@ -284,6 +330,7 @@ impl CombatState {
                             applied: false,
                             end_combat: false,
                             message: Some("Shot is blocked.".into()),
+                            pending_hit: None,
                         };
                     }
                     let has_arrow = narrative
@@ -296,6 +343,7 @@ impl CombatState {
                             message: Some(
                                 "Bow needs arrows in the quiver (e on arrows in inventory).".into(),
                             ),
+                            pending_hit: None,
                         };
                     }
                 }
@@ -304,6 +352,7 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Attacker stats missing.".into()),
+                        pending_hit: None,
                     };
                 };
                 let Some(target_stats) = arena.stats(target) else {
@@ -311,6 +360,7 @@ impl CombatState {
                         applied: false,
                         end_combat: false,
                         message: Some("Target stats missing.".into()),
+                        pending_hit: None,
                     };
                 };
                 let to_hit = match style {
@@ -322,48 +372,66 @@ impl CombatState {
                 let attack_roll = i32::from(roll_d20(rng_seed))
                     + i32::from(strength_modifier(attacker_stats.strength))
                     + to_hit;
-                let armor_class = i32::from(armor_class(target_stats.agility));
-                let mut message = String::from("Attack misses.");
-                if attack_roll >= armor_class {
+                let ac = i32::from(armor_class(target_stats.agility));
+                let verb = if is_ranged { "Shot" } else { "Attack" };
+
+                // Roll the result now; damage is stored and applied after the animation.
+                let (hit, damage, resolved_message) = if attack_roll >= ac {
                     let dmg_bonus = match style {
                         AttackStyle::Unarmed => 0,
                         AttackStyle::Melee { damage_bonus, .. }
                         | AttackStyle::Bow { damage_bonus, .. } => i32::from(damage_bonus),
                     };
-                    let damage = (i32::from(damage_on_hit(attacker_stats.strength)) + dmg_bonus)
-                        .max(1) as u16;
-                    if let Some(target_mut) = arena.stats_mut(target) {
-                        target_mut.hp = target_mut.hp.saturating_sub(damage);
-                    }
-                    if let Some(attacker_pos) = arena.pos(actor) {
-                        if let Some(brain) = arena.npc_brain.get_mut(target.0 as usize) {
-                            brain.investigation_goal = Some(attacker_pos);
-                        }
-                    }
-                    if let Some(updated) = arena.stats(target) {
-                        let verb = if matches!(style, AttackStyle::Bow { .. }) {
-                            "Shot hits"
-                        } else {
-                            "Attack hits"
-                        };
-                        message = format!("{verb} for {damage} damage ({} HP left).", updated.hp);
-                        if updated.hp == 0 && self.profile.ruleset.is_lethal() {
-                            arena.despawn(target);
-                            message = "Attack defeats the target.".into();
-                        }
+                    let dmg =
+                        (i32::from(damage_on_hit(attacker_stats.strength)) + dmg_bonus).max(1)
+                            as u16;
+                    let surviving_hp = target_stats.hp.saturating_sub(dmg);
+                    let msg = if surviving_hp == 0 && self.profile.ruleset.is_lethal() {
+                        format!("{verb} defeats the target.")
+                    } else {
+                        format!("{verb} hits for {dmg} damage ({surviving_hp} HP left).")
+                    };
+                    (true, dmg, msg)
+                } else {
+                    (false, 0, format!("{verb} misses."))
+                };
+
+                // Alert the target's AI about the attacker even before damage lands.
+                if hit {
+                    if let Some(brain) = arena.npc_brain.get_mut(target.0 as usize) {
+                        brain.investigation_goal = Some(attacker_pos);
                     }
                 }
-                if matches!(style, AttackStyle::Bow { .. }) {
+
+                if is_ranged {
                     if let Some(n) = narrative {
                         consume_one_arrow(n);
                     }
                 }
+
+                // Delay: ranged scales with distance; melee uses a short haptic flash.
+                let delay_ticks = if is_ranged {
+                    let dist_u8 = u8::try_from(dist).unwrap_or(u8::MAX);
+                    PROJECTILE_MIN_TICKS.max(dist_u8.saturating_mul(PROJECTILE_TICKS_PER_CELL))
+                } else {
+                    MELEE_HIT_TICKS
+                };
+
                 self.consume_current_ap_units(ATTACK_COST_UNITS);
                 self.advance_turn_if_needed(arena);
+                // end_combat is resolved by the caller after the pending hit fires.
                 CombatActionReport {
                     applied: true,
-                    end_combat: self.should_end_combat(arena),
-                    message: Some(message),
+                    end_combat: false,
+                    message: None,
+                    pending_hit: Some(PendingHit {
+                        target,
+                        damage,
+                        lethal: self.profile.ruleset.is_lethal(),
+                        resolved_message,
+                        delay_ticks,
+                        hit,
+                    }),
                 }
             }
             CombatAction::Pass => {
@@ -372,16 +440,19 @@ impl CombatState {
                     applied: true,
                     end_combat: self.should_end_combat(arena),
                     message: None,
+                    pending_hit: None,
                 }
             }
             CombatAction::Flee => CombatActionReport {
                 applied: true,
                 end_combat: true,
                 message: Some("Flee attempt ends combat.".into()),
+                pending_hit: None,
             },
         }
     }
 
+    #[must_use]
     pub fn current_ap_units(&self) -> Option<u16> {
         self.ap_remaining.get(self.turn_index).copied()
     }
@@ -483,9 +554,33 @@ pub fn damage_on_hit(strength: u16) -> u16 {
 mod tests {
     use super::{
         ap_from_speed, armor_class, AttackStyle, CombatAction, CombatRuleset, CombatState,
-        EncounterOutcomePolicy, EncounterProfile,
+        EncounterOutcomePolicy, EncounterProfile, MELEE_HIT_TICKS,
     };
     use crate::entity::{ActorStats, EntityArena, GridPos};
+
+    fn strong_arena() -> (EntityArena, crate::entity::EntityId, crate::entity::EntityId) {
+        let mut arena = EntityArena::new();
+        let col = crate::render::Color::rgb(200, 200, 200);
+        let a = arena.spawn(GridPos { x: 1, y: 1 }, 'a', col, "A".into(), true, None, None, false);
+        let b = arena.spawn(GridPos { x: 2, y: 1 }, 'b', col, "B".into(), true, None, None, false);
+        arena.set_stats(a, ActorStats::from_full(10, 10, 100, 5, 8));
+        arena.set_stats(b, ActorStats::from_full(20, 20, 2, 0, 4));
+        (arena, a, b)
+    }
+
+    fn lethal_state(arena: &EntityArena, a: crate::entity::EntityId, b: crate::entity::EntityId, seed: &mut u64) -> CombatState {
+        let mut state = CombatState::from_participants(
+            vec![a, b],
+            arena,
+            10,
+            10,
+            seed,
+            EncounterProfile { ruleset: CombatRuleset::Lethal, outcome_policy: EncounterOutcomePolicy::None },
+        );
+        state.turn_index = state.initiative.iter().position(|id| *id == a).unwrap();
+        state.ap_remaining[state.turn_index] = 200;
+        state
+    }
 
     #[test]
     fn speed_drives_ap() {
@@ -501,68 +596,129 @@ mod tests {
         assert_eq!(armor_class(8), 14);
     }
 
+    /// Damage must be deferred: HP must not change immediately after `apply_action`.
     #[test]
-    fn attack_reduces_hp_and_can_end_combat() {
-        let mut arena = EntityArena::new();
-        let a = arena.spawn(
-            GridPos { x: 1, y: 1 },
-            'a',
-            crate::render::Color::rgb(220, 160, 120),
-            "A".into(),
-            true,
-            None,
-            None,
-            false,
-        );
-        let b = arena.spawn(
-            GridPos { x: 2, y: 1 },
-            'b',
-            crate::render::Color::rgb(220, 160, 120),
-            "B".into(),
-            true,
-            None,
-            None,
-            false,
-        );
-        arena.set_stats(a, ActorStats::from_full(10, 10, 100, 5, 8));
-        arena.set_stats(b, ActorStats::from_full(2, 2, 2, 0, 4));
+    fn attack_damage_is_deferred_not_immediate() {
+        let (mut arena, a, b) = strong_arena();
+        let hp_before = arena.stats(b).unwrap().hp;
         let mut seed = 7;
+        let mut state = lethal_state(&arena, a, b, &mut seed);
+
+        let report = state.apply_action(
+            CombatAction::Attack { target: b, style: AttackStyle::Unarmed },
+            &mut arena,
+            &mut seed,
+            |_, _| false,
+            None,
+            None,
+        );
+
+        assert!(report.applied, "attack must be applied");
+        assert!(!report.end_combat, "combat must not end immediately (damage deferred)");
+        assert!(report.pending_hit.is_some(), "attack must produce a pending hit");
+        // HP must NOT have changed yet.
+        assert_eq!(arena.stats(b).unwrap().hp, hp_before, "HP must not change until pending hit fires");
+    }
+
+    /// Melee delay must use MELEE_HIT_TICKS.
+    #[test]
+    fn melee_attack_has_haptic_delay() {
+        let (mut arena, a, b) = strong_arena();
+        let mut seed = 42;
+        let mut state = lethal_state(&arena, a, b, &mut seed);
+
+        let report = state.apply_action(
+            CombatAction::Attack { target: b, style: AttackStyle::Unarmed },
+            &mut arena,
+            &mut seed,
+            |_, _| false,
+            None,
+            None,
+        );
+
+        let hit = report.pending_hit.expect("melee must produce a pending hit");
+        assert_eq!(hit.delay_ticks, MELEE_HIT_TICKS);
+    }
+
+    /// Ranged attack delay must scale with Chebyshev distance.
+    #[test]
+    fn ranged_delay_scales_with_distance() {
+        use super::{PROJECTILE_MIN_TICKS, PROJECTILE_TICKS_PER_CELL};
+        use crate::world::{MapGrid, TileTable};
+
+        let col = crate::render::Color::rgb(200, 200, 200);
+        let mut arena = EntityArena::new();
+        let a = arena.spawn(GridPos { x: 0, y: 0 }, 'a', col, "A".into(), true, None, None, false);
+        let b = arena.spawn(GridPos { x: 5, y: 0 }, 'b', col, "B".into(), true, None, None, false);
+        arena.set_stats(a, ActorStats::from_full(10, 10, 100, 0, 8));
+        arena.set_stats(b, ActorStats::from_full(20, 20, 2, 0, 4));
+
+        let mut seed = 99;
         let mut state = CombatState::from_participants(
             vec![a, b],
             &arena,
-            10,
-            10,
+            20, 20,
             &mut seed,
-            EncounterProfile {
-                ruleset: CombatRuleset::Lethal,
-                outcome_policy: EncounterOutcomePolicy::None,
-            },
+            EncounterProfile { ruleset: CombatRuleset::Lethal, outcome_policy: EncounterOutcomePolicy::None },
         );
-        state.turn_index = state
-            .initiative
-            .iter()
-            .position(|id| *id == a)
-            .expect("attacker must exist in initiative");
-        let target = b;
-        state.ap_remaining[state.turn_index] = 100;
+        state.turn_index = state.initiative.iter().position(|id| *id == a).unwrap();
+        state.ap_remaining[state.turn_index] = 200;
+
+        // Build a minimal passable map for LOS check.
+        // Use the default pack so `blocks_sight` resolves correctly (empty table = walls).
+        let table = TileTable::default_pack().expect("default pack must be available");
+        // Ground tile 0 is the first def's idx; use it as a passable floor.
+        let floor_id = table.defs.first().map_or(0, |d| d.idx);
+        let map = MapGrid::filled(20, 20, floor_id, table);
+
+        // Equip arrows in a narrative state so the bow fires.
+        let mut narrative = crate::narrative::NarrativeState::default();
+        narrative.inventory.stacks.push(crate::item::ItemStack {
+            id: "arrow".into(),
+            count: 5,
+            equipped: Some(crate::item::StackEquipped::Quiver),
+        });
+
         let report = state.apply_action(
             CombatAction::Attack {
-                target,
-                style: AttackStyle::Unarmed,
+                target: b,
+                style: AttackStyle::Bow { to_hit: 2, damage_bonus: 1, range: 10 },
             },
             &mut arena,
             &mut seed,
-            |_x, _y| false,
+            |_, _| false,
+            Some(&map),
+            Some(&mut narrative),
+        );
+
+        assert!(report.applied, "ranged attack must apply");
+        let hit = report.pending_hit.expect("ranged must produce pending hit");
+        let expected = PROJECTILE_MIN_TICKS.max(5u8.saturating_mul(PROJECTILE_TICKS_PER_CELL));
+        assert_eq!(hit.delay_ticks, expected, "delay must scale with Chebyshev dist=5");
+    }
+
+    /// Existing sanity-check: attack committed + AP consumed (HP deferred).
+    #[test]
+    fn attack_commits_and_consumes_ap() {
+        let (mut arena, a, b) = strong_arena();
+        let mut seed = 7;
+        let mut state = lethal_state(&arena, a, b, &mut seed);
+        let ap_before = state.ap_remaining[state.turn_index];
+
+        let report = state.apply_action(
+            CombatAction::Attack { target: b, style: AttackStyle::Unarmed },
+            &mut arena,
+            &mut seed,
+            |_, _| false,
             None,
             None,
         );
+
         assert!(report.applied);
         assert!(
-            report.end_combat
-                || arena
-                    .stats(target)
-                    .is_some_and(|stats| stats.hp < stats.max_hp),
-            "expected damage or combat end after attack"
+            state.ap_remaining[state.turn_index] < ap_before
+                || state.turn_index != state.initiative.iter().position(|id| *id == a).unwrap_or(0),
+            "AP must have been consumed or turn must have advanced"
         );
     }
 }
