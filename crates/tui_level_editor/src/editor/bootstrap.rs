@@ -126,7 +126,7 @@ impl Editor {
             paint_layer: PaintLayer::Ground,
             rect_drag_start: None,
             last_paint_cell: None,
-            sidebar_hits: Vec::new(),
+            ui_hits: tui_game_core::ui::UiHitState::default(),
             hover_map_cell: None,
             view_origin_x: 0,
             view_origin_y: 0,
@@ -202,12 +202,7 @@ impl Editor {
                 let solid_txt = if d.solid() { "solid" } else { "open" };
                 let hay = format!(
                     "{i} {} {} {} {} {} {}",
-                    d.terrain_id,
-                    d.name,
-                    d.description,
-                    d.glyph,
-                    d.idx,
-                    solid_txt
+                    d.terrain_id, d.name, d.description, d.glyph, d.idx, solid_txt
                 );
                 (i, line, hay)
             })

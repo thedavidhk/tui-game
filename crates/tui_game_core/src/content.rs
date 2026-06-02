@@ -52,8 +52,14 @@ pub struct QuestDef {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Condition {
     HasItem(&'static str),
-    ItemCountAtLeast { id: &'static str, count: u32 },
-    QuestStageAtLeast { quest: &'static str, min: u32 },
+    ItemCountAtLeast {
+        id: &'static str,
+        count: u32,
+    },
+    QuestStageAtLeast {
+        quest: &'static str,
+        min: u32,
+    },
     QuestStatusIs {
         quest: &'static str,
         status: QuestJournalStatus,
@@ -66,8 +72,14 @@ pub enum Effect {
     GiveItem(&'static str),
     TakeItem(&'static str),
     SetDemoQuest(DemoQuestPhase),
-    SetQuestStage { quest: &'static str, stage: u32 },
-    AddQuestStage { quest: &'static str, delta: u32 },
+    SetQuestStage {
+        quest: &'static str,
+        stage: u32,
+    },
+    AddQuestStage {
+        quest: &'static str,
+        delta: u32,
+    },
     Log(&'static str),
     /// Append a dated line to the journal for `quest`, creating the row with `title_if_new` if needed.
     JournalAppend {
@@ -130,20 +142,13 @@ pub struct PatrolStopDef {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NpcRoutineDef {
     Idle,
-    Roam {
-        radius: u16,
-        wait_ticks: u16,
-    },
-    Patrol {
-        stops: &'static [PatrolStopDef],
-    },
+    Roam { radius: u16, wait_ticks: u16 },
+    Patrol { stops: &'static [PatrolStopDef] },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HostileTriggerDef {
-    PlayerWithinChebyshev {
-        range: u16,
-    },
+    PlayerWithinChebyshev { range: u16 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -203,7 +208,8 @@ impl DialogueTree {
 
 pub trait ContentRuntimeHooks: Send + Sync + std::fmt::Debug {
     fn resolve_dialogue_text(&self, node: &DialogueNode, narrative: &NarrativeState) -> String {
-        node.text_fn.map_or_else(|| node.text.to_string(), |f| f(narrative))
+        node.text_fn
+            .map_or_else(|| node.text.to_string(), |f| f(narrative))
     }
 
     fn dialogue_start_node(
@@ -369,10 +375,7 @@ impl ContentPack {
             }
         }
         if let Some(p) = &level.player_spawn {
-            if p.x < 0
-                || p.y < 0
-                || p.x >= i32::from(level.width)
-                || p.y >= i32::from(level.height)
+            if p.x < 0 || p.y < 0 || p.x >= i32::from(level.width) || p.y >= i32::from(level.height)
             {
                 return Err(format!(
                     "player_spawn ({},{}) is outside map bounds {}×{}",
@@ -586,8 +589,7 @@ impl ContentPack {
                                     ));
                                 }
                             }
-                            Effect::SetDemoQuest(_)
-                            | Effect::Log(_) => {}
+                            Effect::SetDemoQuest(_) | Effect::Log(_) => {}
                             Effect::SetQuestStage { quest, .. }
                             | Effect::AddQuestStage { quest, .. }
                             | Effect::JournalAppend { quest, .. }
@@ -612,8 +614,8 @@ mod validate_tests {
     use std::collections::HashMap;
 
     use super::{
-        Condition, ContentPack, Disposition, DialogueChoice, DialogueNode, DialogueTree, Effect,
-        EntityBlueprint, NOOP_CONTENT_RUNTIME_HOOKS, NpcBehaviorDef, QuestDef, Rgb24,
+        Condition, ContentPack, DialogueChoice, DialogueNode, DialogueTree, Disposition, Effect,
+        EntityBlueprint, NpcBehaviorDef, QuestDef, Rgb24, NOOP_CONTENT_RUNTIME_HOOKS,
     };
     use crate::item::{ItemCategory, ItemDef};
 

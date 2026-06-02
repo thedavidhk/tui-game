@@ -1,8 +1,6 @@
 //! Dialogue band rendering: rounded panel, wrapped body, `›` choice markers, dimmed unavailable
 //! choices, and mouse hit targets (`UiHitTarget::DialogueChoice` / `DialogueContinue`).
 
-use std::collections::HashSet;
-
 use crate::content::DialogueNode;
 use crate::input::MouseCell;
 use crate::rect::Rect;
@@ -12,6 +10,7 @@ use super::chrome::{
     chrome_inner_rect, draw_clipped_line, draw_rounded_panel, PanelBorderEmphasis,
 };
 use super::hit::{UiHitState, UiHitTarget};
+use super::list::{draw_selectable_list, SelectableList};
 use super::theme::GameUiPalette;
 use super::wrap::wrap_words;
 
@@ -84,7 +83,6 @@ pub fn draw_dialogue(
         return;
     }
 
-    let visible_set: HashSet<usize> = visible_choice_indices.iter().copied().collect();
     let wrapped = wrap_words(body, line_w.max(8));
     for line in &wrapped {
         if y >= inner.bottom() {
@@ -106,42 +104,21 @@ pub fn draw_dialogue(
         y = y.saturating_add(1);
     }
 
-    let max_vis = visible_choice_indices.len().saturating_sub(1);
-    let cur = choice_cursor.min(max_vis);
-
-    for (i, choice) in node.choices.iter().enumerate() {
-        if y >= inner.bottom() {
-            break;
-        }
-        if !visible_set.contains(&i) {
-            continue;
-        }
-        let vis_pos = visible_choice_indices.iter().position(|&g| g == i);
-        let row_rect = Rect::new(inner.x, y, inner.w, 1);
-        let mouse_hot = last_mouse.is_some_and(|m| row_rect.contains(m.x, m.y));
-        let selected = vis_pos == Some(cur);
-        let highlight = selected || mouse_hot;
-
-        let prefix = if highlight { "› " } else { "  " };
-        let label = format!("{prefix}{}", choice.label);
-        let (fg, bg, st) = if highlight {
-            (
-                palette.selected_fg,
-                palette.selected_bg,
-                Style {
-                    bold: true,
-                    ..Default::default()
-                },
-            )
-        } else {
-            (palette.text, palette.panel_bg, Style::default())
-        };
-
-        draw_clipped_line(fb, inner.x, y, inner.w, &label, fg, bg, st);
-
-        if let Some(vp) = vis_pos {
-            hits.push(UiHitTarget::DialogueChoice(vp), row_rect);
-        }
-        y = y.saturating_add(1);
-    }
+    // Choices are a selectable list in the area below the wrapped body. Rows follow
+    // `visible_choice_indices` order, so a row index is the visible position the dialogue
+    // mode expects in `UiHitTarget::DialogueChoice` / `choice_cursor`.
+    let rows: Vec<String> = visible_choice_indices
+        .iter()
+        .filter_map(|&gi| node.choices.get(gi).map(|c| c.label.to_string()))
+        .collect();
+    let choices_rect = Rect::new(inner.x, y, inner.w, inner.bottom().saturating_sub(y));
+    let list = SelectableList {
+        inner: choices_rect,
+        rows: &rows,
+        selected: Some(choice_cursor),
+        last_mouse,
+        empty_text: None,
+        reserved_footer_rows: 0,
+    };
+    draw_selectable_list(fb, palette, &list, hits, UiHitTarget::DialogueChoice);
 }

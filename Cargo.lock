@@ -262,6 +262,7 @@ version = "0.1.0"
 dependencies = [
  "crossterm",
  "tui_game_core",
+ "tui_terminal",
 ]
 
 [[package]]
@@ -275,6 +276,15 @@ dependencies = [
 
 [[package]]
 name = "tui_level_editor"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "tui_game_core",
+ "tui_terminal",
+]
+
+[[package]]
+name = "tui_terminal"
 version = "0.1.0"
 dependencies = [
  "crossterm",

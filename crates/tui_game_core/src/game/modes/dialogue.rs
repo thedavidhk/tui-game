@@ -70,7 +70,9 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput) {
             ..
         }) => {
             if let Some(UiHitTarget::DialogueChoice(i)) = game.ui_hits.pick(cell) {
-                if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut()
+                if let Some(GameMode::Dialogue {
+                    choice_cursor: c, ..
+                }) = game.modes.current_mut()
                 {
                     let max = visible.len().saturating_sub(1);
                     *c = i.min(max);
@@ -83,7 +85,10 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput) {
             ..
         }) => {
             if let Some(UiHitTarget::DialogueChoice(i)) = game.ui_hits.pick(cell) {
-                if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut() {
+                if let Some(GameMode::Dialogue {
+                    choice_cursor: c, ..
+                }) = game.modes.current_mut()
+                {
                     let max = visible.len().saturating_sub(1);
                     *c = i.min(max);
                 }
@@ -94,12 +99,18 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput) {
             let _ = game.modes.pop();
         }
         GameInput::Command(GameCommand::ListPrev) => {
-            if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut() {
+            if let Some(GameMode::Dialogue {
+                choice_cursor: c, ..
+            }) = game.modes.current_mut()
+            {
                 *c = c.saturating_sub(1);
             }
         }
         GameInput::Command(GameCommand::ListNext) => {
-            if let Some(GameMode::Dialogue { choice_cursor: c, .. }) = game.modes.current_mut() {
+            if let Some(GameMode::Dialogue {
+                choice_cursor: c, ..
+            }) = game.modes.current_mut()
+            {
                 let max = visible.len().saturating_sub(1);
                 *c = (*c + 1).min(max);
             }

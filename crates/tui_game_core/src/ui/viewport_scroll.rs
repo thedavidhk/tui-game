@@ -17,7 +17,14 @@ pub fn map_larger_than_view(map_w: u16, map_h: u16, view_w: u16, view_h: u16) ->
 }
 
 #[must_use]
-pub fn clamp_origin(ox: i32, oy: i32, map_w: u16, map_h: u16, view_w: u16, view_h: u16) -> (i32, i32) {
+pub fn clamp_origin(
+    ox: i32,
+    oy: i32,
+    map_w: u16,
+    map_h: u16,
+    view_w: u16,
+    view_h: u16,
+) -> (i32, i32) {
     let mw = map_w as i32;
     let mh = map_h as i32;
     let vw = view_w as i32;

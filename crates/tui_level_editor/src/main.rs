@@ -11,10 +11,7 @@ use std::time::Duration;
 
 use crossterm::{
     cursor::{Hide, Show},
-    event::{
-        self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton as CMouseButton,
-        MouseEventKind as CMouseKind,
-    },
+    event::{self, Event},
     execute,
     terminal::{
         disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
@@ -23,10 +20,9 @@ use crossterm::{
     QueueableCommand,
 };
 use editor::Editor;
-use tui_game_core::input::{
-    InputBatch, InputEvent, Key, KeyChord, MouseButton, MouseCell, MouseEventKind,
-};
+use tui_game_core::input::InputBatch;
 use tui_game_core::render::{encode_frame_delta, encode_frame_full, FrameBuffer};
+use tui_terminal::{map_key, map_mouse};
 
 fn main() -> std::io::Result<()> {
     let path = env::args()
@@ -105,65 +101,4 @@ fn main() -> std::io::Result<()> {
     )?;
     disable_raw_mode()?;
     Ok(())
-}
-
-fn map_mouse(m: event::MouseEvent) -> Option<InputEvent> {
-    let cell = MouseCell {
-        x: m.column,
-        y: m.row,
-    };
-    let kind = match m.kind {
-        CMouseKind::Down(b) => MouseEventKind::Down(match b {
-            CMouseButton::Left => MouseButton::Left,
-            CMouseButton::Right => MouseButton::Right,
-            CMouseButton::Middle => MouseButton::Middle,
-        }),
-        CMouseKind::Up(b) => MouseEventKind::Up(match b {
-            CMouseButton::Left => MouseButton::Left,
-            CMouseButton::Right => MouseButton::Right,
-            CMouseButton::Middle => MouseButton::Middle,
-        }),
-        CMouseKind::Drag(b) => MouseEventKind::Drag(match b {
-            CMouseButton::Left => MouseButton::Left,
-            CMouseButton::Right => MouseButton::Right,
-            CMouseButton::Middle => MouseButton::Middle,
-        }),
-        CMouseKind::ScrollUp => MouseEventKind::ScrollUp,
-        CMouseKind::ScrollDown => MouseEventKind::ScrollDown,
-        CMouseKind::ScrollLeft | CMouseKind::ScrollRight => return None,
-        CMouseKind::Moved => MouseEventKind::Moved,
-    };
-    Some(InputEvent::Mouse {
-        kind,
-        cell,
-        column: m.column,
-        shift: m.modifiers.contains(KeyModifiers::SHIFT),
-        ctrl: m.modifiers.contains(KeyModifiers::CONTROL),
-        alt: m.modifiers.contains(KeyModifiers::ALT),
-    })
-}
-
-fn map_key(k: KeyEvent) -> Option<InputEvent> {
-    let chord = KeyChord {
-        key: match k.code {
-            KeyCode::Backspace => Key::Backspace,
-            KeyCode::Enter => Key::Enter,
-            KeyCode::Left => Key::Left,
-            KeyCode::Right => Key::Right,
-            KeyCode::Up => Key::Up,
-            KeyCode::Down => Key::Down,
-            KeyCode::Tab => Key::Tab,
-            KeyCode::Esc => Key::Esc,
-            KeyCode::Home => Key::Home,
-            KeyCode::End => Key::End,
-            KeyCode::Delete => Key::Delete,
-            KeyCode::Char(c) => Key::Char(c),
-            KeyCode::F(n) => Key::F(n.min(12)),
-            _ => return None,
-        },
-        ctrl: k.modifiers.contains(KeyModifiers::CONTROL),
-        alt: k.modifiers.contains(KeyModifiers::ALT),
-        shift: k.modifiers.contains(KeyModifiers::SHIFT),
-    };
-    Some(InputEvent::Key(chord))
 }

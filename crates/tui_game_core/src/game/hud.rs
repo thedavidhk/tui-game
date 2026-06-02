@@ -47,11 +47,9 @@ pub fn command_footer(game: &Game) -> &'static str {
 pub fn exploration_status_lines(game: &Game) -> Vec<String> {
     let mut lines = Vec::new();
     lines.push(format!("Mode     {}", mode_heading(game)));
-    if let Some(pid) = game.player_id() {
-        if let Some(s) = game.entities.stats(pid) {
-            lines.push(format!("Health   {}/{}", s.hp, s.max_hp));
-            lines.push(format!("Speed    {}", s.speed));
-        }
+    if let Some(s) = game.player_stats() {
+        lines.push(format!("Health   {}/{}", s.hp, s.max_hp));
+        lines.push(format!("Speed    {}", s.speed));
     }
     lines.push(String::new());
     lines.push("Here".into());
@@ -78,7 +76,7 @@ pub fn combat_status_lines(game: &Game, state: &CombatState) -> Vec<String> {
         .unwrap_or_else(|| "—".into());
     lines.push(format!("Turn     {who}"));
     if let Some(pid) = game.player_id() {
-        if let Some(s) = game.entities.stats(pid) {
+        if let Some(s) = game.player_stats() {
             lines.push(format!("Health   {}/{}", s.hp, s.max_hp));
         }
         if actor == Some(pid) {

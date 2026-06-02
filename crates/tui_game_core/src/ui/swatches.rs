@@ -1,4 +1,7 @@
-//! Small RGB presets for editor pickers (truecolor; matches `FrameBuffer` / ANSI encoder).
+//! Small RGB presets for editor color pickers (truecolor; matches `FrameBuffer` / ANSI encoder).
+//!
+//! Named `swatches` to avoid confusion with [`super::theme::GameUiPalette`], which is the
+//! authoritative chrome palette; these are just fixed picker choices stored as full RGB.
 
 use crate::render::Color;
 

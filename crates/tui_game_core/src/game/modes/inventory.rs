@@ -155,8 +155,7 @@ fn inventory_equip_stack(game: &mut Game, idx: usize) {
                 game.log.push("Could not equip.".into());
                 return;
             }
-            let toggling_off =
-                matches!(stack.equipped, Some(StackEquipped::Wear(s)) if s == slot);
+            let toggling_off = matches!(stack.equipped, Some(StackEquipped::Wear(s)) if s == slot);
             game.narrative.equip_wear_stack(idx, slot);
             if toggling_off {
                 game.log.push(format!("[-] Unequipped {}.", def.name));

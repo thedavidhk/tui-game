@@ -338,7 +338,12 @@ impl TileDef {
         }
     }
 
-    pub fn wall(idx: TileId, glyph: char, terrain_id: impl Into<String>, name: impl Into<String>) -> Self {
+    pub fn wall(
+        idx: TileId,
+        glyph: char,
+        terrain_id: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Self {
         Self {
             terrain_id: terrain_id.into(),
             idx,

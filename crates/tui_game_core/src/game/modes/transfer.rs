@@ -81,90 +81,86 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput) {
             kind: MouseEventKind::Moved,
             cell,
             ..
-        }) => {
-            match game.ui_hits.pick(cell) {
-                Some(UiHitTarget::TransferPlayerStack(i)) => {
-                    if let Some(GameMode::ItemTransfer {
-                        focus,
-                        cursor_player,
-                        ..
-                    }) = game.modes.current_mut()
-                    {
-                        *focus = TransferFocus::Player;
-                        let pn = game.narrative.inventory.stacks.len();
-                        if pn > 0 {
-                            *cursor_player = i.min(pn.saturating_sub(1));
-                        }
+        }) => match game.ui_hits.pick(cell) {
+            Some(UiHitTarget::TransferPlayerStack(i)) => {
+                if let Some(GameMode::ItemTransfer {
+                    focus,
+                    cursor_player,
+                    ..
+                }) = game.modes.current_mut()
+                {
+                    *focus = TransferFocus::Player;
+                    let pn = game.narrative.inventory.stacks.len();
+                    if pn > 0 {
+                        *cursor_player = i.min(pn.saturating_sub(1));
                     }
                 }
-                Some(UiHitTarget::TransferContainerStack(i)) => {
-                    if let Some(GameMode::ItemTransfer {
-                        focus,
-                        cursor_container,
-                        container,
-                        ..
-                    }) = game.modes.current_mut()
-                    {
-                        *focus = TransferFocus::Container;
-                        let cn = game
-                            .narrative
-                            .container_inventories
-                            .get(&container.0)
-                            .map(|c| c.stacks.len())
-                            .unwrap_or(0);
-                        if cn > 0 {
-                            *cursor_container = i.min(cn.saturating_sub(1));
-                        }
-                    }
-                }
-                _ => {}
             }
-        }
+            Some(UiHitTarget::TransferContainerStack(i)) => {
+                if let Some(GameMode::ItemTransfer {
+                    focus,
+                    cursor_container,
+                    container,
+                    ..
+                }) = game.modes.current_mut()
+                {
+                    *focus = TransferFocus::Container;
+                    let cn = game
+                        .narrative
+                        .container_inventories
+                        .get(&container.0)
+                        .map(|c| c.stacks.len())
+                        .unwrap_or(0);
+                    if cn > 0 {
+                        *cursor_container = i.min(cn.saturating_sub(1));
+                    }
+                }
+            }
+            _ => {}
+        },
         GameInput::Raw(InputEvent::Mouse {
             kind: MouseEventKind::Down(MouseButton::Left),
             cell,
             ..
-        }) => {
-            match game.ui_hits.pick(cell) {
-                Some(UiHitTarget::TransferPlayerStack(i)) => {
-                    if let Some(GameMode::ItemTransfer {
-                        focus,
-                        cursor_player,
-                        ..
-                    }) = game.modes.current_mut()
-                    {
-                        *focus = TransferFocus::Player;
-                        let pn = game.narrative.inventory.stacks.len();
-                        if pn > 0 {
-                            *cursor_player = i.min(pn.saturating_sub(1));
-                            transfer_execute_move(game);
-                        }
+        }) => match game.ui_hits.pick(cell) {
+            Some(UiHitTarget::TransferPlayerStack(i)) => {
+                if let Some(GameMode::ItemTransfer {
+                    focus,
+                    cursor_player,
+                    ..
+                }) = game.modes.current_mut()
+                {
+                    *focus = TransferFocus::Player;
+                    let pn = game.narrative.inventory.stacks.len();
+                    if pn > 0 {
+                        *cursor_player = i.min(pn.saturating_sub(1));
+                        transfer_execute_move(game);
                     }
                 }
-                Some(UiHitTarget::TransferContainerStack(i)) => {
-                    if let Some(GameMode::ItemTransfer {
-                        focus,
-                        cursor_container,
-                        container,
-                        ..
-                    }) = game.modes.current_mut()
-                    {
-                        *focus = TransferFocus::Container;
-                        let cn = game
-                            .narrative
-                            .container_inventories
-                            .get(&container.0)
-                            .map(|c| c.stacks.len())
-                            .unwrap_or(0);
-                        if cn > 0 {
-                            *cursor_container = i.min(cn.saturating_sub(1));
-                            transfer_execute_move(game);
-                        }
-                    }
-                }
-                _ => {}
             }
-        }
+            Some(UiHitTarget::TransferContainerStack(i)) => {
+                if let Some(GameMode::ItemTransfer {
+                    focus,
+                    cursor_container,
+                    container,
+                    ..
+                }) = game.modes.current_mut()
+                {
+                    *focus = TransferFocus::Container;
+                    let cn = game
+                        .narrative
+                        .container_inventories
+                        .get(&container.0)
+                        .map(|c| c.stacks.len())
+                        .unwrap_or(0);
+                    if cn > 0 {
+                        *cursor_container = i.min(cn.saturating_sub(1));
+                        transfer_execute_move(game);
+                    }
+                }
+            }
+            _ => {}
+        },
         GameInput::Command(_) | GameInput::Raw(_) => {}
     }
 }

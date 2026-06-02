@@ -1,6 +1,7 @@
 //! Map panel layout, view panning, and cursor clamping.
 
 use tui_game_core::rect::Rect;
+use tui_game_core::ui::layout::PrimarySidePanelLayout;
 use tui_game_core::ui::viewport_scroll::{edge_scroll_pan_delta, EDGE_SCROLL_COOLDOWN_TICKS};
 
 use super::Editor;
@@ -14,15 +15,21 @@ impl Editor {
     }
 
     pub fn map_area_rect(&self) -> Rect {
-        let sw = self.sidebar_screen_width();
-        let mw = self.viewport_w.saturating_sub(sw).max(1);
-        Rect::new(0, 0, mw, self.viewport_h)
+        PrimarySidePanelLayout::root_panels(
+            self.viewport_w,
+            self.viewport_h,
+            self.sidebar_screen_width(),
+        )
+        .0
     }
 
     pub fn sidebar_rect(&self) -> Rect {
-        let map = self.map_area_rect();
-        let sw = self.viewport_w.saturating_sub(map.w).max(1);
-        Rect::new(map.right(), map.y, sw, map.h)
+        PrimarySidePanelLayout::root_panels(
+            self.viewport_w,
+            self.viewport_h,
+            self.sidebar_screen_width(),
+        )
+        .1
     }
 
     pub fn clamp_editor_view(&mut self) {

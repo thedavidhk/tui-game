@@ -1,8 +1,9 @@
 //! Per-frame input dispatch.
 
 use tui_game_core::input::{InputBatch, InputEvent, MouseCell};
+use tui_game_core::ui::UiHitTarget;
 
-use super::{Editor, SidebarHit};
+use super::Editor;
 
 impl Editor {
     pub fn step(&mut self, input: &InputBatch) {
@@ -25,11 +26,7 @@ impl Editor {
         }
     }
 
-    pub fn sidebar_pick(&self, cell: MouseCell) -> Option<SidebarHit> {
-        self.sidebar_hits
-            .iter()
-            .rev()
-            .find(|(_, r)| r.contains(cell.x, cell.y))
-            .map(|(h, _)| *h)
+    pub fn ui_hit_at(&self, cell: MouseCell) -> Option<UiHitTarget> {
+        self.ui_hits.pick(cell)
     }
 }

@@ -115,11 +115,7 @@ pub fn draw_rounded_panel(
         if i >= inner_w {
             break;
         }
-        let fg = if ch == '─' {
-            border
-        } else {
-            palette.title
-        };
+        let fg = if ch == '─' { border } else { palette.title };
         let st = Style {
             bold: ch != '─',
             dim: false,
@@ -251,16 +247,7 @@ pub fn draw_clipped_line(
         if x >= x0.saturating_add(width) {
             break;
         }
-        fb.set(
-            x,
-            y,
-            Cell {
-                ch,
-                fg,
-                bg,
-                style,
-            },
-        );
+        fb.set(x, y, Cell { ch, fg, bg, style });
         x = x.saturating_add(1);
     }
     while x < x0.saturating_add(width) {

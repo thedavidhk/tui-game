@@ -1,4 +1,7 @@
-//! Editor mode, paint layer, sidebar hit targets, and modal dialog payloads.
+//! Editor mode, paint layer, and modal dialog payloads.
+//!
+//! Mouse hit targets for sidebar controls and picker rows live in the shared registry as
+//! [`tui_game_core::ui::EditorHitTarget`].
 
 use tui_game_core::ui::{SearchListPicker, TextField};
 
@@ -18,22 +21,6 @@ pub enum Mode {
 pub enum PaintLayer {
     Ground,
     Prop,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum SidebarHit {
-    /// Clear prop overlay (only listed when painting props).
-    ClearPropOverlay,
-    OpenTerrainPicker,
-    OpenEntityPicker,
-    LayerGround,
-    LayerProp,
-    ModePaint,
-    ModePlace,
-    ModeErase,
-    ModePlayer,
-    ModeAtmos,
-    PlayerSpawnRow,
 }
 
 pub enum Dialog {

@@ -255,7 +255,8 @@ pub fn combat_hover_debug_lines(game: &Game, state: &CombatState) -> Vec<String>
     if player_turn {
         if matches!(
             state.profile.ruleset,
-            crate::combat::CombatRuleset::NonLethalSpar | crate::combat::CombatRuleset::NonLethalBrawl
+            crate::combat::CombatRuleset::NonLethalSpar
+                | crate::combat::CombatRuleset::NonLethalBrawl
         ) {
             out.push("LMB: engage trainer".into());
         } else {

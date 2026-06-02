@@ -1,10 +1,14 @@
 //! Filtered searchable list for modal pickers (type to narrow, Enter or click to confirm).
 
-use crate::input::{Key, KeyChord};
+use crate::input::{Key, KeyChord, MouseCell};
 use crate::rect::Rect;
-use crate::render::{Cell, Color, FrameBuffer, Style};
+use crate::render::FrameBuffer;
 
-use super::{draw_text_block, draw_text_field, TextField, TextFieldOutput, TextFilter};
+use super::chrome::chrome_inner_rect;
+use super::hit::{EditorHitTarget, UiHitState, UiHitTarget};
+use super::list::{draw_selectable_list, SelectableList};
+use super::theme::GameUiPalette;
+use super::{draw_text_block_theme, draw_text_field, TextField, TextFieldOutput, TextFilter};
 
 #[derive(Clone, Debug)]
 struct Entry {
@@ -13,7 +17,8 @@ struct Entry {
     haystack: String,
 }
 
-/// Stateful filter + scrollable matches for a modal picker.
+/// Stateful filter + selected row for a modal picker. Scrolling is handled by
+/// [`draw_selectable_list`] at draw time, keyed off `list_cursor`.
 #[derive(Debug)]
 pub struct SearchListPicker {
     pub query: TextField,
@@ -22,9 +27,7 @@ pub struct SearchListPicker {
     filtered: Vec<usize>,
     /// Index into `filtered`.
     list_cursor: usize,
-    /// Index into `filtered` of the top visible row.
-    scroll: usize,
-    /// Max number of list rows drawn (scroll for the rest).
+    /// Preferred number of list rows (used by callers to size the modal panel).
     pub list_visible: usize,
 }
 
@@ -37,14 +40,6 @@ pub enum SearchListPickerOutput {
     Picked(usize),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SearchListPickerHit {
-    Outside,
-    QueryField,
-    /// Row index `0..list_visible` within the visible window.
-    ListRow(usize),
-}
-
 impl SearchListPicker {
     pub fn new(list_visible: usize, query_max_chars: usize) -> Self {
         let list_visible = list_visible.max(1);
@@ -53,7 +48,6 @@ impl SearchListPicker {
             entries: Vec::new(),
             filtered: Vec::new(),
             list_cursor: 0,
-            scroll: 0,
             list_visible,
         }
     }
@@ -87,28 +81,9 @@ impl SearchListPicker {
         }
         if self.filtered.is_empty() {
             self.list_cursor = 0;
-            self.scroll = 0;
-            return;
+        } else {
+            self.list_cursor = self.list_cursor.min(self.filtered.len() - 1);
         }
-        self.list_cursor = self.list_cursor.min(self.filtered.len() - 1);
-        self.clamp_scroll();
-    }
-
-    fn clamp_scroll(&mut self) {
-        let n = self.filtered.len();
-        if n == 0 {
-            self.scroll = 0;
-            return;
-        }
-        let vis = self.list_visible.min(n);
-        if self.list_cursor < self.scroll {
-            self.scroll = self.list_cursor;
-        }
-        if self.list_cursor >= self.scroll + vis {
-            self.scroll = self.list_cursor + 1 - vis;
-        }
-        let max_scroll = n.saturating_sub(vis);
-        self.scroll = self.scroll.min(max_scroll);
     }
 
     pub fn apply_key(&mut self, chord: &KeyChord) -> SearchListPickerOutput {
@@ -124,16 +99,12 @@ impl SearchListPicker {
             };
         }
         if !chord.ctrl && matches!(chord.key, Key::Up) {
-            if !self.filtered.is_empty() && self.list_cursor > 0 {
-                self.list_cursor -= 1;
-                self.clamp_scroll();
-            }
+            self.list_cursor = self.list_cursor.saturating_sub(1);
             return SearchListPickerOutput::Continue;
         }
         if !chord.ctrl && matches!(chord.key, Key::Down) {
             if !self.filtered.is_empty() && self.list_cursor + 1 < self.filtered.len() {
                 self.list_cursor += 1;
-                self.clamp_scroll();
             }
             return SearchListPickerOutput::Continue;
         }
@@ -150,143 +121,85 @@ impl SearchListPicker {
         }
     }
 
-    /// First screen row of the list (single-line query is above this).
-    pub fn list_origin_y(panel: Rect) -> u16 {
-        panel.y.saturating_add(3)
-    }
-
-    /// Hit-test against the same layout as [`draw_search_list_picker`].
-    pub fn hit(panel: Rect, cell_x: u16, cell_y: u16, list_visible: usize) -> SearchListPickerHit {
-        if !panel.contains(cell_x, cell_y) {
-            return SearchListPickerHit::Outside;
-        }
-        let inner_left = panel.x.saturating_add(2);
-        let inner_right = panel.right().saturating_sub(2);
-        if cell_x < inner_left || cell_x >= inner_right {
-            return SearchListPickerHit::Outside;
-        }
-        let qy = panel.y.saturating_add(2);
-        if cell_y == qy {
-            return SearchListPickerHit::QueryField;
-        }
-        let list_top = Self::list_origin_y(panel);
-        if cell_y < list_top {
-            return SearchListPickerHit::Outside;
-        }
-        let row = (cell_y - list_top) as usize;
-        if row < list_visible {
-            SearchListPickerHit::ListRow(row)
-        } else {
-            SearchListPickerHit::Outside
-        }
-    }
-
-    /// Resolve a visible list row click to a stable entry id, or `None` if out of range.
-    pub fn pick_visible_row(&self, visible_row: usize) -> Option<usize> {
-        let i = self.scroll.checked_add(visible_row)?;
-        let entry_i = *self.filtered.get(i)?;
+    /// Resolve a click on filtered row `idx` to a stable entry id, or `None` if out of range.
+    #[must_use]
+    pub fn pick_filtered_row(&self, idx: usize) -> Option<usize> {
+        let entry_i = *self.filtered.get(idx)?;
         Some(self.entries[entry_i].id)
     }
 
-    pub fn move_cursor_to_visible_row(&mut self, visible_row: usize) {
-        let i = self.scroll.saturating_add(visible_row);
-        if i < self.filtered.len() {
-            self.list_cursor = i;
-            self.clamp_scroll();
+    /// Move the keyboard selection to filtered row `idx` (no-op if out of range).
+    pub fn set_cursor(&mut self, idx: usize) {
+        if idx < self.filtered.len() {
+            self.list_cursor = idx;
         }
     }
 
-    /// Draw body inside an already bordered `panel` (title drawn separately). Uses `panel` metrics
-    /// consistent with [`hit`].
-    pub fn draw(&self, fb: &mut FrameBuffer, panel: Rect) {
-        let inner_w = panel.w.saturating_sub(4);
-        let iy = panel.y.saturating_add(2);
+    /// Draw the picker body inside an already-drawn rounded `panel`: query field, scrollable
+    /// match list (hover + click registered as [`EditorHitTarget::PickerRow`]), then a hint.
+    pub fn draw(
+        &self,
+        fb: &mut FrameBuffer,
+        panel: Rect,
+        palette: &GameUiPalette,
+        last_mouse: Option<MouseCell>,
+        hits: &mut UiHitState,
+    ) {
+        let inner = chrome_inner_rect(panel);
+        if inner.w == 0 || inner.h == 0 {
+            return;
+        }
+        let label = "Filter: ";
+        let label_w = u16::try_from(label.chars().count()).unwrap_or(0);
+        let field_w = inner.w.saturating_sub(label_w).max(1);
         draw_text_field(
             fb,
-            panel.x.saturating_add(2),
-            iy,
-            inner_w.saturating_sub(8).max(1),
-            "Filter: ",
+            inner.x,
+            inner.y,
+            field_w,
+            label,
             &self.query,
             true,
+            palette,
         );
-        let list_top = Self::list_origin_y(panel);
-        let fg_sel = Color::rgb(255, 250, 220);
-        let bg_sel = Color::rgb(55, 48, 78);
-        let fg = Color::rgb(210, 205, 195);
-        let bg = Color::rgb(18, 16, 22);
-        for vis in 0..self.list_visible {
-            let y = list_top.saturating_add(vis as u16);
-            if y >= panel.bottom().saturating_sub(1) {
-                break;
-            }
-            let i = self.scroll + vis;
-            let text = if let Some(&ei) = self.filtered.get(i) {
-                trunc_cols(&self.entries[ei].line, inner_w as usize)
-            } else {
-                String::new()
-            };
-            let sel = i == self.list_cursor;
-            let mut x = panel.x.saturating_add(2);
-            for ch in text.chars() {
-                if x >= panel.right().saturating_sub(2) {
-                    break;
-                }
-                fb.set(
-                    x,
-                    y,
-                    Cell {
-                        ch,
-                        fg: if sel { fg_sel } else { fg },
-                        bg: if sel { bg_sel } else { bg },
-                        style: Style {
-                            bold: sel,
-                            dim: false,
-                            underline: false,
-                        },
-                    },
-                );
-                x = x.saturating_add(1);
-            }
-            while x < panel.right().saturating_sub(2) {
-                fb.set(
-                    x,
-                    y,
-                    Cell {
-                        ch: ' ',
-                        fg: if sel { fg_sel } else { fg },
-                        bg: if sel { bg_sel } else { bg },
-                        style: Style::default(),
-                    },
-                );
-                x = x.saturating_add(1);
-            }
-        }
-        let hint_y = list_top.saturating_add(self.list_visible as u16);
-        if hint_y < panel.bottom().saturating_sub(1) {
-            let hint = Rect::new(
-                panel.x.saturating_add(2),
-                hint_y,
-                inner_w,
-                panel.bottom().saturating_sub(hint_y).saturating_sub(1),
-            );
-            draw_text_block(
+
+        let list_top = inner.y.saturating_add(2);
+        let list_rect = Rect::new(
+            inner.x,
+            list_top,
+            inner.w,
+            inner.bottom().saturating_sub(list_top),
+        );
+        let rows: Vec<String> = self
+            .filtered
+            .iter()
+            .map(|&ei| self.entries[ei].line.clone())
+            .collect();
+        let list = SelectableList {
+            inner: list_rect,
+            rows: &rows,
+            selected: Some(self.list_cursor),
+            last_mouse,
+            empty_text: Some("(no matches)"),
+            reserved_footer_rows: 2,
+        };
+        draw_selectable_list(fb, palette, &list, hits, |i| {
+            UiHitTarget::Editor(EditorHitTarget::PickerRow(i))
+        });
+
+        let hint_y = inner.bottom().saturating_sub(2);
+        if hint_y >= list_top {
+            draw_text_block_theme(
                 fb,
-                hint,
+                Rect::new(inner.x, hint_y, inner.w, 2),
                 &[
                     "↑↓ choose   Enter pick   Click row   Esc close".into(),
                     "Type to filter".into(),
                 ],
+                palette,
             );
         }
     }
-}
-
-fn trunc_cols(s: &str, max_cols: usize) -> String {
-    if max_cols == 0 {
-        return String::new();
-    }
-    s.chars().take(max_cols).collect()
 }
 
 #[cfg(test)]

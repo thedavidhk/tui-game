@@ -27,11 +27,12 @@ use std::time::Instant;
 use tui_game_core::content::ContentPack;
 use tui_game_core::input::MouseCell;
 use tui_game_core::level::LevelFile;
+use tui_game_core::ui::UiHitState;
 use tui_game_core::world::{FogBakedTrio, MapGrid, TileId};
 
 use disk::FileFingerprint;
 
-pub use types::{Dialog, Mode, PaintLayer, SidebarHit};
+pub use types::{Dialog, Mode, PaintLayer};
 
 /// Fixed width for the right-hand palette / help column.
 pub(crate) const EDITOR_SIDEBAR_WIDTH: u16 = 64;
@@ -66,8 +67,9 @@ pub struct Editor {
     /// Shift–left drag rectangle: anchor corner until mouse up.
     rect_drag_start: Option<(i32, i32)>,
     last_paint_cell: Option<(i32, i32)>,
-    /// Hit targets for the current frame (sidebar rows).
-    sidebar_hits: Vec<(SidebarHit, tui_game_core::rect::Rect)>,
+    /// Clickable regions from the last `compose` (sidebar rows + modal picker rows), picked on
+    /// the next frame's mouse input. Shares the game shell's [`UiHitState`].
+    ui_hits: UiHitState,
     /// Map cell under the mouse (level coords), when over the map and no modal dialog.
     hover_map_cell: Option<(i32, i32)>,
     /// Top-left level coordinate of the visible map window.

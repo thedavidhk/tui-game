@@ -51,7 +51,8 @@ pub static ITEM_DEFS: &[ItemDef] = &[
     ItemDef {
         id: "arrow",
         name: "Arrow",
-        description: "Simple bodkin points. Load with e while highlighted; bow spends one per shot.",
+        description:
+            "Simple bodkin points. Load with e while highlighted; bow spends one per shot.",
         glyph: '^',
         category: ItemCategory::Ammo,
         weapon: None,

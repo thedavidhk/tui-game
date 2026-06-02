@@ -11,14 +11,22 @@ pub enum ActionInitiator {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActionCommand {
-    Talk { target: EntityId },
-    OpenContainer { target: EntityId },
+    Talk {
+        target: EntityId,
+    },
+    OpenContainer {
+        target: EntityId,
+    },
     EngageCombat {
         target: EntityId,
         profile: EncounterProfile,
     },
-    Attack { target: EntityId },
-    MoveTo { target: GridPos },
+    Attack {
+        target: EntityId,
+    },
+    MoveTo {
+        target: GridPos,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

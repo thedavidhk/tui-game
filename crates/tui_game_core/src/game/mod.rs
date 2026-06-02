@@ -1,5 +1,6 @@
 //! Top-level game state, mode stack, and stepping.
 
+mod effects;
 mod hud;
 mod key_commands;
 mod modes;
@@ -20,34 +21,27 @@ use crate::combat::{
     AttackStyle, CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy,
     EncounterProfile, ATTACK_COST_UNITS, MOVE_ORTHOGONAL_COST_UNITS,
 };
-use crate::content::{
-    ContentPack, DialogueAction, HostileTriggerDef, NpcRoutineDef, QuestJournalStatus, Relation,
-};
+use crate::content::{ContentPack, DialogueAction, HostileTriggerDef, NpcRoutineDef, Relation};
 use crate::entity::{ActorStats, EntityArena, EntityId, GridPos};
 use crate::game_content;
 use crate::input::{InputBatch, InputEvent, MouseCell};
-use crate::item::{EquipSlot, Inventory, ItemStack, StackEquipped, WeaponKind};
+use crate::item::{Inventory, ItemStack, StackEquipped, WeaponKind};
 use crate::level::{
-    derive_visual_seed, derive_visual_seed_from_map, level_from_ron, materialize_tile_defs_from_pack,
-    LevelFile,
+    derive_visual_seed, derive_visual_seed_from_map, level_from_ron,
+    materialize_tile_defs_from_pack, LevelFile,
 };
 use crate::narrative::NarrativeState;
 use crate::rect::Rect;
-use crate::render::{Cell, Color, FrameBuffer, FrameSample, Style};
-use crate::ui::chrome::{
-    chrome_inner_rect, draw_clipped_line, draw_rounded_panel, PanelBorderEmphasis,
-};
-use crate::ui::hit::{UiHitState, UiHitTarget};
+use crate::render::{Color, FrameBuffer, FrameSample};
+use crate::ui::hit::UiHitState;
 use crate::ui::layout::GameShellLayout;
-use crate::ui::GameUiPalette;
 use crate::ui::viewport_scroll::{
     edge_scroll_pan_delta, map_larger_than_view, screen_cell_to_world, world_view_origin,
     EDGE_SCROLL_COOLDOWN_TICKS,
 };
 use crate::world::{
-    compose_fog_from_luminance, compute_visible, effective_fow_radius_cells, first_step_on_line,
-    merge_explored, mix64, plan_path, plan_path_player_fow, rebuild_atmosphere_bake,
-    smooth_fog_luminance, FogBakedTrio, MapGrid,
+    compute_visible, effective_fow_radius_cells, first_step_on_line, merge_explored, mix64,
+    plan_path, plan_path_player_fow, rebuild_atmosphere_bake, FogBakedTrio, MapGrid,
 };
 
 const FOW_RADIUS: i32 = 20;
@@ -261,7 +255,8 @@ impl Game {
             stack: vec![GameMode::MainMenu { selected: 0 }],
         };
         game.rng_seed = 1;
-        game.log = vec!["Welcome. LMB interact, WASD move, I/J inventory & journal, F1 debug.".into()];
+        game.log =
+            vec!["Welcome. LMB interact, WASD move, I/J inventory & journal, F1 debug.".into()];
         game.refresh_fow();
         game
     }
@@ -276,10 +271,9 @@ impl Game {
         let content = game_content::content_pack();
         content.validate().map_err(|e| e.to_string())?;
         let mut level = level.clone();
-        materialize_tile_defs_from_pack(&mut level, terrain_pack_base).map_err(|e| e.to_string())?;
-        content
-            .validate_level(&level)
+        materialize_tile_defs_from_pack(&mut level, terrain_pack_base)
             .map_err(|e| e.to_string())?;
+        content.validate_level(&level).map_err(|e| e.to_string())?;
         let map_visual_seed = level
             .visual_seed
             .unwrap_or_else(|| derive_visual_seed(&level));
@@ -413,7 +407,9 @@ impl Game {
         };
         let vw = self.viewport_w;
         let vh = self.viewport_h;
-        let pack_base = stored_path.as_ref().and_then(|p| Path::new(p.as_str()).parent());
+        let pack_base = stored_path
+            .as_ref()
+            .and_then(|p| Path::new(p.as_str()).parent());
         let mut g = Self::from_level_file(&level, vw, vh, self.key_map, pack_base)?;
         g.restart_level_ron_path = stored_path;
         g.modes.stack = vec![GameMode::Exploration];
@@ -429,6 +425,11 @@ impl Game {
     fn player_pos(&self) -> Option<GridPos> {
         let pid = self.player_id()?;
         self.entities.pos(pid)
+    }
+
+    fn player_stats(&self) -> Option<ActorStats> {
+        let pid = self.player_id()?;
+        self.entities.stats(pid)
     }
 
     pub fn refresh_fow(&mut self) {
@@ -591,12 +592,9 @@ impl Game {
             if next == waypoint {
                 let _ = self.player_walk_path.remove(0);
             }
-            self.player_walk_tick_cooldown = self
-                .player_id()
-                .and_then(|id| self.entities.stats(id))
-                .map_or(0, |stats| {
-                    services::pacing::visual_step_cooldown_ticks_from_speed(stats.speed)
-                });
+            self.player_walk_tick_cooldown = self.player_stats().map_or(0, |stats| {
+                services::pacing::visual_step_cooldown_ticks_from_speed(stats.speed)
+            });
             if self.player_walk_path.is_empty() {
                 self.player_walk_goal = None;
             }
@@ -1708,643 +1706,6 @@ impl Game {
 
     pub(crate) fn handle_game_over(&mut self, ev: GameInput) {
         modes::game_over::handle(self, ev);
-    }
-
-    fn compose_journal_overlay(&mut self, fb: &mut FrameBuffer, quest_cursor: usize) {
-        fn status_label(s: QuestJournalStatus) -> &'static str {
-            match s {
-                QuestJournalStatus::InProgress => "In progress",
-                QuestJournalStatus::Failed => "Failed",
-                QuestJournalStatus::Completed => "Completed",
-            }
-        }
-
-        let palette = GameUiPalette::DEFAULT;
-        let (left, right) = overlay_layout::two_column_relaxed(fb.width, fb.height);
-
-        draw_rounded_panel(
-            fb,
-            left,
-            "Quests",
-            PanelBorderEmphasis::Subtle,
-            &palette,
-        );
-        let inner_l = chrome_inner_rect(left);
-        let journals = &self.narrative.quest_journal;
-        let n = journals.len();
-        let mut y = inner_l.y;
-        if n == 0 {
-            if y < inner_l.bottom().saturating_sub(2) {
-                draw_clipped_line(
-                    fb,
-                    inner_l.x,
-                    y,
-                    inner_l.w,
-                    "(no entries yet)",
-                    palette.text_dim,
-                    palette.panel_bg,
-                    Style {
-                        dim: true,
-                        ..Default::default()
-                    },
-                );
-            }
-        } else {
-            for (i, q) in journals.iter().enumerate() {
-                if y >= inner_l.bottom().saturating_sub(2) {
-                    break;
-                }
-                let row = Rect::new(inner_l.x, y, inner_l.w, 1);
-                let hot = self
-                    .last_mouse_cell
-                    .is_some_and(|m| row.contains(m.x, m.y));
-                let keyboard_sel = i == quest_cursor.min(n.saturating_sub(1));
-                let sel = keyboard_sel || hot;
-                let tag = status_label(q.status);
-                let line = if sel {
-                    format!("› {} [{}]", q.title, tag)
-                } else {
-                    format!("  {} [{}]", q.title, tag)
-                };
-                let fg = if sel {
-                    palette.selected_fg
-                } else {
-                    palette.text
-                };
-                let bg = if sel {
-                    palette.selected_bg
-                } else {
-                    palette.panel_bg
-                };
-                let st = Style {
-                    bold: sel,
-                    dim: !sel,
-                    underline: false,
-                };
-                draw_clipped_line(fb, inner_l.x, y, inner_l.w, &line, fg, bg, st);
-                self.ui_hits.push(UiHitTarget::JournalQuest(i), row);
-                y = y.saturating_add(1);
-            }
-        }
-
-        let hint_y = inner_l.bottom().saturating_sub(2);
-        if hint_y >= inner_l.y && hint_y < inner_l.bottom() {
-            draw_clipped_line(
-                fb,
-                inner_l.x,
-                hint_y,
-                inner_l.w,
-                "—",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-        let hint_y2 = inner_l.bottom().saturating_sub(1);
-        if hint_y2 >= inner_l.y && hint_y2 < inner_l.bottom() {
-            draw_clipped_line(
-                fb,
-                inner_l.x,
-                hint_y2,
-                inner_l.w,
-                "Up/Down  PgUp/PgDn  Esc back",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-
-        draw_rounded_panel(
-            fb,
-            right,
-            "Entries",
-            PanelBorderEmphasis::Subtle,
-            &palette,
-        );
-        let inner_r = chrome_inner_rect(right);
-        let line_w = inner_r.w.max(1) as usize;
-        let mut detail: Vec<String> = Vec::new();
-        if n == 0 {
-            detail.push("Quest lines appear when you talk,".into());
-            detail.push("pick up certain items, or advance".into());
-            detail.push("a story beat.".into());
-        } else {
-            let q = &journals[quest_cursor.min(n.saturating_sub(1))];
-            detail.push(format!("{} — {}", q.title, status_label(q.status)));
-            detail.push(String::new());
-            let mut entries: Vec<_> = q.entries.iter().collect();
-            entries.sort_by_key(|e| e.seq);
-            for e in entries {
-                let line = format!("[{}] {}", e.seq, e.text);
-                detail.extend(crate::ui::wrap::wrap_words(&line, line_w.max(12)));
-                detail.push(String::new());
-            }
-            if q.entries.is_empty() {
-                detail.push("(no log lines yet)".into());
-            }
-        }
-        crate::ui::draw_text_block_theme(fb, inner_r, &detail, &palette);
-    }
-
-    fn compose_inventory_overlay(&mut self, fb: &mut FrameBuffer, cursor: usize) {
-        let palette = GameUiPalette::DEFAULT;
-        let (bags, equipment, detail) =
-            overlay_layout::three_column_inventory(fb.width, fb.height);
-        let cat = self.content.item_catalog();
-        let stacks = &self.narrative.inventory.stacks;
-        let n = stacks.len();
-
-        draw_rounded_panel(
-            fb,
-            bags,
-            "Inventory",
-            PanelBorderEmphasis::Subtle,
-            &palette,
-        );
-        let inner_b = chrome_inner_rect(bags);
-        let mut y = inner_b.y;
-        for (i, s) in stacks.iter().enumerate() {
-            if y >= inner_b.bottom().saturating_sub(2) {
-                break;
-            }
-            let row = Rect::new(inner_b.x, y, inner_b.w, 1);
-            let hot = self
-                .last_mouse_cell
-                .is_some_and(|m| row.contains(m.x, m.y));
-            let keyboard_sel = n > 0 && i == cursor.min(n.saturating_sub(1));
-            let sel = keyboard_sel || hot;
-            let body = inventory_stack_display_line(&cat, s);
-            let line = if sel {
-                format!("› {body}")
-            } else {
-                format!("  {body}")
-            };
-            let fg = if sel {
-                palette.selected_fg
-            } else {
-                palette.text
-            };
-            let bg = if sel {
-                palette.selected_bg
-            } else {
-                palette.panel_bg
-            };
-            let st = Style {
-                bold: sel,
-                dim: !sel,
-                underline: false,
-            };
-            draw_clipped_line(fb, inner_b.x, y, inner_b.w, &line, fg, bg, st);
-            self.ui_hits.push(UiHitTarget::InventoryStack(i), row);
-            y = y.saturating_add(1);
-        }
-        if stacks.is_empty() && y < inner_b.bottom().saturating_sub(2) {
-            draw_clipped_line(
-                fb,
-                inner_b.x,
-                y,
-                inner_b.w,
-                "(empty)",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-        let hint_y = inner_b.bottom().saturating_sub(2);
-        if hint_y >= inner_b.y && hint_y < inner_b.bottom() {
-            draw_clipped_line(
-                fb,
-                inner_b.x,
-                hint_y,
-                inner_b.w,
-                "—",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-        let hint_y2 = inner_b.bottom().saturating_sub(1);
-        if hint_y2 >= inner_b.y && hint_y2 < inner_b.bottom() {
-            draw_clipped_line(
-                fb,
-                inner_b.x,
-                hint_y2,
-                inner_b.w,
-                "click row · u/e · Esc back",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-
-        draw_rounded_panel(
-            fb,
-            equipment,
-            "Equipped",
-            PanelBorderEmphasis::Subtle,
-            &palette,
-        );
-        let inner_e = chrome_inner_rect(equipment);
-        let mut eq_lines: Vec<String> = Vec::new();
-        for slot in EquipSlot::VARIANTS {
-            let title = slot.to_string();
-            let line = match self.narrative.worn_item_id_in_slot(slot) {
-                None => format!("{title}: —"),
-                Some(id) => format!("{title}: {}", cat.display_name(id)),
-            };
-            eq_lines.push(line);
-        }
-        eq_lines.push(String::new());
-        let quiver_line = self
-            .narrative
-            .inventory
-            .stacks
-            .iter()
-            .find(|s| matches!(s.equipped, Some(StackEquipped::Quiver)))
-            .map(|s| {
-                format!(
-                    "Quiver: {} x{}",
-                    cat.display_name(s.id.as_str()),
-                    s.count
-                )
-            })
-            .unwrap_or_else(|| "Quiver: (empty)".into());
-        eq_lines.push(quiver_line);
-        crate::ui::draw_text_block_theme(fb, inner_e, &eq_lines, &palette);
-
-        draw_rounded_panel(
-            fb,
-            detail,
-            "Detail",
-            PanelBorderEmphasis::Subtle,
-            &palette,
-        );
-        let inner_d = chrome_inner_rect(detail);
-        let line_w = inner_d.w.max(1) as usize;
-        let mut detail_lines: Vec<String> = Vec::new();
-        if let Some(s) = stacks.get(cursor.min(n.saturating_sub(1))) {
-            if let Some(def) = cat.get(s.id.as_str()) {
-                detail_lines.push(def.name.to_string());
-                detail_lines.push(cat.category_line(s.id.as_str()));
-                detail_lines.push(String::new());
-                detail_lines.extend(crate::ui::wrap::wrap_words(
-                    def.description,
-                    line_w.max(12),
-                ));
-            } else {
-                detail_lines.push(s.id.clone());
-            }
-        } else {
-            detail_lines.push("(no stacks)".into());
-        }
-        crate::ui::draw_text_block_theme(fb, inner_d, &detail_lines, &palette);
-    }
-
-    fn compose_item_transfer_overlay(
-        &mut self,
-        fb: &mut FrameBuffer,
-        container: EntityId,
-        focus: TransferFocus,
-        cursor_player: usize,
-        cursor_container: usize,
-    ) {
-        let palette = GameUiPalette::DEFAULT;
-        let (left, right) = overlay_layout::two_column_tight(fb.width, fb.height);
-        let cat = self.content.item_catalog();
-        let cname = self
-            .entities
-            .name
-            .get(container.0 as usize)
-            .cloned()
-            .unwrap_or_else(|| "Chest".into());
-        let left_emphasis = if matches!(focus, TransferFocus::Player) {
-            PanelBorderEmphasis::Highlighted
-        } else {
-            PanelBorderEmphasis::Subtle
-        };
-        let right_emphasis = if matches!(focus, TransferFocus::Container) {
-            PanelBorderEmphasis::Highlighted
-        } else {
-            PanelBorderEmphasis::Subtle
-        };
-        draw_rounded_panel(fb, left, "You", left_emphasis, &palette);
-        draw_rounded_panel(fb, right, cname.as_str(), right_emphasis, &palette);
-
-        let pn = self.narrative.inventory.stacks.len();
-        let cont_stacks = self
-            .narrative
-            .container_inventories
-            .get(&container.0)
-            .map(|v| v.stacks.as_slice())
-            .unwrap_or(&[]);
-        let cn = cont_stacks.len();
-
-        let li = chrome_inner_rect(left);
-        let mut y = li.y;
-        for (i, s) in self.narrative.inventory.stacks.iter().enumerate() {
-            if y >= li.bottom().saturating_sub(2) {
-                break;
-            }
-            let sel_p = if pn == 0 {
-                0
-            } else {
-                cursor_player.min(pn.saturating_sub(1))
-            };
-            let row = Rect::new(li.x, y, li.w, 1);
-            let hot = self.last_mouse_cell.is_some_and(|m| row.contains(m.x, m.y));
-            let keyboard_sel = matches!(focus, TransferFocus::Player) && i == sel_p;
-            let sel = keyboard_sel || hot;
-            let body = inventory_stack_display_line(&cat, s);
-            let line = if sel {
-                format!("› {body}")
-            } else {
-                format!("  {body}")
-            };
-            let fg = if sel {
-                palette.selected_fg
-            } else {
-                palette.text
-            };
-            let bg = if sel {
-                palette.selected_bg
-            } else {
-                palette.panel_bg
-            };
-            let st = Style {
-                bold: sel,
-                dim: !sel,
-                underline: false,
-            };
-            draw_clipped_line(fb, li.x, y, li.w, &line, fg, bg, st);
-            self.ui_hits.push(UiHitTarget::TransferPlayerStack(i), row);
-            y = y.saturating_add(1);
-        }
-        if self.narrative.inventory.stacks.is_empty() && y < li.bottom().saturating_sub(2) {
-            draw_clipped_line(
-                fb,
-                li.x,
-                y,
-                li.w,
-                "(empty)",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-        let hint_y = li.bottom().saturating_sub(2);
-        if hint_y >= li.y && hint_y < li.bottom() {
-            draw_clipped_line(
-                fb,
-                li.x,
-                hint_y,
-                li.w,
-                "—",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-        let hint_y2 = li.bottom().saturating_sub(1);
-        if hint_y2 >= li.y && hint_y2 < li.bottom() {
-            draw_clipped_line(
-                fb,
-                li.x,
-                hint_y2,
-                li.w,
-                "click row move · Tab · Enter · Esc close",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-
-        let ri = chrome_inner_rect(right);
-        y = ri.y;
-        for (i, s) in cont_stacks.iter().enumerate() {
-            if y >= ri.bottom().saturating_sub(2) {
-                break;
-            }
-            let sel_c = if cn == 0 {
-                0
-            } else {
-                cursor_container.min(cn.saturating_sub(1))
-            };
-            let row = Rect::new(ri.x, y, ri.w, 1);
-            let hot = self.last_mouse_cell.is_some_and(|m| row.contains(m.x, m.y));
-            let keyboard_sel = matches!(focus, TransferFocus::Container) && i == sel_c;
-            let sel = keyboard_sel || hot;
-            let label = cat.display_name(s.id.as_str());
-            let line = if sel {
-                format!("› {label} x{}", s.count)
-            } else {
-                format!("  {label} x{}", s.count)
-            };
-            let fg = if sel {
-                palette.selected_fg
-            } else {
-                palette.text
-            };
-            let bg = if sel {
-                palette.selected_bg
-            } else {
-                palette.panel_bg
-            };
-            let st = Style {
-                bold: sel,
-                dim: !sel,
-                underline: false,
-            };
-            draw_clipped_line(fb, ri.x, y, ri.w, &line, fg, bg, st);
-            self.ui_hits.push(UiHitTarget::TransferContainerStack(i), row);
-            y = y.saturating_add(1);
-        }
-        if cont_stacks.is_empty() && y < ri.bottom().saturating_sub(2) {
-            draw_clipped_line(
-                fb,
-                ri.x,
-                y,
-                ri.w,
-                "(empty)",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-        let hint_y = ri.bottom().saturating_sub(2);
-        if hint_y >= ri.y && hint_y < ri.bottom() {
-            draw_clipped_line(
-                fb,
-                ri.x,
-                hint_y,
-                ri.w,
-                "—",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-        let hint_y2 = ri.bottom().saturating_sub(1);
-        if hint_y2 >= ri.y && hint_y2 < ri.bottom() {
-            draw_clipped_line(
-                fb,
-                ri.x,
-                hint_y2,
-                ri.w,
-                "click row move · Tab · Enter · Esc close",
-                palette.text_dim,
-                palette.panel_bg,
-                Style {
-                    dim: true,
-                    ..Default::default()
-                },
-            );
-        }
-    }
-
-    fn compose_world(&self, fb: &mut FrameBuffer, area: Rect) {
-        let Some(_) = self.player_pos() else {
-            return;
-        };
-        let cam_w = area.w as i32;
-        let cam_h = area.h as i32;
-        let (ox, oy) = self.world_screen_origin();
-
-        for row in 0..area.h {
-            for col in 0..area.w {
-                let wx = ox + col as i32;
-                let wy = oy + row as i32;
-                let screen_x = area.x + col;
-                let screen_y = area.y + row;
-                let mut cell = Cell::default();
-                if !self.map.in_bounds(wx, wy) {
-                    cell.ch = unseen_fog_glyph(wx, wy, self.map_visual_seed);
-                    let d = &self.map.default_atmosphere;
-                    let oob = d.void_background.lighten(6);
-                    cell.bg = oob;
-                    cell.fg = d.void_glyph_foreground;
-                    fb.set(screen_x, screen_y, cell);
-                    continue;
-                }
-                let idx = wy as usize * self.map.width as usize + wx as usize;
-                let seen = self.explored.get(idx).copied().unwrap_or(false);
-                let composed = self.map.composed_terrain_cell(
-                    wx,
-                    wy,
-                    self.surface_tick,
-                    self.map_visual_seed,
-                );
-                let terrain_ch = composed.ch;
-                let l = smooth_fog_luminance(
-                    self.map.width,
-                    self.map.height,
-                    &self.explored,
-                    &self.visible,
-                    wx,
-                    wy,
-                );
-                let fog_baked = self
-                    .atmosphere_bake
-                    .get(idx)
-                    .copied()
-                    .unwrap_or_default();
-                let (out_fg, out_bg) =
-                    compose_fog_from_luminance(fog_baked, l);
-                cell.ch = if seen {
-                    terrain_ch
-                } else {
-                    unseen_fog_glyph(wx, wy, self.map_visual_seed)
-                };
-                cell.fg = out_fg;
-                cell.bg = out_bg;
-                fb.set(screen_x, screen_y, cell);
-            }
-        }
-
-        // Entities on top
-        for (i, alive) in self.entities.alive.iter().enumerate() {
-            if !alive {
-                continue;
-            }
-            let Some(ep) = self.entities.position[i] else {
-                continue;
-            };
-            let wx = ep.x;
-            let wy = ep.y;
-            let sx = wx - ox;
-            let sy = wy - oy;
-            if sx < 0 || sy < 0 || sx >= cam_w || sy >= cam_h {
-                continue;
-            }
-            let idx = wy as usize * self.map.width as usize + wx as usize;
-            let vis = self.visible.get(idx).copied().unwrap_or(false);
-            if !vis {
-                continue;
-            }
-            let screen_x = area.x + sx as u16;
-            let screen_y = area.y + sy as u16;
-            let g = self.entities.glyph[i];
-            let eid = EntityId(i as u32);
-            let is_npc = self.entities.npc_kind[i].is_some();
-            let base_fg = self.entities.fg[i];
-            let relation_fg = if is_npc {
-                match self.relation_to_player(eid) {
-                    Relation::Hostile => Some(Color::rgb(240, 95, 95)),
-                    // Reserve green for true allies only (party / joins the player in fights).
-                    Relation::Allied => Some(Color::rgb(120, 240, 140)),
-                    Relation::Friendly | Relation::Neutral => Some(base_fg),
-                }
-            } else {
-                None
-            };
-            let ent_fg = relation_fg.unwrap_or(base_fg);
-            let fog_baked = self
-                .atmosphere_bake
-                .get(idx)
-                .copied()
-                .unwrap_or_default();
-            let ent_bg = fog_baked.visible.bg;
-            let c = Cell {
-                ch: g,
-                fg: ent_fg,
-                bg: ent_bg,
-                style: Style {
-                    bold: true,
-                    dim: false,
-                    underline: false,
-                },
-            };
-            fb.set(screen_x, screen_y, c);
-        }
     }
 
     pub fn snapshot(&self) -> crate::save::WorldSnapshot {

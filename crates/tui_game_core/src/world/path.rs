@@ -30,7 +30,16 @@ pub fn plan_path(
     allow_partial: bool,
     max_cost: u32,
 ) -> Result<PathPlan, PathError> {
-    find_path(map, entities, start, goal, mover, allow_partial, max_cost, |_, _| false)
+    find_path(
+        map,
+        entities,
+        start,
+        goal,
+        mover,
+        allow_partial,
+        max_cost,
+        |_, _| false,
+    )
 }
 
 pub fn plan_path_player_fow(
@@ -421,8 +430,8 @@ mod tests {
         let arena = EntityArena::new();
         let start = GridPos { x: 1, y: 1 };
         let goal = GridPos { x: 3, y: 1 };
-        let plan = plan_path(&map, &arena, start, goal, None, false, u32::MAX)
-            .expect("path should exist");
+        let plan =
+            plan_path(&map, &arena, start, goal, None, false, u32::MAX).expect("path should exist");
         assert_eq!(plan.path.first().copied(), Some(start));
         assert_eq!(plan.path.last().copied(), Some(goal));
         assert!(plan.reached_goal);
@@ -467,17 +476,8 @@ mod tests {
         let arena = EntityArena::new();
         let start = GridPos { x: 1, y: 1 };
         let goal = GridPos { x: 4, y: 1 };
-        let plan = plan_path_player_fow(
-            &map,
-            &arena,
-            &explored,
-            start,
-            goal,
-            None,
-            true,
-            u32::MAX,
-        )
-        .expect("path should exist under unknown-passable policy");
+        let plan = plan_path_player_fow(&map, &arena, &explored, start, goal, None, true, u32::MAX)
+            .expect("path should exist under unknown-passable policy");
         assert!(plan.reached_goal);
         assert_eq!(plan.path.last().copied(), Some(goal));
     }
@@ -493,8 +493,8 @@ mod tests {
         let arena = EntityArena::new();
         let start = GridPos { x: 1, y: 1 };
         let goal = GridPos { x: 3, y: 3 };
-        let plan = plan_path(&map, &arena, start, goal, None, false, u32::MAX)
-            .expect("path should exist");
+        let plan =
+            plan_path(&map, &arena, start, goal, None, false, u32::MAX).expect("path should exist");
         assert!(plan.path.len() <= 3, "expected diagonal path");
     }
 
@@ -509,8 +509,8 @@ mod tests {
         let arena = EntityArena::new();
         let start = GridPos { x: 1, y: 1 };
         let goal = GridPos { x: 6, y: 4 };
-        let plan = plan_path(&map, &arena, start, goal, None, false, u32::MAX)
-            .expect("path should exist");
+        let plan =
+            plan_path(&map, &arena, start, goal, None, false, u32::MAX).expect("path should exist");
         assert_eq!(plan.path.first().copied(), Some(start));
         assert_eq!(plan.path.last().copied(), Some(goal));
         assert_eq!(

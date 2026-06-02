@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::entity::{EntityArena, EntityId, GridPos};
 use crate::item::StackEquipped;
 use crate::narrative::NarrativeState;
-use crate::world::{MapGrid, projectile_sight_clear};
+use crate::world::{projectile_sight_clear, MapGrid};
 
 pub const ACTION_UNIT: u16 = 10;
 pub const MOVE_ORTHOGONAL_COST_UNITS: u16 = 10;
@@ -55,7 +55,9 @@ pub enum AttackStyle {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CombatAction {
-    Move { target: GridPos },
+    Move {
+        target: GridPos,
+    },
     Attack {
         target: EntityId,
         style: AttackStyle,
@@ -98,7 +100,11 @@ impl CombatState {
                 (id, total, i32::from(speed))
             })
             .collect();
-        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.2.cmp(&a.2)).then_with(|| a.0 .0.cmp(&b.0 .0)));
+        ranked.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| b.2.cmp(&a.2))
+                .then_with(|| a.0 .0.cmp(&b.0 .0))
+        });
         let initiative: Vec<EntityId> = ranked.into_iter().map(|(id, _, _)| id).collect();
         let ap_remaining = initiative
             .iter()
@@ -138,7 +144,8 @@ impl CombatState {
             let id = self.initiative[idx];
             if actor_can_act(arena, id) {
                 self.turn_index = idx;
-                self.ap_remaining[idx] = arena.stats(id).map_or(1, |s| ap_from_speed(s.speed)) * ACTION_UNIT;
+                self.ap_remaining[idx] =
+                    arena.stats(id).map_or(1, |s| ap_from_speed(s.speed)) * ACTION_UNIT;
                 return;
             }
         }
@@ -227,7 +234,8 @@ impl CombatState {
                         message: Some("Not enough AP to attack.".into()),
                     };
                 }
-                if target == actor || !self.contains_actor(target) || !actor_can_act(arena, target) {
+                if target == actor || !self.contains_actor(target) || !actor_can_act(arena, target)
+                {
                     return CombatActionReport {
                         applied: false,
                         end_combat: false,
@@ -285,7 +293,9 @@ impl CombatState {
                         return CombatActionReport {
                             applied: false,
                             end_combat: false,
-                            message: Some("Bow needs arrows in the quiver (e on arrows in inventory).".into()),
+                            message: Some(
+                                "Bow needs arrows in the quiver (e on arrows in inventory).".into(),
+                            ),
                         };
                     }
                 }
@@ -305,7 +315,9 @@ impl CombatState {
                 };
                 let to_hit = match style {
                     AttackStyle::Unarmed => 0,
-                    AttackStyle::Melee { to_hit, .. } | AttackStyle::Bow { to_hit, .. } => i32::from(to_hit),
+                    AttackStyle::Melee { to_hit, .. } | AttackStyle::Bow { to_hit, .. } => {
+                        i32::from(to_hit)
+                    }
                 };
                 let attack_roll = i32::from(roll_d20(rng_seed))
                     + i32::from(strength_modifier(attacker_stats.strength))
@@ -318,7 +330,8 @@ impl CombatState {
                         AttackStyle::Melee { damage_bonus, .. }
                         | AttackStyle::Bow { damage_bonus, .. } => i32::from(damage_bonus),
                     };
-                    let damage = (i32::from(damage_on_hit(attacker_stats.strength)) + dmg_bonus).max(1) as u16;
+                    let damage = (i32::from(damage_on_hit(attacker_stats.strength)) + dmg_bonus)
+                        .max(1) as u16;
                     if let Some(target_mut) = arena.stats_mut(target) {
                         target_mut.hp = target_mut.hp.saturating_sub(damage);
                     }
@@ -365,7 +378,7 @@ impl CombatState {
                 applied: true,
                 end_combat: true,
                 message: Some("Flee attempt ends combat.".into()),
-            }
+            },
         }
     }
 
@@ -404,9 +417,7 @@ fn chebyshev(a: GridPos, b: GridPos) -> i32 {
 
 fn consume_one_arrow(n: &mut NarrativeState) {
     let Some(i) = n.inventory.stacks.iter().position(|s| {
-        s.id == "arrow"
-            && matches!(s.equipped, Some(StackEquipped::Quiver))
-            && s.count > 0
+        s.id == "arrow" && matches!(s.equipped, Some(StackEquipped::Quiver)) && s.count > 0
     }) else {
         return;
     };

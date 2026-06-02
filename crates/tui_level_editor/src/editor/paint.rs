@@ -1,7 +1,7 @@
 //! Ground / prop painting, sparse brush, and rectangle fill.
 
 use tui_game_core::ui::{for_each_in_brush, for_each_in_rect};
-use tui_game_core::world::{mix64, EMPTY_PROP_ID, TileId};
+use tui_game_core::world::{mix64, TileId, EMPTY_PROP_ID};
 
 use super::{Editor, Mode, PaintLayer};
 

@@ -1,10 +1,10 @@
 //! Pointer: brush, palette pickers, rectangle drag, edge scroll.
 
 use tui_game_core::input::{InputEvent, MouseButton, MouseEventKind};
-use tui_game_core::ui::cell_local_in_rect;
+use tui_game_core::ui::{cell_local_in_rect, EditorHitTarget, UiHitTarget};
 use tui_game_core::world::EMPTY_PROP_ID;
 
-use super::{Editor, Mode, PaintLayer, SidebarHit, MAX_BRUSH_SIZE};
+use super::{Editor, Mode, PaintLayer, MAX_BRUSH_SIZE};
 
 impl Editor {
     pub fn update_map_hover_from_mouse(&mut self, ev: &InputEvent) {
@@ -13,12 +13,8 @@ impl Editor {
         };
         self.last_mouse_cell = Some(*cell);
         let map_rect = self.map_area_rect();
-        self.hover_map_cell = cell_local_in_rect(*cell, map_rect).map(|(lx, ly)| {
-            (
-                self.view_origin_x + lx,
-                self.view_origin_y + ly,
-            )
-        });
+        self.hover_map_cell = cell_local_in_rect(*cell, map_rect)
+            .map(|(lx, ly)| (self.view_origin_x + lx, self.view_origin_y + ly));
     }
 
     pub fn step_main_mouse(&mut self, ev: &InputEvent) {
@@ -48,8 +44,8 @@ impl Editor {
                     } else {
                         -1
                     };
-                    self.brush_sparse_pct = (self.brush_sparse_pct as i16 + delta as i16)
-                        .clamp(0, 100) as u8;
+                    self.brush_sparse_pct =
+                        (self.brush_sparse_pct as i16 + delta as i16).clamp(0, 100) as u8;
                     self.status = if self.brush_sparse_pct == 0 {
                         "Prop brush: dense. Ctrl+wheel: sparse % (else clears prop)".into()
                     } else {
@@ -66,56 +62,58 @@ impl Editor {
             return;
         }
 
-        if let Some(hit) = self.sidebar_pick(*cell) {
+        if let Some(UiHitTarget::Editor(hit)) = self.ui_hit_at(*cell) {
             if let MouseEventKind::Down(MouseButton::Left) = kind {
                 match hit {
-                    SidebarHit::ClearPropOverlay => {
+                    EditorHitTarget::ClearPropOverlay => {
                         self.set_mode(Mode::PaintTiles);
                         self.paint_layer = PaintLayer::Prop;
                         self.current_tile = EMPTY_PROP_ID;
                         self.status = "Brush: clear prop overlay.".into();
                     }
-                    SidebarHit::OpenTerrainPicker => {
+                    EditorHitTarget::OpenTerrainPicker => {
                         self.open_terrain_picker();
                     }
-                    SidebarHit::OpenEntityPicker => {
+                    EditorHitTarget::OpenEntityPicker => {
                         self.open_entity_picker();
                     }
-                    SidebarHit::LayerGround => {
+                    EditorHitTarget::LayerGround => {
                         self.set_mode(Mode::PaintTiles);
                         self.paint_layer = PaintLayer::Ground;
                         self.ensure_valid_terrain_brush();
                         self.status = "Paint layer: ground.".into();
                     }
-                    SidebarHit::LayerProp => {
+                    EditorHitTarget::LayerProp => {
                         self.set_mode(Mode::PaintTiles);
                         self.paint_layer = PaintLayer::Prop;
                         self.status = "Paint layer: props.".into();
                     }
-                    SidebarHit::ModePaint => {
+                    EditorHitTarget::ModePaint => {
                         self.set_mode(Mode::PaintTiles);
                         self.status = "Mode: paint tiles.".into();
                     }
-                    SidebarHit::ModePlace => {
+                    EditorHitTarget::ModePlace => {
                         self.set_mode(Mode::PlaceSpawns);
                         self.status = "Mode: place entities (LMB on map).".into();
                     }
-                    SidebarHit::ModeErase => {
+                    EditorHitTarget::ModeErase => {
                         self.set_mode(Mode::EraseSpawns);
                         self.status = "Mode: erase spawns.".into();
                     }
-                    SidebarHit::ModePlayer => {
+                    EditorHitTarget::ModePlayer => {
                         self.set_mode(Mode::SetPlayerSpawn);
                         self.status = "Player spawn: click map. Backspace clears.".into();
                     }
-                    SidebarHit::ModeAtmos => {
+                    EditorHitTarget::ModeAtmos => {
                         self.set_mode(Mode::AtmosphereZones);
                         self.status = "Atmosphere: LMB adds zone; Backspace removes last.".into();
                     }
-                    SidebarHit::PlayerSpawnRow => {
+                    EditorHitTarget::PlayerSpawnRow => {
                         self.set_mode(Mode::SetPlayerSpawn);
                         self.status = "Player spawn: click map. Backspace clears.".into();
                     }
+                    // Picker rows are only registered while a modal is open (handled there).
+                    EditorHitTarget::PickerRow(_) => {}
                 }
             }
             return;

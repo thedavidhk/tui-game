@@ -44,13 +44,8 @@ impl Default for AtmosphereRecipe {
 /// Axis-aligned rectangle or disk in tile space, centered on [`AtmosphereZone`] anchor.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AtmosphereShape {
-    Rectangle {
-        width_tiles: u16,
-        height_tiles: u16,
-    },
-    Circle {
-        radius_tiles: u16,
-    },
+    Rectangle { width_tiles: u16, height_tiles: u16 },
+    Circle { radius_tiles: u16 },
 }
 
 /// Placed atmosphere volume. Influence falls off outside the hard shape across [`Self::edge_falloff_tiles`].
@@ -202,8 +197,8 @@ pub fn materialize_tile_defs_from_pack(
     let full = base.join(path);
     let raw = std::fs::read_to_string(&full)
         .map_err(|e| format!("read terrain pack {}: {e}", full.display()))?;
-    let pack: TerrainPack = ron::from_str(&raw)
-        .map_err(|e| format!("parse terrain pack {}: {e}", full.display()))?;
+    let pack: TerrainPack =
+        ron::from_str(&raw).map_err(|e| format!("parse terrain pack {}: {e}", full.display()))?;
     if pack.schema_version != TerrainPack::SCHEMA {
         return Err(format!(
             "terrain pack {} schema_version {} != {}",

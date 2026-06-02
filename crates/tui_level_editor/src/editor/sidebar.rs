@@ -2,9 +2,13 @@
 
 use tui_game_core::rect::Rect;
 use tui_game_core::render::{Cell, Color, FrameBuffer, Style};
+use tui_game_core::ui::{
+    chrome_inner_rect, draw_rounded_panel, EditorHitTarget, GameUiPalette, PanelBorderEmphasis,
+    UiHitTarget,
+};
 use tui_game_core::world::EMPTY_PROP_ID;
 
-use super::{Editor, Mode, PaintLayer, SidebarHit};
+use super::{Editor, Mode, PaintLayer};
 
 pub(crate) fn trunc_visual(s: &str, max_cols: usize) -> String {
     if max_cols == 0 {
@@ -15,12 +19,9 @@ pub(crate) fn trunc_visual(s: &str, max_cols: usize) -> String {
 
 impl Editor {
     pub fn compose_sidebar(&mut self, fb: &mut FrameBuffer, help: Rect) {
-        let inner = Rect::new(
-            help.x.saturating_add(1),
-            help.y.saturating_add(1),
-            help.w.saturating_sub(2),
-            help.h.saturating_sub(2),
-        );
+        let palette = GameUiPalette::DEFAULT;
+        draw_rounded_panel(fb, help, "Editor", PanelBorderEmphasis::Subtle, &palette);
+        let inner = chrome_inner_rect(help);
         let wlim = inner.right().saturating_sub(inner.x) as usize;
         let mut y = inner.y;
         let row = |s: &str| trunc_visual(s, wlim);
@@ -94,7 +95,7 @@ impl Editor {
             inner,
             &mut y,
             "> Search / pick terrain…",
-            SidebarHit::OpenTerrainPicker,
+            EditorHitTarget::OpenTerrainPicker,
             false,
         );
         self.sidebar_hit_row(
@@ -102,7 +103,7 @@ impl Editor {
             inner,
             &mut y,
             "> Search / pick entity…",
-            SidebarHit::OpenEntityPicker,
+            EditorHitTarget::OpenEntityPicker,
             false,
         );
         Self::sidebar_plain(fb, inner, &mut y, "");
@@ -119,7 +120,7 @@ impl Editor {
                     ' '
                 }
             ),
-            SidebarHit::ModePaint,
+            EditorHitTarget::ModePaint,
             self.mode == Mode::PaintTiles,
         );
         self.sidebar_hit_row(
@@ -134,7 +135,7 @@ impl Editor {
                     ' '
                 }
             ),
-            SidebarHit::ModePlace,
+            EditorHitTarget::ModePlace,
             self.mode == Mode::PlaceSpawns,
         );
         self.sidebar_hit_row(
@@ -149,7 +150,7 @@ impl Editor {
                     ' '
                 }
             ),
-            SidebarHit::ModeErase,
+            EditorHitTarget::ModeErase,
             self.mode == Mode::EraseSpawns,
         );
         self.sidebar_hit_row(
@@ -164,7 +165,7 @@ impl Editor {
                     ' '
                 }
             ),
-            SidebarHit::ModePlayer,
+            EditorHitTarget::ModePlayer,
             self.mode == Mode::SetPlayerSpawn,
         );
         self.sidebar_hit_row(
@@ -179,7 +180,7 @@ impl Editor {
                     ' '
                 }
             ),
-            SidebarHit::ModeAtmos,
+            EditorHitTarget::ModeAtmos,
             self.mode == Mode::AtmosphereZones,
         );
         Self::sidebar_plain(fb, inner, &mut y, "");
@@ -196,7 +197,7 @@ impl Editor {
                     ' '
                 }
             ),
-            SidebarHit::LayerGround,
+            EditorHitTarget::LayerGround,
             self.mode == Mode::PaintTiles && self.paint_layer == PaintLayer::Ground,
         );
         self.sidebar_hit_row(
@@ -211,7 +212,7 @@ impl Editor {
                     ' '
                 }
             ),
-            SidebarHit::LayerProp,
+            EditorHitTarget::LayerProp,
             self.mode == Mode::PaintTiles && self.paint_layer == PaintLayer::Prop,
         );
         if self.mode == Mode::PaintTiles && self.paint_layer == PaintLayer::Prop {
@@ -253,10 +254,11 @@ impl Editor {
         if *y >= inner.bottom() {
             return;
         }
+        let palette = GameUiPalette::DEFAULT;
         let row_y = *y;
         let right = inner.right();
-        let preview_bg = Color::rgb(34, 30, 48);
-        let label_fg = Color::rgb(205, 200, 190);
+        let preview_bg = palette.panel_bg_soft;
+        let label_fg = palette.text;
         if let Some(d) = self.preview_terrain_def() {
             fb.set(
                 inner.x,
@@ -359,10 +361,11 @@ impl Editor {
         if *y >= inner.bottom() {
             return;
         }
+        let palette = GameUiPalette::DEFAULT;
         let row_y = *y;
         let right = inner.right();
-        let preview_bg = Color::rgb(34, 30, 48);
-        let label_fg = Color::rgb(205, 200, 190);
+        let preview_bg = palette.panel_bg_soft;
+        let label_fg = palette.text;
         if let Some(bp) = self.preview_entity_blueprint() {
             let gcol = bp.default_fg.to_render_color();
             fb.set(
@@ -429,20 +432,20 @@ impl Editor {
         inner: Rect,
         y: &mut u16,
         text: &str,
-        hit: SidebarHit,
+        hit: EditorHitTarget,
         accent: bool,
     ) {
         if *y >= inner.bottom() {
             return;
         }
+        let palette = GameUiPalette::DEFAULT;
         let row_y = *y;
         let right = inner.right();
-        let bg = if accent {
-            Color::rgb(40, 36, 55)
+        let (fg, bg) = if accent {
+            (palette.selected_fg, palette.selected_bg)
         } else {
-            Color::rgb(18, 16, 22)
+            (palette.text, palette.panel_bg)
         };
-        let fg = Color::rgb(210, 205, 195);
         let mut x = inner.x;
         for ch in text.chars() {
             if x >= right {
@@ -455,14 +458,20 @@ impl Editor {
                     ch,
                     fg,
                     bg,
-                    style: Style::default(),
+                    style: Style {
+                        bold: accent,
+                        dim: false,
+                        underline: false,
+                    },
                 },
             );
             x = x.saturating_add(1);
         }
         let row_w = inner.w.min(right.saturating_sub(inner.x));
-        self.sidebar_hits
-            .push((hit, Rect::new(inner.x, row_y, row_w, 1)));
+        self.ui_hits.push(
+            UiHitTarget::Editor(hit),
+            Rect::new(inner.x, row_y, row_w, 1),
+        );
         *y = y.saturating_add(1);
     }
 
@@ -470,10 +479,11 @@ impl Editor {
         if *y >= inner.bottom() {
             return;
         }
+        let palette = GameUiPalette::DEFAULT;
         let row_y = *y;
         let right = inner.right();
-        let bg = Color::rgb(18, 16, 22);
-        let meta_fg = Color::rgb(175, 170, 160);
+        let bg = palette.panel_bg;
+        let meta_fg = palette.text_dim;
         let mark_fg = Color::rgb(120, 220, 255);
         let mut x = inner.x;
         let mut put = |ch: char, fg: Color| -> bool {
@@ -501,10 +511,10 @@ impl Editor {
             let _ = put(ch, meta_fg);
         }
         let row_w = inner.w.min(right.saturating_sub(inner.x));
-        self.sidebar_hits.push((
-            SidebarHit::PlayerSpawnRow,
+        self.ui_hits.push(
+            UiHitTarget::Editor(EditorHitTarget::PlayerSpawnRow),
             Rect::new(inner.x, row_y, row_w, 1),
-        ));
+        );
         *y = y.saturating_add(1);
     }
 
@@ -512,10 +522,11 @@ impl Editor {
         if *y >= inner.bottom() {
             return;
         }
+        let palette = GameUiPalette::DEFAULT;
         let row_y = *y;
         let right = inner.right();
-        let bg = Color::rgb(18, 16, 22);
-        let meta_fg = Color::rgb(175, 170, 160);
+        let bg = palette.panel_bg;
+        let meta_fg = palette.text_dim;
         let mark = Color::rgb(200, 160, 120);
         let sel = self.current_tile == EMPTY_PROP_ID;
         let mut x = inner.x;
@@ -544,10 +555,10 @@ impl Editor {
             let _ = put(ch, meta_fg);
         }
         let row_w = inner.w.min(right.saturating_sub(inner.x));
-        self.sidebar_hits.push((
-            SidebarHit::ClearPropOverlay,
+        self.ui_hits.push(
+            UiHitTarget::Editor(EditorHitTarget::ClearPropOverlay),
             Rect::new(inner.x, row_y, row_w, 1),
-        ));
+        );
         *y = y.saturating_add(1);
     }
 
@@ -555,8 +566,9 @@ impl Editor {
         if *y >= inner.bottom() {
             return;
         }
-        let fg = Color::rgb(210, 205, 195);
-        let bg = Color::rgb(18, 16, 22);
+        let palette = GameUiPalette::DEFAULT;
+        let fg = palette.text;
+        let bg = palette.panel_bg;
         let mut x = inner.x;
         for ch in text.chars() {
             if x >= inner.right() {

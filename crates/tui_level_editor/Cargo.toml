@@ -6,4 +6,5 @@ license.workspace = true
 
 [dependencies]
 tui_game_core = { path = "../tui_game_core" }
+tui_terminal = { path = "../tui_terminal" }
 crossterm = "0.28"

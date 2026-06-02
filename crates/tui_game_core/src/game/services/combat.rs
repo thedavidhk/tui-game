@@ -1,11 +1,11 @@
+use super::pacing;
+use crate::ai::combat::ChaseNearestPolicy;
+use crate::ai::{AiIntent, CombatAiCtx, CombatDecisionPolicy};
 use crate::combat::{
     CombatAction, CombatRuleset, CombatState, EncounterOutcomePolicy, EncounterProfile,
 };
 use crate::entity::EntityId;
 use crate::game::{Game, GameMode, Relation};
-use crate::ai::{AiIntent, CombatAiCtx, CombatDecisionPolicy};
-use crate::ai::combat::ChaseNearestPolicy;
-use super::pacing;
 
 pub fn detect_hostile_encounters(game: &mut Game) -> bool {
     let Some(pid) = game.player_id() else {
@@ -34,7 +34,7 @@ pub fn detect_hostile_encounters(game: &mut Game) -> bool {
         if !game.hostile_trigger_met(eid, trigger) {
             continue;
         }
-        
+
         if !matches!(game.modes.current(), Some(GameMode::Combat(_))) {
             start_combat_encounter(
                 game,
@@ -119,12 +119,12 @@ pub fn step_npc_combat_ai(game: &mut Game) {
         game.npc_combat_ai_tick_cooldown = game.npc_combat_ai_tick_cooldown.saturating_sub(1);
         return;
     }
-    
+
     let mut next = state;
-    
+
     let intent = if is_actively_hostile_to_player(game, actor) {
-         let ai = ChaseNearestPolicy;
-         ai.decide(
+        let ai = ChaseNearestPolicy;
+        ai.decide(
             actor,
             &CombatAiCtx {
                 state: &next,
@@ -162,8 +162,7 @@ pub fn step_npc_combat_ai(game: &mut Game) {
     };
     if report.applied && pace_after_success {
         let speed = game.entities.stats(actor).map_or(1, |stats| stats.speed);
-        game.npc_combat_ai_tick_cooldown =
-            pacing::visual_step_cooldown_ticks_from_speed(speed);
+        game.npc_combat_ai_tick_cooldown = pacing::visual_step_cooldown_ticks_from_speed(speed);
     }
     game.apply_combat_report(&next, report);
     if let Some(GameMode::Combat(cs)) = game.modes.current_mut() {
@@ -178,7 +177,12 @@ pub fn is_actively_hostile_to_player(game: &Game, actor: EntityId) -> bool {
     if !matches!(game.relation_to_player(actor), Relation::Hostile) {
         return false;
     }
-    let Some(kind) = game.entities.npc_kind.get(actor.0 as usize).and_then(|k| k.as_deref()) else {
+    let Some(kind) = game
+        .entities
+        .npc_kind
+        .get(actor.0 as usize)
+        .and_then(|k| k.as_deref())
+    else {
         return false;
     };
     let Some(bp) = game.content.blueprint(kind) else {
@@ -191,7 +195,12 @@ pub fn is_actively_hostile_to_player(game: &Game, actor: EntityId) -> bool {
 }
 
 fn decide_routine_intent(game: &mut Game, actor: EntityId, _state: &CombatState) -> AiIntent {
-    let Some(kind) = game.entities.npc_kind.get(actor.0 as usize).and_then(|k| k.as_deref()) else {
+    let Some(kind) = game
+        .entities
+        .npc_kind
+        .get(actor.0 as usize)
+        .and_then(|k| k.as_deref())
+    else {
         return AiIntent::Wait;
     };
     let Some(bp) = game.content.blueprint(kind) else {
@@ -200,7 +209,12 @@ fn decide_routine_intent(game: &mut Game, actor: EntityId, _state: &CombatState)
     let Some(from) = game.entities.pos(actor) else {
         return AiIntent::Wait;
     };
-    let mut brain = game.entities.npc_brain.get(actor.0 as usize).copied().unwrap_or_default();
+    let mut brain = game
+        .entities
+        .npc_brain
+        .get(actor.0 as usize)
+        .copied()
+        .unwrap_or_default();
     let routine = bp.behavior.routine;
     let next_step = crate::ai::exploration::next_exploration_step(
         actor,
@@ -214,7 +228,7 @@ fn decide_routine_intent(game: &mut Game, actor: EntityId, _state: &CombatState)
     if let Some(slot) = game.entities.npc_brain.get_mut(actor.0 as usize) {
         *slot = brain;
     }
-    
+
     if let Some(target) = next_step {
         AiIntent::Combat(CombatAction::Move { target })
     } else {
@@ -222,11 +236,15 @@ fn decide_routine_intent(game: &mut Game, actor: EntityId, _state: &CombatState)
     }
 }
 
-fn decide_investigation_intent(game: &mut Game, actor: EntityId, _state: &CombatState) -> Option<AiIntent> {
+fn decide_investigation_intent(
+    game: &mut Game,
+    actor: EntityId,
+    _state: &CombatState,
+) -> Option<AiIntent> {
     let brain = game.entities.npc_brain.get(actor.0 as usize)?;
     let goal = brain.investigation_goal?;
     let from = game.entities.pos(actor)?;
-    
+
     if from == goal {
         if let Some(brain_mut) = game.entities.npc_brain.get_mut(actor.0 as usize) {
             brain_mut.investigation_goal = None;
@@ -242,11 +260,12 @@ fn decide_investigation_intent(game: &mut Game, actor: EntityId, _state: &Combat
         Some(actor),
         true,
         u32::MAX,
-    ).ok()?;
-    
+    )
+    .ok()?;
+
     let waypoint = plan.path.get(1).copied()?;
     let next = crate::world::first_step_on_line(from, waypoint)?;
-    
+
     Some(AiIntent::Combat(CombatAction::Move { target: next }))
 }
 
@@ -263,22 +282,34 @@ pub fn toggle_turn_based(game: &mut Game) {
 }
 
 fn enter_turn_based_manual(game: &mut Game) {
-    let Some(pid) = game.player_id() else { return; };
-    let Some(ppos) = game.entities.pos(pid) else { return; };
-    
+    let Some(pid) = game.player_id() else {
+        return;
+    };
+    let Some(ppos) = game.entities.pos(pid) else {
+        return;
+    };
+
     let mut participants = vec![pid];
     for i in 0..game.entities.alive.len() {
-        if !game.entities.alive[i] { continue; }
+        if !game.entities.alive[i] {
+            continue;
+        }
         let eid = EntityId(i as u32);
-        if eid == pid { continue; }
-        if game.entities.npc_kind[i].is_none() { continue; }
-        let Some(epos) = game.entities.pos(eid) else { continue; };
+        if eid == pid {
+            continue;
+        }
+        if game.entities.npc_kind[i].is_none() {
+            continue;
+        }
+        let Some(epos) = game.entities.pos(eid) else {
+            continue;
+        };
         // FOW_RADIUS is 20
         if crate::game::services::hover::chebyshev(ppos, epos) <= 20 {
             participants.push(eid);
         }
     }
-    
+
     start_combat_encounter(
         game,
         participants,
@@ -293,11 +324,12 @@ fn enter_turn_based_manual(game: &mut Game) {
 fn exit_turn_based_manual(game: &mut Game, state: &CombatState) {
     for &id in &state.initiative {
         if is_actively_hostile_to_player(game, id) {
-            game.log.push("Cannot leave turn-based mode while hostiles are engaged!".into());
+            game.log
+                .push("Cannot leave turn-based mode while hostiles are engaged!".into());
             return;
         }
     }
-    
+
     game.log.push("Leaving turn-based mode.".into());
     finish_combat(game, state);
 }

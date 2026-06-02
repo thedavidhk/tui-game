@@ -136,6 +136,9 @@ mod tests {
         visible[3] = true;
         // Cell 4 is explored-not-visible but sits next to visible — smoothed l < 1.
         let l = smooth_fog_luminance(w, h, &explored, &visible, 4, 0);
-        assert!(l < 1.0 && l > 0.5, "expected between explored and visible, got {l}");
+        assert!(
+            l < 1.0 && l > 0.5,
+            "expected between explored and visible, got {l}"
+        );
     }
 }

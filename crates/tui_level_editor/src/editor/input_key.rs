@@ -3,7 +3,7 @@
 use tui_game_core::input::{Key, KeyChord};
 use tui_game_core::ui::{TextField, TextFilter};
 
-use super::{Editor, Dialog, Mode, MAX_BRUSH_SIZE};
+use super::{Dialog, Editor, Mode, MAX_BRUSH_SIZE};
 
 impl Editor {
     pub fn step_main_key(&mut self, chord: &KeyChord) {
@@ -38,7 +38,8 @@ impl Editor {
             } if self.mode == Mode::PaintTiles => {
                 self.brush_sparse_pct = 0;
                 self.status =
-                    "Prop brush: dense fill. , . sparse ±1%   Ctrl+wheel on map (prop layer)".into();
+                    "Prop brush: dense fill. , . sparse ±1%   Ctrl+wheel on map (prop layer)"
+                        .into();
             }
             KeyChord {
                 key: Key::Char(','),

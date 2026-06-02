@@ -25,10 +25,7 @@ pub(crate) fn two_column_relaxed(full_w: u16, full_h: u16) -> (Rect, Rect) {
         COLUMN_GAP,
         2,
     );
-    (
-        shift_rect_x(v[0], ix),
-        shift_rect_x(v[1], ix),
-    )
+    (shift_rect_x(v[0], ix), shift_rect_x(v[1], ix))
 }
 
 #[must_use]
@@ -44,10 +41,7 @@ pub(crate) fn two_column_tight(full_w: u16, full_h: u16) -> (Rect, Rect) {
         COLUMN_GAP,
         2,
     );
-    (
-        shift_rect_x(v[0], ix),
-        shift_rect_x(v[1], ix),
-    )
+    (shift_rect_x(v[0], ix), shift_rect_x(v[1], ix))
 }
 
 #[must_use]

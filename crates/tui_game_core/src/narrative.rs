@@ -96,9 +96,7 @@ impl NarrativeState {
         self.inventory
             .stacks
             .iter()
-            .find(|s| {
-                s.id == ammo_id && matches!(s.equipped, Some(StackEquipped::Quiver))
-            })
+            .find(|s| s.id == ammo_id && matches!(s.equipped, Some(StackEquipped::Quiver)))
             .map(|s| s.count)
             .unwrap_or(0)
     }
@@ -133,7 +131,9 @@ impl NarrativeState {
             self.inventory.consolidate_loose(&stack.id);
         } else {
             self.inventory.stacks[idx].count -= 1;
-            self.inventory.stacks.push(ItemStack::worn(stack.id.clone(), slot));
+            self.inventory
+                .stacks
+                .push(ItemStack::worn(stack.id.clone(), slot));
             self.inventory.consolidate_loose(&stack.id);
         }
     }

@@ -228,4 +228,3 @@ impl EntityArena {
         self.combat_stats.get_mut(id.0 as usize)
     }
 }
-

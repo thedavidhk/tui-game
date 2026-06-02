@@ -4,10 +4,11 @@ use std::path::PathBuf;
 
 use tui_game_core::input::{InputEvent, Key, KeyChord, MouseButton, MouseEventKind};
 use tui_game_core::rect::Rect;
-use tui_game_core::render::{Cell, Color, FrameBuffer, Style};
+use tui_game_core::render::FrameBuffer;
 use tui_game_core::ui::{
-    centered_rect, centered_rect_dims, draw_bordered_panel, draw_text_block, draw_text_field,
-    SearchListPicker, SearchListPickerHit, SearchListPickerOutput, TextFieldOutput,
+    centered_rect, chrome_inner_rect, draw_modal_world_scrim, draw_rounded_panel,
+    draw_text_block_theme, draw_text_field, EditorHitTarget, GameUiPalette, PanelBorderEmphasis,
+    SearchListPickerOutput, TextFieldOutput, UiHitTarget,
 };
 
 use super::{Dialog, Editor};
@@ -32,10 +33,7 @@ impl Editor {
                 }
                 return true;
             }
-            if matches!(
-                chord.key,
-                Key::Char('n') | Key::Char('N') | Key::Esc
-            ) {
+            if matches!(chord.key, Key::Char('n') | Key::Char('N') | Key::Esc) {
                 self.dialog = None;
                 self.refresh_disk_fingerprint();
                 self.status = "Kept in-memory edits; ignored this disk revision.".into();
@@ -103,49 +101,28 @@ impl Editor {
     }
 
     /// Returns `true` if the event was consumed by a modal (including ignored wheel on modal).
+    ///
+    /// Picker rows are picked from the shared [`tui_game_core::ui::UiHitState`] populated by the
+    /// previous frame's compose, the same path the game shell uses.
     pub fn handle_dialog_mouse(&mut self, ev: &InputEvent) -> bool {
-        let InputEvent::Mouse {
-            kind,
-            cell,
-            column,
-            ..
-        } = ev
-        else {
+        let InputEvent::Mouse { kind, cell, .. } = ev else {
             return false;
         };
-
-        let picker_list_vis = match self.dialog.as_ref() {
-            None => return false,
-            Some(Dialog::SavePath { .. } | Dialog::HotReloadUnsaved) => return true,
-            Some(Dialog::PickTerrain { picker }) => picker.list_visible,
-            Some(Dialog::PickEntity { picker }) => picker.list_visible,
-        };
-
-        let h = dialog_picker_panel_height(picker_list_vis);
-        let r = centered_rect_dims(self.viewport_w, self.viewport_h, 72, h);
-        if !r.contains(*column, cell.y) {
-            return true;
+        if self.dialog.is_none() {
+            return false;
         }
-        if matches!(
-            kind,
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-        ) {
-            return true;
-        }
-        let hit = SearchListPicker::hit(r, *column, cell.y, picker_list_vis);
+        // A modal swallows all pointer input; only a left-click on a picker row does anything.
         if let MouseEventKind::Down(MouseButton::Left) = kind {
-            if let SearchListPickerHit::ListRow(row) = hit {
+            if let Some(UiHitTarget::Editor(EditorHitTarget::PickerRow(idx))) =
+                self.ui_hits.pick(*cell)
+            {
                 let is_terrain = matches!(self.dialog, Some(Dialog::PickTerrain { .. }));
-                let picked = if let Some(d) = self.dialog.as_mut() {
-                    match d {
-                        Dialog::PickTerrain { picker } | Dialog::PickEntity { picker } => {
-                            picker.move_cursor_to_visible_row(row);
-                            picker.pick_visible_row(row)
-                        }
-                        _ => None,
+                let picked = match self.dialog.as_mut() {
+                    Some(Dialog::PickTerrain { picker } | Dialog::PickEntity { picker }) => {
+                        picker.set_cursor(idx);
+                        picker.pick_filtered_row(idx)
                     }
-                } else {
-                    None
+                    _ => None,
                 };
                 if let Some(id) = picked {
                     if is_terrain {
@@ -160,71 +137,79 @@ impl Editor {
         true
     }
 
-    pub fn draw_dialog_layer(&self, fb: &mut FrameBuffer, d: &Dialog) {
-        match d {
-            Dialog::SavePath { field } => {
-                let dim = Cell {
-                    ch: ' ',
-                    fg: Color::rgb(100, 100, 110),
-                    bg: Color::rgb(8, 8, 12),
-                    style: Style {
-                        bold: false,
-                        dim: true,
-                        underline: false,
-                    },
-                };
-                fb.fill_rect(Rect::new(0, 0, fb.width, fb.height), dim);
+    pub fn draw_dialog_layer(&mut self, fb: &mut FrameBuffer) {
+        let palette = GameUiPalette::DEFAULT;
+        let screen = Rect::new(0, 0, fb.width, fb.height);
+        let last_mouse = self.last_mouse_cell;
+        match &self.dialog {
+            None => {}
+            Some(Dialog::SavePath { field }) => {
+                draw_modal_world_scrim(fb, screen, &palette);
                 let r = centered_rect(fb, 64, 7);
-                draw_bordered_panel(fb, r, " Save as ");
-                let iy = r.y + 2;
+                draw_rounded_panel(fb, r, "Save as", PanelBorderEmphasis::Highlighted, &palette);
+                let inner = chrome_inner_rect(r);
                 draw_text_field(
                     fb,
-                    r.x + 2,
-                    iy,
-                    r.w.saturating_sub(6),
+                    inner.x,
+                    inner.y.saturating_add(1),
+                    inner.w.saturating_sub(6),
                     "Path: ",
                     field,
                     true,
+                    &palette,
                 );
-                let hint = Rect::new(r.x + 2, iy + 2, r.w.saturating_sub(4), 2);
-                draw_text_block(
+                draw_text_block_theme(
                     fb,
-                    hint,
+                    Rect::new(inner.x, inner.y.saturating_add(3), inner.w, 2),
                     &[String::from(
                         "Enter: save & close   Esc: cancel   (.ron added if no extension)",
                     )],
+                    &palette,
                 );
             }
-            Dialog::PickTerrain { picker } => {
-                let h = dialog_picker_panel_height(picker.list_visible);
-                let r = centered_rect(fb, 72, h);
-                draw_bordered_panel(fb, r, " Pick terrain ");
-                picker.draw(fb, r);
-            }
-            Dialog::PickEntity { picker } => {
-                let h = dialog_picker_panel_height(picker.list_visible);
-                let r = centered_rect(fb, 72, h);
-                draw_bordered_panel(fb, r, " Pick entity ");
-                picker.draw(fb, r);
-            }
-            Dialog::HotReloadUnsaved => {
-                let dim = Cell {
-                    ch: ' ',
-                    fg: Color::rgb(100, 100, 110),
-                    bg: Color::rgb(8, 8, 12),
-                    style: Style {
-                        bold: false,
-                        dim: true,
-                        underline: false,
-                    },
-                };
-                fb.fill_rect(Rect::new(0, 0, fb.width, fb.height), dim);
-                let r = centered_rect(fb, 72, 10);
-                draw_bordered_panel(fb, r, " File changed on disk ");
-                let body = Rect::new(r.x + 2, r.y + 2, r.w.saturating_sub(4), r.h.saturating_sub(4));
-                draw_text_block(
+            Some(Dialog::PickTerrain { picker }) => {
+                draw_modal_world_scrim(fb, screen, &palette);
+                let r = centered_rect(fb, 72, dialog_picker_panel_height(picker.list_visible));
+                draw_rounded_panel(
                     fb,
-                    body,
+                    r,
+                    "Pick terrain",
+                    PanelBorderEmphasis::Highlighted,
+                    &palette,
+                );
+                picker.draw(fb, r, &palette, last_mouse, &mut self.ui_hits);
+            }
+            Some(Dialog::PickEntity { picker }) => {
+                draw_modal_world_scrim(fb, screen, &palette);
+                let r = centered_rect(fb, 72, dialog_picker_panel_height(picker.list_visible));
+                draw_rounded_panel(
+                    fb,
+                    r,
+                    "Pick entity",
+                    PanelBorderEmphasis::Highlighted,
+                    &palette,
+                );
+                picker.draw(fb, r, &palette, last_mouse, &mut self.ui_hits);
+            }
+            Some(Dialog::HotReloadUnsaved) => {
+                draw_modal_world_scrim(fb, screen, &palette);
+                let r = centered_rect(fb, 72, 10);
+                draw_rounded_panel(
+                    fb,
+                    r,
+                    "File changed on disk",
+                    PanelBorderEmphasis::Highlighted,
+                    &palette,
+                );
+                let inner = chrome_inner_rect(r);
+                draw_text_block_theme(
+                    fb,
+                    Rect::new(
+                        inner.x,
+                        inner.y.saturating_add(1),
+                        inner.w,
+                        inner.h.saturating_sub(1),
+                    ),
                     &[
                         "The .ron file was modified outside this editor.".into(),
                         "You have unsaved changes here.".into(),
@@ -232,6 +217,7 @@ impl Editor {
                         "Y — reload from disk (discard local edits)".into(),
                         "N / Esc — keep editing; ignore this revision".into(),
                     ],
+                    &palette,
                 );
             }
         }
@@ -240,8 +226,6 @@ impl Editor {
 
 fn dialog_picker_panel_height(list_visible: usize) -> u16 {
     // Bordered panel: query row + list + two hint lines + title row inside border.
-    let inner = 3_u16
-        .saturating_add(list_visible as u16)
-        .saturating_add(2);
+    let inner = 3_u16.saturating_add(list_visible as u16).saturating_add(2);
     inner.saturating_add(2).max(8)
 }

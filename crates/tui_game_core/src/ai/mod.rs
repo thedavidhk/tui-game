@@ -24,12 +24,25 @@ pub trait CombatDecisionPolicy {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NpcTask {
     Idle,
-    Investigate { target: crate::entity::GridPos },
-    DefendArea { center: crate::entity::GridPos, radius: u16 },
-    Flee { from: EntityId },
-    SeekHelp { from: EntityId },
-    YieldTo { target: EntityId },
-    Engage { target: EntityId },
+    Investigate {
+        target: crate::entity::GridPos,
+    },
+    DefendArea {
+        center: crate::entity::GridPos,
+        radius: u16,
+    },
+    Flee {
+        from: EntityId,
+    },
+    SeekHelp {
+        from: EntityId,
+    },
+    YieldTo {
+        target: EntityId,
+    },
+    Engage {
+        target: EntityId,
+    },
 }
 
 pub trait NpcTaskPlanner {

@@ -212,9 +212,7 @@ impl MapGrid {
     }
 
     pub fn blocks_movement(&self, x: i32, y: i32) -> bool {
-        let g = self
-            .ground_at(x, y)
-            .and_then(|id| self.table.def(id));
+        let g = self.ground_at(x, y).and_then(|id| self.table.def(id));
         let p = self
             .prop_at(x, y)
             .filter(|&id| id != EMPTY_PROP_ID)
@@ -223,15 +221,12 @@ impl MapGrid {
     }
 
     pub fn blocks_sight(&self, x: i32, y: i32) -> bool {
-        let g = self
-            .ground_at(x, y)
-            .and_then(|id| self.table.def(id));
+        let g = self.ground_at(x, y).and_then(|id| self.table.def(id));
         let p = self
             .prop_at(x, y)
             .filter(|&id| id != EMPTY_PROP_ID)
             .and_then(|id| self.table.def(id));
-        g.map(|d| d.blocks_sight).unwrap_or(true)
-            || p.is_some_and(|d| d.blocks_sight)
+        g.map(|d| d.blocks_sight).unwrap_or(true) || p.is_some_and(|d| d.blocks_sight)
     }
 
     /// Composed terrain glyph and colors (animated layers resolved).
@@ -251,9 +246,7 @@ impl MapGrid {
         };
         let g_tid = self.ground_at(wx, wy).unwrap_or(0);
         let ground_cell = match self.table.def(g_tid) {
-            Some(d) if def_is_animated(d) => {
-                resolve_animated(d, wx, wy, surface_tick, visual_seed)
-            }
+            Some(d) if def_is_animated(d) => resolve_animated(d, wx, wy, surface_tick, visual_seed),
             Some(_) => bake_tile_display(gv, wx, wy, visual_seed),
             None => TileDisplayCell {
                 ch: '?',
@@ -272,9 +265,7 @@ impl MapGrid {
             height: self.height,
         };
         let prop_cell = match self.table.def(p_tid) {
-            Some(d) if def_is_animated(d) => {
-                resolve_animated(d, wx, wy, surface_tick, visual_seed)
-            }
+            Some(d) if def_is_animated(d) => resolve_animated(d, wx, wy, surface_tick, visual_seed),
             Some(_) => bake_tile_display(pv, wx, wy, visual_seed),
             None => return ground_cell,
         };

@@ -63,7 +63,7 @@ pub fn wrap_words(text: &str, line_w: usize) -> Vec<String> {
     for w in text.split_whitespace() {
         if cur.is_empty() {
             cur.push_str(w);
-        } else if cur.len() + 1 + w.len() <= line_w {
+        } else if cur.chars().count() + 1 + w.chars().count() <= line_w {
             cur.push(' ');
             cur.push_str(w);
         } else {
@@ -85,7 +85,16 @@ pub fn wrap_words(text: &str, line_w: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_panel_lines;
+    use super::{wrap_panel_lines, wrap_words};
+
+    #[test]
+    fn wrap_words_counts_characters_not_bytes() {
+        // Cyrillic words are 2 bytes/char; byte-based width would wrap too early.
+        let out = wrap_words("ыыы ыыы", 7);
+        assert_eq!(out, vec!["ыыы ыыы".to_string()]);
+        let out = wrap_words("ыыы ыыы", 6);
+        assert_eq!(out, vec!["ыыы".to_string(), "ыыы".to_string()]);
+    }
 
     #[test]
     fn wrap_panel_preserves_blank_rows() {
@@ -117,9 +126,6 @@ mod tests {
     fn wrap_panel_hard_breaks_single_long_token() {
         let lines = vec!["abcdefghijklmnop".into()];
         let out = wrap_panel_lines(&lines, 8);
-        assert_eq!(
-            out,
-            vec!["abcdefgh".to_string(), "ijklmnop".to_string(),]
-        );
+        assert_eq!(out, vec!["abcdefgh".to_string(), "ijklmnop".to_string(),]);
     }
 }

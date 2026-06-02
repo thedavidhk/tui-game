@@ -19,7 +19,9 @@ impl Editor {
         spawn.fg_override.unwrap_or_else(|| {
             self.content
                 .blueprint(spawn.kind.as_str())
-                .map_or(Color::rgb(255, 160, 80), |bp| bp.default_fg.to_render_color())
+                .map_or(Color::rgb(255, 160, 80), |bp| {
+                    bp.default_fg.to_render_color()
+                })
         })
     }
 

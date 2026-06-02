@@ -1,5 +1,6 @@
 mod ansi;
 mod buffer;
+pub(crate) mod effects;
 mod stats;
 
 pub use ansi::{encode_frame_delta, encode_frame_full};

@@ -28,11 +28,10 @@ impl FileFingerprint {
     pub fn from_path(path: &Path) -> Option<Self> {
         let m = fs::metadata(path).ok()?;
         let len = m.len();
-        let modified_ns = m.modified().ok().and_then(|st| {
-            st.duration_since(UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_nanos())
-        });
+        let modified_ns = m
+            .modified()
+            .ok()
+            .and_then(|st| st.duration_since(UNIX_EPOCH).ok().map(|d| d.as_nanos()));
         Some(Self { len, modified_ns })
     }
 }
@@ -87,7 +86,8 @@ impl Editor {
             return;
         };
         let pack_fp = Self::pack_fingerprint_for_path(&self.path, &self.level);
-        if level_fp == self.last_level_disk_fingerprint && pack_fp == self.last_pack_disk_fingerprint
+        if level_fp == self.last_level_disk_fingerprint
+            && pack_fp == self.last_pack_disk_fingerprint
         {
             return;
         }

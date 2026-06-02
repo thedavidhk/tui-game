@@ -13,7 +13,7 @@ impl Editor {
         self.viewport_h = fb.height;
         self.clamp_editor_view();
         self.surface_tick = self.surface_tick.wrapping_add(1);
-        self.sidebar_hits.clear();
+        self.ui_hits.clear();
 
         let fg = Color::rgb(210, 210, 200);
         let bg = Color::rgb(12, 12, 18);
@@ -63,18 +63,14 @@ impl Editor {
                 let wi = self.level.width as usize;
                 let idx = ty as usize * wi + tx as usize;
                 let (ch, tile_fg) = if let Some(ref map) = self.level_map {
-                    let c = map.composed_terrain_cell(tx, ty, self.surface_tick, self.map_visual_seed);
+                    let c =
+                        map.composed_terrain_cell(tx, ty, self.surface_tick, self.map_visual_seed);
                     (c.ch, c.fg)
                 } else {
                     ('?', Color::rgb(200, 190, 170))
                 };
-                let fog_baked = self
-                    .atmosphere_bake
-                    .get(idx)
-                    .copied()
-                    .unwrap_or_default();
-                let (_, tile_bg) =
-                    compose_map_tile_discrete(fog_baked, MapTileFog::Visible);
+                let fog_baked = self.atmosphere_bake.get(idx).copied().unwrap_or_default();
+                let (_, tile_bg) = compose_map_tile_discrete(fog_baked, MapTileFog::Visible);
                 let mut c = Cell {
                     ch,
                     fg: tile_fg,
@@ -153,11 +149,7 @@ impl Editor {
                 && (s.x as u16) < self.level.width
                 && (s.y as u16) < self.level.height
             {
-                if s.x < vo_x
-                    || s.y < vo_y
-                    || s.x >= vo_x + vw as i32
-                    || s.y >= vo_y + vh as i32
-                {
+                if s.x < vo_x || s.y < vo_y || s.x >= vo_x + vw as i32 || s.y >= vo_y + vh as i32 {
                     continue;
                 }
                 let mut spawn_bg = bg;
@@ -194,37 +186,37 @@ impl Editor {
                 && (ps.x as u16) < self.level.width
                 && (ps.y as u16) < self.level.height
                 && ps.x >= vo_x
-                    && ps.y >= vo_y
-                    && ps.x < vo_x + vw as i32
-                    && ps.y < vo_y + vh as i32
-                {
-                    let px = ox.saturating_add((ps.x - vo_x) as u16);
-                    let py = oy.saturating_add((ps.y - vo_y) as u16);
-                    let mut spawn_bg = bg;
-                    if !self.dialog_covers_map() && self.mode == Mode::SetPlayerSpawn {
-                        if let Some((hx, hy)) = self.hover_map_cell {
-                            if ps.x == hx && ps.y == hy {
-                                spawn_bg = spawn_bg.lighten(20);
-                            }
+                && ps.y >= vo_y
+                && ps.x < vo_x + vw as i32
+                && ps.y < vo_y + vh as i32
+            {
+                let px = ox.saturating_add((ps.x - vo_x) as u16);
+                let py = oy.saturating_add((ps.y - vo_y) as u16);
+                let mut spawn_bg = bg;
+                if !self.dialog_covers_map() && self.mode == Mode::SetPlayerSpawn {
+                    if let Some((hx, hy)) = self.hover_map_cell {
+                        if ps.x == hx && ps.y == hy {
+                            spawn_bg = spawn_bg.lighten(20);
                         }
                     }
-                    let c = Cell {
-                        ch: '@',
-                        fg: Color::rgb(120, 220, 255),
-                        bg: spawn_bg,
-                        style: Style {
-                            bold: true,
-                            dim: false,
-                            underline: false,
-                        },
-                    };
-                    fb.set(px, py, c);
                 }
+                let c = Cell {
+                    ch: '@',
+                    fg: Color::rgb(120, 220, 255),
+                    bg: spawn_bg,
+                    style: Style {
+                        bold: true,
+                        dim: false,
+                        underline: false,
+                    },
+                };
+                fb.set(px, py, c);
+            }
         }
         self.compose_sidebar(fb, self.sidebar_rect());
 
-        if let Some(ref d) = self.dialog {
-            self.draw_dialog_layer(fb, d);
+        if self.dialog.is_some() {
+            self.draw_dialog_layer(fb);
         }
     }
 }

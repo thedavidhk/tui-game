@@ -16,7 +16,9 @@ impl CombatDecisionPolicy for ChaseNearestPolicy {
             if *target == actor {
                 continue;
             }
-            if !ctx.entities.is_alive(*target) || ctx.entities.stats(*target).is_none_or(|s| s.hp == 0) {
+            if !ctx.entities.is_alive(*target)
+                || ctx.entities.stats(*target).is_none_or(|s| s.hp == 0)
+            {
                 continue;
             }
             let Some(p) = ctx.entities.pos(*target) else {

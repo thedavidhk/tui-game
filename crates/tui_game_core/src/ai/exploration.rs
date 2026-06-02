@@ -56,7 +56,11 @@ fn pick_roam_goal(
         if !map.in_bounds(candidate.x, candidate.y) {
             continue;
         }
-        if !entities.can_move_to(map.blocks_movement(candidate.x, candidate.y), candidate, Some(actor)) {
+        if !entities.can_move_to(
+            map.blocks_movement(candidate.x, candidate.y),
+            candidate,
+            Some(actor),
+        ) {
             continue;
         }
         return Some(candidate);
@@ -118,7 +122,8 @@ pub fn next_exploration_step(
                     return None;
                 }
                 state.patrol_wait_ticks = 0;
-                state.patrol_next_stop = ((state.patrol_next_stop as usize + 1) % stops.len()) as u16;
+                state.patrol_next_stop =
+                    ((state.patrol_next_stop as usize + 1) % stops.len()) as u16;
                 goal = patrol_goal(state, stops)?;
             }
             step_toward(actor, from, goal, map, entities)

@@ -1,8 +1,9 @@
 //! Single-line text input for TUI panels (no terminal I/O).
 
 use crate::input::{Key, KeyChord};
-use crate::rect::Rect;
-use crate::render::{Cell, Color, FrameBuffer, Style};
+use crate::render::{Cell, FrameBuffer, Style};
+
+use super::theme::GameUiPalette;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextFilter {
@@ -133,7 +134,11 @@ impl TextField {
     }
 }
 
-/// Draw `label` then an input area of width `field_w` with inverted cursor cell.
+/// Draw `label` then an input area of width `field_w` with an inverted cursor cell, using
+/// [`GameUiPalette`] chrome colors.
+// A drawing primitive: position, width, label, state, focus, and palette are all independent
+// inputs; bundling them into a struct would not make call sites clearer.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_text_field(
     fb: &mut FrameBuffer,
     origin_x: u16,
@@ -142,15 +147,13 @@ pub fn draw_text_field(
     label: &str,
     field: &TextField,
     active: bool,
+    palette: &GameUiPalette,
 ) {
-    let fg_label = Color::rgb(160, 155, 145);
     let fg = if active {
-        Color::rgb(255, 250, 230)
+        palette.selected_fg
     } else {
-        Color::rgb(200, 195, 185)
+        palette.text
     };
-    let bg_field = Color::rgb(14, 12, 20);
-    let bg_cursor = Color::rgb(80, 70, 120);
     let mut x = origin_x;
     for ch in label.chars() {
         if x >= fb.width {
@@ -161,8 +164,8 @@ pub fn draw_text_field(
             origin_y,
             Cell {
                 ch,
-                fg: fg_label,
-                bg: Color::rgb(22, 20, 28),
+                fg: palette.text_dim,
+                bg: palette.panel_bg,
                 style: Style::default(),
             },
         );
@@ -180,29 +183,16 @@ pub fn draw_text_field(
             origin_y,
             Cell {
                 ch,
-                fg: if at_cursor {
-                    Color::rgb(255, 255, 255)
+                // Block cursor: inverse video against the field background.
+                fg: if at_cursor { palette.panel_bg } else { fg },
+                bg: if at_cursor {
+                    palette.selected_fg
                 } else {
-                    fg
+                    palette.panel_bg_soft
                 },
-                bg: if at_cursor { bg_cursor } else { bg_field },
                 style: Style::default(),
             },
         );
         x = x.saturating_add(1);
     }
-}
-
-/// Centered rectangle within a `screen_w` × `screen_h` cell grid (clipped).
-pub fn centered_rect_dims(screen_w: u16, screen_h: u16, w: u16, h: u16) -> Rect {
-    let w = w.min(screen_w);
-    let h = h.min(screen_h);
-    let x = screen_w.saturating_sub(w) / 2;
-    let y = screen_h.saturating_sub(h) / 2;
-    Rect::new(x, y, w, h)
-}
-
-/// Centered modal panel rect (clipped to framebuffer).
-pub fn centered_rect(fb: &FrameBuffer, w: u16, h: u16) -> Rect {
-    centered_rect_dims(fb.width, fb.height, w, h)
 }

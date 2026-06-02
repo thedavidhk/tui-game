@@ -15,7 +15,8 @@ pub(crate) use macros::{dialogue_tree, effects, quest_defs, requires};
 /// Default serialized level body: `assets/levels/demo_level.ron` (references terrain pack).
 const EMBEDDED_DEMO_LEVEL_RON: &str = include_str!("../../../../assets/levels/demo_level.ron");
 /// Default terrain definitions: `assets/terrains/demo_terrain_pack.ron`.
-const EMBEDDED_DEMO_TERRAIN_PACK_RON: &str = include_str!("../../../../assets/terrains/demo_terrain_pack.ron");
+const EMBEDDED_DEMO_TERRAIN_PACK_RON: &str =
+    include_str!("../../../../assets/terrains/demo_terrain_pack.ron");
 
 /// Parsed embedded demo level with inline `tile_defs` (pack merged at compile time; `terrain_pack` cleared).
 #[must_use]
@@ -36,7 +37,8 @@ struct GameContentRuntimeHooks;
 
 impl ContentRuntimeHooks for GameContentRuntimeHooks {
     fn resolve_dialogue_text(&self, node: &DialogueNode, narrative: &NarrativeState) -> String {
-        node.text_fn.map_or_else(|| node.text.to_string(), |f| f(narrative))
+        node.text_fn
+            .map_or_else(|| node.text.to_string(), |f| f(narrative))
     }
 
     fn dialogue_start_node(

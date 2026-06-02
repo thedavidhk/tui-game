@@ -16,6 +16,27 @@ pub enum UiHitTarget {
     TransferPlayerStack(usize),
     /// Container column in the transfer overlay.
     TransferContainerStack(usize),
+    /// Level-editor control or modal-picker row (see [`EditorHitTarget`]).
+    Editor(EditorHitTarget),
+}
+
+/// Clickable controls in the level editor: sidebar rows and modal picker list rows. Lives in the
+/// shared UI registry so the editor uses the same [`UiHitState`] pick path as the game shell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EditorHitTarget {
+    ClearPropOverlay,
+    OpenTerrainPicker,
+    OpenEntityPicker,
+    LayerGround,
+    LayerProp,
+    ModePaint,
+    ModePlace,
+    ModeErase,
+    ModePlayer,
+    ModeAtmos,
+    PlayerSpawnRow,
+    /// Visible row index within the active modal picker's list window.
+    PickerRow(usize),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

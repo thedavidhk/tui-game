@@ -32,7 +32,10 @@ pub fn on_item_picked(
     if item_id != "health_tonic" {
         return Ok(());
     }
-    if !narrative.quest_status_is(quests::QUEST_HEALER_DELIVERY, QuestJournalStatus::InProgress) {
+    if !narrative.quest_status_is(
+        quests::QUEST_HEALER_DELIVERY,
+        QuestJournalStatus::InProgress,
+    ) {
         return Ok(());
     }
     narrative.apply_effects(

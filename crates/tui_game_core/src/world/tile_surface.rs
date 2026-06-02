@@ -56,10 +56,7 @@ pub fn hash_cell(visual_seed: u64, wx: i32, wy: i32, tag: u32) -> u64 {
     let a = wx as u64;
     let b = wy as u64;
     mix64(
-        visual_seed
-            ^ a.wrapping_mul(0x9E3779B185EBCA87)
-            ^ b.rotate_left(17)
-            ^ ((tag as u64) << 32),
+        visual_seed ^ a.wrapping_mul(0x9E3779B185EBCA87) ^ b.rotate_left(17) ^ ((tag as u64) << 32),
     )
 }
 
@@ -185,7 +182,12 @@ fn connector_glyph(glyphs: &[char], mask: usize, fallback: char) -> char {
 
 /// Bake static appearance for one cell (not used for animated tiles except placeholder).
 #[must_use]
-pub fn bake_tile_display(v: TileBakeView<'_>, wx: i32, wy: i32, visual_seed: u64) -> TileDisplayCell {
+pub fn bake_tile_display(
+    v: TileBakeView<'_>,
+    wx: i32,
+    wy: i32,
+    visual_seed: u64,
+) -> TileDisplayCell {
     let tid = v.tile_at(wx, wy).unwrap_or(0);
     let Some(def) = v.table.def(tid) else {
         return TileDisplayCell {
@@ -201,10 +203,9 @@ pub fn bake_tile_display(v: TileBakeView<'_>, wx: i32, wy: i32, visual_seed: u64
         None => cell_from_def(def.glyph, def.fg, def),
         Some(TileSurface::StaticVariants { entries }) => {
             let h = hash_cell(visual_seed, wx, wy, tid as u32);
-            pick_weighted(entries, h).map_or(
-                cell_from_def(def.glyph, def.fg, def),
-                |(ch, fg)| cell_from_def(ch, fg, def),
-            )
+            pick_weighted(entries, h).map_or(cell_from_def(def.glyph, def.fg, def), |(ch, fg)| {
+                cell_from_def(ch, fg, def)
+            })
         }
         Some(TileSurface::Connector(conn)) => {
             let mask = neighbor_link_mask(v, wx, wy) as usize;
@@ -348,7 +349,7 @@ mod tests {
         let b = bake_tile_display(v, 0, 0, 12345);
         let c = bake_tile_display(v, 1, 0, 12345);
         assert_eq!(a, b);
-        assert_ne!(a.ch, '?' );
+        assert_ne!(a.ch, '?');
         // Different coords often differ (not strictly required).
         let _ = c;
     }

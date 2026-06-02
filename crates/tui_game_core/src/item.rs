@@ -196,9 +196,11 @@ impl Inventory {
             return;
         }
         let id = id.into();
-        if let Some(s) = self.stacks.iter_mut().find(|s| {
-            s.id == id && matches!(s.equipped, Some(StackEquipped::Quiver))
-        }) {
+        if let Some(s) = self
+            .stacks
+            .iter_mut()
+            .find(|s| s.id == id && matches!(s.equipped, Some(StackEquipped::Quiver)))
+        {
             s.count = s.count.saturating_add(n);
             return;
         }
@@ -320,9 +322,11 @@ impl Inventory {
     pub fn absorb_stack(&mut self, stack: ItemStack) {
         match stack.equipped {
             Some(StackEquipped::Quiver) => {
-                if let Some(s) = self.stacks.iter_mut().find(|t| {
-                    t.id == stack.id && matches!(t.equipped, Some(StackEquipped::Quiver))
-                }) {
+                if let Some(s) = self
+                    .stacks
+                    .iter_mut()
+                    .find(|t| t.id == stack.id && matches!(t.equipped, Some(StackEquipped::Quiver)))
+                {
                     s.count = s.count.saturating_add(stack.count);
                     return;
                 }

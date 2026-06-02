@@ -1,6 +1,6 @@
 use crate::combat::{CombatAction, CombatState};
-use crate::game::{Game, GameCommand, GameInput, GameMode};
 use crate::game::services::hover;
+use crate::game::{Game, GameCommand, GameInput, GameMode};
 use crate::input::{InputEvent, MouseButton, MouseEventKind};
 use crate::ui::layout::GameShellLayout;
 
@@ -12,11 +12,7 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput, state: CombatState) {
         GameInput::Command(GameCommand::ToggleDebug) => {
             game.debug_overlay = !game.debug_overlay;
         }
-        GameInput::Raw(InputEvent::Mouse {
-            kind,
-            cell,
-            ..
-        }) => {
+        GameInput::Raw(InputEvent::Mouse { kind, cell, .. }) => {
             hover::sync_combat_hover(game, cell, world_r);
             match kind {
                 MouseEventKind::Down(MouseButton::Left) => {

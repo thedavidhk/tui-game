@@ -163,10 +163,7 @@ pub fn resolve_atmosphere_cell(
 }
 
 #[inline]
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn lerp_color_f32(a: Color, b: Color, t: f32) -> Color {
     let t = f64::from(t.clamp(0.0, 1.0));
     let mix = |x: u8, y: u8| -> u8 {
@@ -190,24 +187,14 @@ pub fn compose_fog_from_luminance(baked: FogBakedTrio, l_smooth: f32) -> (Color,
     let v_bg = baked.visible.bg;
     if l <= mid {
         let t = if mid > f32::EPSILON { l / mid } else { 0.0 };
-        (
-            lerp_color_f32(u_fg, e_fg, t),
-            lerp_color_f32(u_bg, e_bg, t),
-        )
+        (lerp_color_f32(u_fg, e_fg, t), lerp_color_f32(u_bg, e_bg, t))
     } else {
         let t = (l - mid) / (1.0 - mid).max(f32::EPSILON);
-        (
-            lerp_color_f32(e_fg, v_fg, t),
-            lerp_color_f32(e_bg, v_bg, t),
-        )
+        (lerp_color_f32(e_fg, v_fg, t), lerp_color_f32(e_bg, v_bg, t))
     }
 }
 
-fn bake_cell_trio(
-    res: &ResolvedAtmosphere,
-    base_fg: Color,
-    base_bg: Color,
-) -> FogBakedTrio {
+fn bake_cell_trio(res: &ResolvedAtmosphere, base_fg: Color, base_bg: Color) -> FogBakedTrio {
     let void_fg = res.void_glyph_foreground;
     let void_bg = res.void_background;
     let pct = EXPLORED_BLEND_TOWARDS_VOID_PCT.min(100);
@@ -262,10 +249,7 @@ pub fn effective_fow_radius_cells(base_radius: i32, level_default: &AtmosphereRe
 
 /// Discrete fog compose (editor visible preview).
 #[must_use]
-pub fn compose_map_tile_discrete(
-    baked: FogBakedTrio,
-    fog: MapTileFog,
-) -> (Color, Color) {
+pub fn compose_map_tile_discrete(baked: FogBakedTrio, fog: MapTileFog) -> (Color, Color) {
     match fog {
         MapTileFog::Unseen => (baked.unseen.fg, baked.unseen.bg),
         MapTileFog::Explored => (baked.explored.fg, baked.explored.bg),
@@ -295,11 +279,7 @@ mod tests {
     fn bake_luminance_matches_discrete_endpoints() {
         let d = AtmosphereRecipe::default();
         let res = resolve_atmosphere_cell(&d, &[], 0, 0);
-        let baked = bake_cell_trio(
-            &res,
-            Color::rgb(100, 90, 80),
-            Color::rgb(20, 22, 28),
-        );
+        let baked = bake_cell_trio(&res, Color::rgb(100, 90, 80), Color::rgb(20, 22, 28));
         for &(l, fog) in &[
             (0.0_f32, MapTileFog::Unseen),
             (FOG_LUMINANCE_EXPLORED, MapTileFog::Explored),

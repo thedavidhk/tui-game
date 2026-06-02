@@ -82,10 +82,7 @@ impl GameKeyMap {
             KeyMapLayer::BrowseModal => self.browse_modal,
             KeyMapLayer::ItemTransfer => self.transfer,
         };
-        table
-            .iter()
-            .find(|(k, _)| *k == chord)
-            .map(|(_, cmd)| *cmd)
+        table.iter().find(|(k, _)| *k == chord).map(|(_, cmd)| *cmd)
     }
 }
 
@@ -106,7 +103,9 @@ pub fn key_layer_for_mode(mode: Option<&GameMode>) -> KeyMapLayer {
         Some(GameMode::MainMenu { .. })
         | Some(GameMode::Dialogue { .. })
         | Some(GameMode::GameOver) => KeyMapLayer::ConfirmModal,
-        Some(GameMode::Inventory { .. }) | Some(GameMode::Journal { .. }) => KeyMapLayer::BrowseModal,
+        Some(GameMode::Inventory { .. }) | Some(GameMode::Journal { .. }) => {
+            KeyMapLayer::BrowseModal
+        }
     }
 }
 

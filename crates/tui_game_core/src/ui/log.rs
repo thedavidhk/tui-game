@@ -71,9 +71,7 @@ pub fn draw_log(
     lines: &[String],
     footer: Option<&str>,
     palette: &GameUiPalette,
-    mouse_regions: &mut Vec<Rect>,
 ) {
-    let _ = mouse_regions;
     let footer_rows = u16::from(footer.is_some());
     let body_h = inner.h.saturating_sub(footer_rows);
     let log_bg = palette.panel_bg_soft;

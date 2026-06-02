@@ -8,8 +8,8 @@ mod tiles;
 
 pub use atmosphere::{
     compose_fog_from_luminance, compose_map_tile_discrete, effective_fow_radius_cells,
-    rebuild_atmosphere_bake, resolve_atmosphere_cell, zone_influence_weight, FogBakedTrio, FogPaint,
-    ResolvedAtmosphere, DEFAULT_SIGHT_STRENGTH, DEFAULT_VISIBLE_BACKGROUND_PULL,
+    rebuild_atmosphere_bake, resolve_atmosphere_cell, zone_influence_weight, FogBakedTrio,
+    FogPaint, ResolvedAtmosphere, DEFAULT_SIGHT_STRENGTH, DEFAULT_VISIBLE_BACKGROUND_PULL,
     EXPLORED_BLEND_TOWARDS_VOID_PCT, SIGHT_RADIUS_MAX, SIGHT_RADIUS_MIN,
 };
 pub use fog_visual::{
@@ -18,15 +18,15 @@ pub use fog_visual::{
 pub use fow::{compute_visible, merge_explored};
 pub use map::{MapGrid, TileTable};
 pub use path::{
-    bresenham_tile_line, first_step_on_line, plan_path, plan_path_player_fow, projectile_sight_clear,
-    PathError, PathPlan,
+    bresenham_tile_line, first_step_on_line, plan_path, plan_path_player_fow,
+    projectile_sight_clear, PathError, PathPlan,
 };
 pub use tile_surface::{
     bake_layered_tile_display, bake_tile_display, def_is_animated, hash_cell, mix64,
     resolve_animated, TileBakeView, TileDisplayCell,
 };
 pub use tiles::{
-    normalize_tile_def_ids, AnimatedFrame, AnimMode, ConnectorLineStyle, ConnectorSurface, TileDef,
+    normalize_tile_def_ids, AnimMode, AnimatedFrame, ConnectorLineStyle, ConnectorSurface, TileDef,
     TileId, TileSurface, WeightedGlyph, CONNECTOR_GLYPHS_DOUBLE, CONNECTOR_GLYPHS_SINGLE,
     EMPTY_PROP_ID,
 };

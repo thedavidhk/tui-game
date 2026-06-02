@@ -41,11 +41,7 @@ pub(crate) fn handle(game: &mut Game, ev: GameInput) {
         GameInput::Command(GameCommand::StepSouth) => game.try_move_player(0, 1),
         GameInput::Command(GameCommand::StepWest) => game.try_move_player(-1, 0),
         GameInput::Command(GameCommand::StepEast) => game.try_move_player(1, 0),
-        GameInput::Raw(InputEvent::Mouse {
-            kind,
-            cell,
-            ..
-        }) => {
+        GameInput::Raw(InputEvent::Mouse { kind, cell, .. }) => {
             let world_r = GameShellLayout::root_panels(game.viewport_w, game.viewport_h).0;
             hover::sync_exploration_hover(game, cell, world_r);
             match kind {
