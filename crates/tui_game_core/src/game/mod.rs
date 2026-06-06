@@ -354,7 +354,7 @@ impl Game {
         }
         let player = entities.spawn(
             GridPos { x: px, y: py },
-            '@',
+            game_content::glyphs::PLAYER,
             Color::rgb(255, 235, 180),
             "You".into(),
             false,

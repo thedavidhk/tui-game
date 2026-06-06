@@ -3,6 +3,8 @@ use crate::content::{
     PatrolStopDef, ReactionDef, Rgb24,
 };
 
+use super::glyphs;
+
 pub const HOSTILE_WOLF_REACTIONS: &[ReactionDef] = &[
     ReactionDef::FightNearestInTurn,
     ReactionDef::Routine(NpcRoutineDef::Roam {
@@ -159,7 +161,7 @@ pub const BLUEPRINT_BANDIT: EntityBlueprint = EntityBlueprint {
     kind: "bandit",
     display_name: "Bandit",
     description: "Hostile patrol actor with short loiter times at each waypoint.",
-    default_glyph: 'b',
+    default_glyph: glyphs::HUMANOID_HOSTILE,
     default_fg: Rgb24::new(205, 185, 165),
     default_label: "Bandit",
     is_actor: true,

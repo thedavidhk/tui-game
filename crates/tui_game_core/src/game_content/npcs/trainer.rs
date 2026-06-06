@@ -1,11 +1,11 @@
 use crate::content::{DialogueAction, Disposition, EntityBlueprint, NpcBehaviorDef, Rgb24};
-use crate::game_content::{dialogue_tree, effects, requires};
+use crate::game_content::{dialogue_tree, effects, glyphs, requires};
 
 pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "trainer",
     display_name: "Trainer",
     description: "Friendly sparring NPC (dialogue \"trainer\").",
-    default_glyph: '🨾',
+    default_glyph: glyphs::HUMANOID_FRIENDLY,
     default_fg: Rgb24::new(240, 227, 227),
     default_label: "Trainer",
     is_actor: true,

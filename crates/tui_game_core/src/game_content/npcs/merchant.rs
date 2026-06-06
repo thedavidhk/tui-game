@@ -1,7 +1,7 @@
 use crate::content::{
     Disposition, Effect, EntityBlueprint, NpcBehaviorDef, QuestJournalStatus, Rgb24,
 };
-use crate::game_content::{dialogue_tree, effects, quests, requires};
+use crate::game_content::{dialogue_tree, effects, glyphs, quests, requires};
 use crate::narrative::{NarrativeApplyError, NarrativeState};
 
 pub const TAVERN_REGION_ID: &str = "tavern_approach";
@@ -10,7 +10,7 @@ pub const BLUEPRINT: EntityBlueprint = EntityBlueprint {
     kind: "merchant",
     display_name: "Merchant",
     description: "Flavor NPC (dialogue \"merchant\").",
-    default_glyph: '🨾',
+    default_glyph: glyphs::HUMANOID_FRIENDLY,
     default_fg: Rgb24::new(220, 233, 243),
     default_label: "Merchant",
     is_actor: true,

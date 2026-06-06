@@ -5,6 +5,7 @@ use crate::content::{ContentPack, ContentRuntimeHooks, DialogueNode, DialogueTre
 use crate::narrative::NarrativeState;
 
 mod blueprints;
+pub mod glyphs;
 mod items;
 mod macros;
 mod npcs;
