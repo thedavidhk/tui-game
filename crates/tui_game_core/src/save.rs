@@ -67,7 +67,7 @@ mod tests {
         let mut ents = EntityArena::new();
         let p = ents.spawn(
             crate::entity::GridPos { x: 1, y: 1 },
-            '@',
+            crate::game_content::glyphs::PLAYER,
             crate::render::Color::rgb(255, 235, 180),
             "Hero".into(),
             false,
@@ -104,7 +104,7 @@ mod tests {
         let mut ents = EntityArena::new();
         let p = ents.spawn(
             crate::entity::GridPos { x: 1, y: 1 },
-            '@',
+            crate::game_content::glyphs::PLAYER,
             crate::render::Color::rgb(255, 235, 180),
             "Hero".into(),
             false,

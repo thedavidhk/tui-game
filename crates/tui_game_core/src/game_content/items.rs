@@ -1,11 +1,13 @@
 use crate::item::{EquipSlot, ItemCategory, ItemDef, WeaponKind};
 
+use super::glyphs;
+
 pub static ITEM_DEFS: &[ItemDef] = &[
     ItemDef {
         id: "cellar_key",
         name: "Cellar key",
         description: "Heavy iron; faint cellar mold. Opens the old cellar (not implemented).",
-        glyph: ',',
+        glyph: glyphs::ITEM_KEY,
         category: ItemCategory::Mundane,
         weapon: None,
     },
@@ -13,7 +15,7 @@ pub static ITEM_DEFS: &[ItemDef] = &[
         id: "health_tonic",
         name: "Health tonic",
         description: "Bitter red syrup. Labels promise vigor (effect not implemented).",
-        glyph: '!',
+        glyph: glyphs::ITEM_CONSUMABLE,
         category: ItemCategory::Consumable,
         weapon: None,
     },
@@ -21,7 +23,7 @@ pub static ITEM_DEFS: &[ItemDef] = &[
         id: "brass_ring",
         name: "Brass ring",
         description: "Worn smooth. Fits a finger; no enchantment detected yet.",
-        glyph: '=',
+        glyph: glyphs::ITEM_RING,
         category: ItemCategory::Equippable(EquipSlot::Ring),
         weapon: None,
     },
@@ -29,7 +31,7 @@ pub static ITEM_DEFS: &[ItemDef] = &[
         id: "iron_sword",
         name: "Iron sword",
         description: "A balanced blade. Better to-hit and damage than bare fists.",
-        glyph: '/',
+        glyph: glyphs::ITEM_MELEE,
         category: ItemCategory::Equippable(EquipSlot::MainHand),
         weapon: Some(WeaponKind::Melee {
             to_hit: 2,
@@ -40,7 +42,7 @@ pub static ITEM_DEFS: &[ItemDef] = &[
         id: "hunting_bow",
         name: "Hunting bow",
         description: "Tensioned yew. Shoots at range if arrows are loaded in the quiver (e).",
-        glyph: '}',
+        glyph: glyphs::ITEM_BOW,
         category: ItemCategory::Equippable(EquipSlot::MainHand),
         weapon: Some(WeaponKind::RangedBow {
             to_hit: 1,
@@ -53,7 +55,7 @@ pub static ITEM_DEFS: &[ItemDef] = &[
         name: "Arrow",
         description:
             "Simple bodkin points. Load with e while highlighted; bow spends one per shot.",
-        glyph: '^',
+        glyph: glyphs::ITEM_AMMO,
         category: ItemCategory::Ammo,
         weapon: None,
     },
