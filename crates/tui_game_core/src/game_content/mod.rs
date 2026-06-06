@@ -162,6 +162,23 @@ mod tests {
     }
 
     #[test]
+    fn validate_level_requires_materialized_tile_defs() {
+        let p = content_pack();
+        let mut level = super::embedded_demo_level();
+        level.terrain_palette = level
+            .tile_defs
+            .iter()
+            .map(|d| d.terrain_id.clone())
+            .collect();
+        level.tile_defs.clear();
+        let err = p.validate_level(&level).unwrap_err();
+        assert!(
+            err.contains("tile_defs is empty") || err.contains("unknown tile id"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn validate_level_rejects_unknown_tile_id() {
         let p = content_pack();
         let table = TileTable::default_pack().expect("default terrain pack must load");

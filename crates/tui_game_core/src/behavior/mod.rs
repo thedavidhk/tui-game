@@ -43,7 +43,9 @@ pub use threat::is_actively_hostile_to_player_with;
 #[must_use]
 pub fn npc_action_to_combat(action: NpcAction) -> crate::combat::CombatAction {
     match action {
-        NpcAction::Step(target) => crate::combat::CombatAction::Move { target },
+        NpcAction::Step(target) | NpcAction::RoamStep(target) => {
+            crate::combat::CombatAction::Move { target }
+        }
         NpcAction::Attack { target, style } => {
             crate::combat::CombatAction::Attack { target, style }
         }

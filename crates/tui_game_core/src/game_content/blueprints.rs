@@ -46,7 +46,7 @@ pub const HOSTILE_BANDIT_REACTIONS: &[ReactionDef] = &[
 pub const SKITTISH_DEER_REACTIONS: &[ReactionDef] = &[
     ReactionDef::FleeFromThreat { range: 5 },
     ReactionDef::Routine(NpcRoutineDef::Roam {
-        radius: 4,
+        radius: 5,
         wait_ticks: 12,
     }),
     ReactionDef::Pass,
@@ -195,7 +195,7 @@ pub const BLUEPRINT_DEER: EntityBlueprint = EntityBlueprint {
     base_max_hp: 8,
     base_strength: 2,
     base_agility: 8,
-    base_speed: 8,
+    base_speed: 20,
 };
 
 pub static ENTITY_BLUEPRINTS: &[EntityBlueprint] = &[

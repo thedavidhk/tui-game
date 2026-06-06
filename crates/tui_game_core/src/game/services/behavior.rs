@@ -12,6 +12,7 @@ use super::combat::start_combat_encounter;
 use super::pacing;
 
 const NPC_EXPLORATION_AI_COOLDOWN_TICKS: u16 = 6;
+const ROAM_PACE_MULTIPLIER: u16 = 2;
 
 pub(crate) fn behavior_ctx(game: &mut Game) -> BehaviorCtx<'_> {
     let player = game.player_id();
@@ -97,10 +98,9 @@ fn tick_realtime_explore(game: &mut Game) {
         game.npc_exploration_ai_tick_cooldown = 0;
         return;
     }
-    if game.npc_exploration_ai_tick_cooldown > 0 {
-        game.npc_exploration_ai_tick_cooldown =
-            game.npc_exploration_ai_tick_cooldown.saturating_sub(1);
-        return;
+
+    for brain in &mut game.entities.npc_brain {
+        brain.explore_step_cooldown = brain.explore_step_cooldown.saturating_sub(1);
     }
 
     let mut steps = Vec::new();
@@ -117,19 +117,21 @@ fn tick_realtime_explore(game: &mut Game) {
             if ctx.blueprint_for(actor).is_none() {
                 continue;
             }
+            if ctx.entities.npc_brain[i].explore_step_cooldown > 0 {
+                continue;
+            }
             let Some(from) = ctx.entities.pos(actor) else {
                 continue;
             };
             let constraints = ActionConstraints::realtime(actor);
             let action = decide_actor_action(&mut ctx, actor, constraints, None);
-            if let NpcAction::Step(target) = action {
-                steps.push((actor, from, target));
+            if let Some(target) = action.step_target() {
+                steps.push((actor, from, target, action.is_leisurely_step()));
             }
         }
     }
 
-    let mut pace_ticks = 0u16;
-    for (actor, from, target) in steps {
+    for (actor, from, target, leisurely) in steps {
         if game.entities.can_move_to(
             game.map.blocks_movement(target.x, target.y),
             target,
@@ -138,14 +140,20 @@ fn tick_realtime_explore(game: &mut Game) {
             let dx = target.x - from.x;
             let dy = target.y - from.y;
             game.entities.set_pos(actor, target);
-            pace_ticks = pace_ticks.max(pacing::scaled_step_cooldown(
-                NPC_EXPLORATION_AI_COOLDOWN_TICKS,
-                dx,
-                dy,
-            ));
+            let speed = game.entities.stats(actor).map_or(5, |stats| stats.speed);
+            let base = if leisurely {
+                NPC_EXPLORATION_AI_COOLDOWN_TICKS
+            } else {
+                pacing::visual_step_cooldown_ticks_from_speed(speed)
+            };
+            let mut cooldown = pacing::scaled_step_cooldown(base, dx, dy);
+            if leisurely {
+                cooldown = cooldown.saturating_mul(ROAM_PACE_MULTIPLIER);
+            }
+            game.entities.npc_brain[actor.0 as usize].explore_step_cooldown = cooldown;
         }
     }
-    game.npc_exploration_ai_tick_cooldown = pace_ticks;
+    game.npc_exploration_ai_tick_cooldown = 0;
 }
 
 fn tick_turn_actor(game: &mut Game, clock: &CombatState) {
@@ -168,16 +176,24 @@ fn tick_turn_actor(game: &mut Game, clock: &CombatState) {
         decide_actor_action(&mut ctx, actor, constraints, Some(clock))
     };
 
-    let pace_after_success = matches!(action, NpcAction::Step(_) | NpcAction::Attack { .. });
-    let move_step = match action {
-        NpcAction::Step(target) => {
-            actor_pos_before.map(|from| (target.x - from.x, target.y - from.y))
-        }
-        _ => None,
-    };
+    let pace_after_success = matches!(
+        action,
+        NpcAction::Step(_) | NpcAction::RoamStep(_) | NpcAction::Attack { .. }
+    );
+    let move_step = action.step_target().and_then(|target| {
+        actor_pos_before.map(|from| (target.x - from.x, target.y - from.y))
+    });
+    let leisurely_step = action.is_leisurely_step();
 
     let combat_action = npc_action_to_combat(action);
-    apply_turn_action(game, combat_action, move_step, pace_after_success, actor);
+    apply_turn_action(
+        game,
+        combat_action,
+        move_step,
+        pace_after_success,
+        leisurely_step,
+        actor,
+    );
 }
 
 fn apply_turn_action(
@@ -185,6 +201,7 @@ fn apply_turn_action(
     action: CombatAction,
     move_step: Option<(i32, i32)>,
     pace_after_success: bool,
+    leisurely_step: bool,
     actor: EntityId,
 ) {
     let Some(clock) = active_turn_clock_mut(game) else {
@@ -203,7 +220,10 @@ fn apply_turn_action(
 
     if report.applied && pace_after_success {
         let speed = game.entities.stats(actor).map_or(1, |stats| stats.speed);
-        let base = pacing::visual_step_cooldown_ticks_from_speed(speed);
+        let mut base = pacing::visual_step_cooldown_ticks_from_speed(speed);
+        if leisurely_step {
+            base = base.saturating_mul(ROAM_PACE_MULTIPLIER);
+        }
         game.npc_combat_ai_tick_cooldown = move_step
             .map_or(base, |(dx, dy)| pacing::scaled_step_cooldown(base, dx, dy));
     }

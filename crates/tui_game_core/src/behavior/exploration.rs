@@ -76,6 +76,10 @@ pub fn routine_tick(
     match routine {
         NpcRoutineDef::Idle => ExplorationIntent::Idle,
         NpcRoutineDef::Roam { radius, wait_ticks } => {
+            if brain.alarmed_ticks > 0 {
+                brain.alarmed_ticks = brain.alarmed_ticks.saturating_sub(1);
+                return ExplorationIntent::Idle;
+            }
             let out_of_range = chebyshev(from, brain.home) > i32::from(radius);
             if out_of_range {
                 brain.roam_goal = Some(brain.home);
@@ -110,6 +114,10 @@ pub fn routine_tick(
             ExplorationIntent::Step(next)
         }
         NpcRoutineDef::Patrol { stops } => {
+            if brain.alarmed_ticks > 0 {
+                brain.alarmed_ticks = brain.alarmed_ticks.saturating_sub(1);
+                return ExplorationIntent::Idle;
+            }
             if stops.is_empty() {
                 return ExplorationIntent::Idle;
             }

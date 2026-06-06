@@ -155,7 +155,8 @@ pub enum EncounterTriggerDef {
 /// One entry in an NPC's reaction list (evaluated top to bottom; first match wins).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ReactionDef {
-    /// Step away from a non-allied threat within `range` (Chebyshev).
+    /// Step away from a non-allied threat within `range` (Chebyshev), aiming for
+    /// roughly double that distance before stopping.
     FleeFromThreat { range: u16 },
     /// During a turn session, chase and attack the nearest valid target.
     FightNearestInTurn,

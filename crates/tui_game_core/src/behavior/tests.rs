@@ -6,6 +6,7 @@ use crate::combat::{
 use crate::content::{EncounterTriggerDef, NpcRoutineDef, ReactionDef, Relation};
 use crate::entity::{ActiveReaction, ActorStats, EntityArena, EntityId, GridPos, NpcBrainState};
 use crate::game_content;
+use crate::math::chebyshev;
 use crate::render::Color;
 use crate::world::{MapGrid, TileTable};
 
@@ -17,7 +18,7 @@ use super::encounter::find_encounter_start;
 use super::exploration::{routine_tick, ExplorationIntent};
 use super::navigation::next_step_toward;
 use super::relation::{BlueprintRelationResolver, RelationResolver};
-use super::threat::{evaluate_encounter_trigger, is_actively_hostile_to_player_with};
+use super::threat::{evaluate_encounter_trigger, is_actively_hostile_to_player_with, nearest_non_allied_threat};
 
 fn floor_map(w: u16, h: u16) -> MapGrid {
     let table = TileTable::default_pack().expect("default pack");
@@ -29,7 +30,7 @@ fn spawn_npc(
     arena: &mut EntityArena,
     pos: GridPos,
     kind: &'static str,
-    brain: NpcBrainState,
+    mut brain: NpcBrainState,
 ) -> EntityId {
     let id = arena.spawn(
         pos,
@@ -42,6 +43,7 @@ fn spawn_npc(
         false,
     );
     arena.set_stats(id, ActorStats::from_full(10, 10, 10, 0, 5));
+    brain.home = pos;
     arena.npc_brain[id.0 as usize] = brain;
     id
 }
@@ -295,8 +297,31 @@ fn investigate_clears_at_goal() {
 }
 
 #[test]
-fn skittish_deer_flees_when_player_near() {
+fn proximity_threat_detects_adjacent_player() {
     let map = floor_map(12, 12);
+    let mut arena = EntityArena::new();
+    let player = spawn_player(&mut arena, GridPos { x: 5, y: 5 });
+    let deer = spawn_npc(
+        &mut arena,
+        GridPos { x: 6, y: 5 },
+        "deer",
+        NpcBrainState::default(),
+    );
+    let mut rng = 1u64;
+    let content = game_content::content_pack();
+    let ctx = BehaviorCtx {
+        map: &map,
+        entities: &mut arena,
+        content: &content,
+        rng: &mut rng,
+        player: Some(player),
+    };
+    assert!(nearest_non_allied_threat(&ctx, deer, 10).is_some());
+}
+
+#[test]
+fn skittish_deer_flees_when_player_near() {
+    let map = floor_map(40, 40);
     let mut arena = EntityArena::new();
     let player = spawn_player(&mut arena, GridPos { x: 5, y: 5 });
     let deer = spawn_npc(
@@ -316,8 +341,107 @@ fn skittish_deer_flees_when_player_near() {
     };
     let constraints = ActionConstraints::realtime(deer);
     let action = decide_actor_action(&mut ctx, deer, constraints, None);
-    assert!(matches!(action, NpcAction::Step(_)));
+    assert!(
+        matches!(action, NpcAction::Step(_)),
+        "expected urgent flee step, got {action:?}"
+    );
     assert_eq!(find_encounter_start(&ctx), None);
+}
+
+#[test]
+fn fleeing_latches_until_clearance() {
+    let map = floor_map(40, 40);
+    let mut arena = EntityArena::new();
+    let player = spawn_player(&mut arena, GridPos { x: 5, y: 5 });
+    let mut brain = NpcBrainState::default();
+    brain.active = ActiveReaction::Flee {
+        from: GridPos { x: 5, y: 5 },
+    };
+    let deer = spawn_npc(
+        &mut arena,
+        GridPos { x: 14, y: 5 },
+        "deer",
+        brain,
+    );
+    let mut rng = 1u64;
+    let content = game_content::content_pack();
+    let mut ctx = BehaviorCtx {
+        map: &map,
+        entities: &mut arena,
+        content: &content,
+        rng: &mut rng,
+        player: Some(player),
+    };
+    let constraints = ActionConstraints::realtime(deer);
+    let action = decide_actor_action(&mut ctx, deer, constraints, None);
+    assert!(
+        matches!(action, NpcAction::Step(_)),
+        "outside trigger but inside clearance should keep fleeing"
+    );
+}
+
+#[test]
+fn skittish_deer_flees_to_clearance_before_roaming() {
+    let map = floor_map(40, 40);
+    let mut arena = EntityArena::new();
+    let player_pos = GridPos { x: 5, y: 5 };
+    let player = spawn_player(&mut arena, player_pos);
+    let deer = spawn_npc(
+        &mut arena,
+        GridPos { x: 6, y: 5 },
+        "deer",
+        NpcBrainState::default(),
+    );
+    let mut rng = 1u64;
+    let content = game_content::content_pack();
+    let constraints = ActionConstraints::realtime(deer);
+
+    for _ in 0..40 {
+        let mut ctx = BehaviorCtx {
+            map: &map,
+            entities: &mut arena,
+            content: &content,
+            rng: &mut rng,
+            player: Some(player),
+        };
+        let action = decide_actor_action(&mut ctx, deer, constraints, None);
+        if let Some(target) = action.step_target() {
+            arena.set_pos(deer, target);
+        }
+    }
+
+    let deer_pos = arena.pos(deer).expect("deer position");
+    assert!(
+        chebyshev(deer_pos, player_pos) >= 10,
+        "deer should reach flee clearance (10) from player"
+    );
+    assert!(arena.npc_brain[deer.0 as usize].alarmed_ticks > 0);
+}
+
+#[test]
+fn routine_movement_uses_roam_step() {
+    let map = floor_map(12, 12);
+    let mut arena = EntityArena::new();
+    let mut brain = NpcBrainState::default();
+    brain.roam_goal = Some(GridPos { x: 4, y: 1 });
+    let wolf = spawn_npc(
+        &mut arena,
+        GridPos { x: 1, y: 1 },
+        "wolf",
+        brain,
+    );
+    let mut rng = 1u64;
+    let content = game_content::content_pack();
+    let mut ctx = BehaviorCtx {
+        map: &map,
+        entities: &mut arena,
+        content: &content,
+        rng: &mut rng,
+        player: None,
+    };
+    let constraints = ActionConstraints::realtime(wolf);
+    let action = decide_actor_action(&mut ctx, wolf, constraints, None);
+    assert!(matches!(action, NpcAction::RoamStep(_)));
 }
 
 #[test]

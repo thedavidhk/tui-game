@@ -38,6 +38,10 @@ pub struct NpcBrainState {
     pub roam_wait_ticks: u16,
     pub patrol_next_stop: u16,
     pub patrol_wait_ticks: u16,
+    /// Ticks left before roam/patrol resumes after fleeing (settle / hysteresis).
+    pub alarmed_ticks: u16,
+    /// Per-actor exploration step pacing (replaces global gate).
+    pub explore_step_cooldown: u16,
     pub active: ActiveReaction,
     pub forced_reaction: Option<ForcedReaction>,
 }
@@ -130,6 +134,8 @@ impl EntityArena {
             roam_wait_ticks: 0,
             patrol_next_stop: 0,
             patrol_wait_ticks: 0,
+            alarmed_ticks: 0,
+            explore_step_cooldown: 0,
             active: ActiveReaction::None,
             forced_reaction: None,
         };
