@@ -408,7 +408,7 @@ impl CombatState {
                             .and_then(|kind| content.and_then(|c| c.blueprint(kind)))
                             .map(|bp| bp.behavior.reactions)
                             .unwrap_or(&[]);
-                        crate::behavior::on_combat_hit_target(brain, reactions, attacker_pos);
+                        crate::behavior::on_actor_damaged(brain, reactions, actor, attacker_pos);
                     }
                 }
 

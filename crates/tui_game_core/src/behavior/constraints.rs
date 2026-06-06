@@ -6,7 +6,7 @@ use crate::entity::EntityId;
 /// Inputs from the game layer about time and turn rules.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActionPhase {
-    /// Overworld realtime — one step per cooldown gate.
+    /// Overworld realtime — per-actor step cooldown on [`crate::entity::NpcBrainState`].
     RealtimeExplore,
     /// Turn session active — only `current_actor` may act, AP applies.
     Turn {

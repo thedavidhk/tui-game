@@ -201,8 +201,6 @@ pub struct Game {
     player_walk_tick_cooldown: u16,
     /// When > 0, NPC combat AI waits (same tick pacing as exploration auto-walk).
     npc_combat_ai_tick_cooldown: u16,
-    /// Shared pacing gate for exploration NPC movement.
-    npc_exploration_ai_tick_cooldown: u16,
     /// Last mouse cell over the world view while exploring (for hover text).
     pub exploration_hover_cell: Option<MouseCell>,
     /// Last mouse cell over the world view during combat (for hover text).
@@ -393,7 +391,6 @@ impl Game {
             player_walk_goal: None,
             player_walk_tick_cooldown: 0,
             npc_combat_ai_tick_cooldown: 0,
-            npc_exploration_ai_tick_cooldown: 0,
             exploration_hover_cell: None,
             combat_hover_cell: None,
             last_world_pointer_cell: None,

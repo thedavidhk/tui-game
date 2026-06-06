@@ -15,6 +15,7 @@
 //! decision pipeline.
 
 pub mod action;
+mod flee;
 pub mod constraints;
 pub mod ctx;
 pub mod decide;
@@ -34,8 +35,8 @@ pub use constraints::{ActionConstraints, ActionPhase};
 pub use ctx::BehaviorCtx;
 pub use decide::decide_actor_action;
 pub use encounter::find_encounter_start;
-pub use events::{force_flee, on_actor_damaged, on_combat_hit_target};
-pub use exploration::ExplorationIntent;
+pub use action::StepPace;
+pub use events::{force_flee, on_actor_damaged};
 pub use relation::{BlueprintRelationResolver, RelationResolver};
 pub use threat::is_actively_hostile_to_player_with;
 
@@ -43,9 +44,7 @@ pub use threat::is_actively_hostile_to_player_with;
 #[must_use]
 pub fn npc_action_to_combat(action: NpcAction) -> crate::combat::CombatAction {
     match action {
-        NpcAction::Step(target) | NpcAction::RoamStep(target) => {
-            crate::combat::CombatAction::Move { target }
-        }
+        NpcAction::Step { target, .. } => crate::combat::CombatAction::Move { target },
         NpcAction::Attack { target, style } => {
             crate::combat::CombatAction::Attack { target, style }
         }

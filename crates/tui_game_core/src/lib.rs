@@ -15,6 +15,7 @@ pub mod narrative;
 pub mod rect;
 pub mod render;
 pub mod save;
+pub(crate) mod step_pacing;
 pub mod ui;
 pub mod world;
 

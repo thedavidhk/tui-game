@@ -18,6 +18,9 @@ pub enum ActiveReaction {
     #[default]
     None,
     Flee {
+        /// Live threat when known (player, attacker, etc.).
+        #[serde(default)]
+        threat: Option<EntityId>,
         from: GridPos,
     },
     Investigate(GridPos),

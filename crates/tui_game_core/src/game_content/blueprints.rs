@@ -44,7 +44,7 @@ pub const HOSTILE_BANDIT_REACTIONS: &[ReactionDef] = &[
 ];
 
 pub const SKITTISH_DEER_REACTIONS: &[ReactionDef] = &[
-    ReactionDef::FleeFromThreat { range: 5 },
+    ReactionDef::FleeFromThreat { range: 8 },
     ReactionDef::Routine(NpcRoutineDef::Roam {
         radius: 5,
         wait_ticks: 12,

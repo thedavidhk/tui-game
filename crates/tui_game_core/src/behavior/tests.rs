@@ -15,7 +15,8 @@ use super::constraints::ActionConstraints;
 use super::ctx::BehaviorCtx;
 use super::decide::decide_actor_action;
 use super::encounter::find_encounter_start;
-use super::exploration::{routine_tick, ExplorationIntent};
+use super::action::StepPace;
+use super::exploration::routine_tick_for_test;
 use super::navigation::next_step_toward;
 use super::relation::{BlueprintRelationResolver, RelationResolver};
 use super::threat::{evaluate_encounter_trigger, is_actively_hostile_to_player_with, nearest_non_allied_threat};
@@ -132,7 +133,7 @@ fn exploration_roam_picks_step_within_radius() {
         player: None,
     };
     let mut brain = ctx.entities.npc_brain[actor.0 as usize];
-    let intent = routine_tick(
+    let target = routine_tick_for_test(
         &mut ctx,
         actor,
         home,
@@ -142,7 +143,7 @@ fn exploration_roam_picks_step_within_radius() {
         },
         &mut brain,
     );
-    if let ExplorationIntent::Step(target) = intent {
+    if let Some(target) = target {
         assert!(crate::math::chebyshev(home, target) <= 3);
     }
 }
@@ -342,7 +343,13 @@ fn skittish_deer_flees_when_player_near() {
     let constraints = ActionConstraints::realtime(deer);
     let action = decide_actor_action(&mut ctx, deer, constraints, None);
     assert!(
-        matches!(action, NpcAction::Step(_)),
+        matches!(
+            action,
+            NpcAction::Step {
+                pace: StepPace::Urgent,
+                ..
+            }
+        ),
         "expected urgent flee step, got {action:?}"
     );
     assert_eq!(find_encounter_start(&ctx), None);
@@ -355,6 +362,7 @@ fn fleeing_latches_until_clearance() {
     let player = spawn_player(&mut arena, GridPos { x: 5, y: 5 });
     let mut brain = NpcBrainState::default();
     brain.active = ActiveReaction::Flee {
+        threat: Some(player),
         from: GridPos { x: 5, y: 5 },
     };
     let deer = spawn_npc(
@@ -375,7 +383,13 @@ fn fleeing_latches_until_clearance() {
     let constraints = ActionConstraints::realtime(deer);
     let action = decide_actor_action(&mut ctx, deer, constraints, None);
     assert!(
-        matches!(action, NpcAction::Step(_)),
+        matches!(
+            action,
+            NpcAction::Step {
+                pace: StepPace::Urgent,
+                ..
+            }
+        ),
         "outside trigger but inside clearance should keep fleeing"
     );
 }
@@ -441,7 +455,13 @@ fn routine_movement_uses_roam_step() {
     };
     let constraints = ActionConstraints::realtime(wolf);
     let action = decide_actor_action(&mut ctx, wolf, constraints, None);
-    assert!(matches!(action, NpcAction::RoamStep(_)));
+    assert!(matches!(
+        action,
+        NpcAction::Step {
+            pace: StepPace::Leisurely,
+            ..
+        }
+    ));
 }
 
 #[test]

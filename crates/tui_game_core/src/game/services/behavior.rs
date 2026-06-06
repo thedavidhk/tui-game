@@ -11,9 +11,6 @@ use crate::game::{Game, GameMode};
 use super::combat::start_combat_encounter;
 use super::pacing;
 
-const NPC_EXPLORATION_AI_COOLDOWN_TICKS: u16 = 6;
-const ROAM_PACE_MULTIPLIER: u16 = 2;
-
 pub(crate) fn behavior_ctx(game: &mut Game) -> BehaviorCtx<'_> {
     let player = game.player_id();
     BehaviorCtx {
@@ -57,7 +54,6 @@ pub fn turn_based_active(game: &Game) -> bool {
 /// NPC behavior tick: exploration realtime, overworld turn clock, or combat encounter.
 pub fn tick_npcs(game: &mut Game) {
     if matches!(game.modes.current(), Some(GameMode::MainMenu { .. }) | Some(GameMode::GameOver)) {
-        game.npc_exploration_ai_tick_cooldown = 0;
         game.npc_combat_ai_tick_cooldown = 0;
         return;
     }
@@ -78,7 +74,6 @@ pub fn tick_npcs(game: &mut Game) {
                 },
                 "Hostile contact!",
             );
-            game.npc_exploration_ai_tick_cooldown = 0;
             return;
         }
     }
@@ -95,7 +90,6 @@ pub fn tick_npcs(game: &mut Game) {
 
 fn tick_realtime_explore(game: &mut Game) {
     if !matches!(game.modes.current(), Some(GameMode::Exploration)) {
-        game.npc_exploration_ai_tick_cooldown = 0;
         return;
     }
 
@@ -126,12 +120,12 @@ fn tick_realtime_explore(game: &mut Game) {
             let constraints = ActionConstraints::realtime(actor);
             let action = decide_actor_action(&mut ctx, actor, constraints, None);
             if let Some(target) = action.step_target() {
-                steps.push((actor, from, target, action.is_leisurely_step()));
+                steps.push((actor, from, target, action));
             }
         }
     }
 
-    for (actor, from, target, leisurely) in steps {
+    for (actor, from, target, action) in steps {
         if game.entities.can_move_to(
             game.map.blocks_movement(target.x, target.y),
             target,
@@ -141,19 +135,11 @@ fn tick_realtime_explore(game: &mut Game) {
             let dy = target.y - from.y;
             game.entities.set_pos(actor, target);
             let speed = game.entities.stats(actor).map_or(5, |stats| stats.speed);
-            let base = if leisurely {
-                NPC_EXPLORATION_AI_COOLDOWN_TICKS
-            } else {
-                pacing::visual_step_cooldown_ticks_from_speed(speed)
-            };
-            let mut cooldown = pacing::scaled_step_cooldown(base, dx, dy);
-            if leisurely {
-                cooldown = cooldown.saturating_mul(ROAM_PACE_MULTIPLIER);
+            if let Some(cooldown) = action.explore_step_cooldown(speed, dx, dy) {
+                game.entities.npc_brain[actor.0 as usize].explore_step_cooldown = cooldown;
             }
-            game.entities.npc_brain[actor.0 as usize].explore_step_cooldown = cooldown;
         }
     }
-    game.npc_exploration_ai_tick_cooldown = 0;
 }
 
 fn tick_turn_actor(game: &mut Game, clock: &CombatState) {
@@ -178,7 +164,7 @@ fn tick_turn_actor(game: &mut Game, clock: &CombatState) {
 
     let pace_after_success = matches!(
         action,
-        NpcAction::Step(_) | NpcAction::RoamStep(_) | NpcAction::Attack { .. }
+        NpcAction::Step { .. } | NpcAction::Attack { .. }
     );
     let move_step = action.step_target().and_then(|target| {
         actor_pos_before.map(|from| (target.x - from.x, target.y - from.y))
@@ -220,12 +206,10 @@ fn apply_turn_action(
 
     if report.applied && pace_after_success {
         let speed = game.entities.stats(actor).map_or(1, |stats| stats.speed);
-        let mut base = pacing::visual_step_cooldown_ticks_from_speed(speed);
-        if leisurely_step {
-            base = base.saturating_mul(ROAM_PACE_MULTIPLIER);
-        }
-        game.npc_combat_ai_tick_cooldown = move_step
-            .map_or(base, |(dx, dy)| pacing::scaled_step_cooldown(base, dx, dy));
+        game.npc_combat_ai_tick_cooldown = move_step.map_or(
+            pacing::visual_step_cooldown_ticks_from_speed(speed),
+            |(dx, dy)| pacing::explore_step_cooldown(leisurely_step, speed, dx, dy),
+        );
     }
 
     if in_encounter(game) {
